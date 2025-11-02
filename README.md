@@ -18,13 +18,12 @@ It is based on the official TypeScript `@modelcontextprotocol/sdk` and supports 
 
 ## Features
 
-- Program runners for BASIC, 6510 assembly, PRG/CRT
-- Memory and screen I/O (read/write, wait for text)
-- System, drives, files, printers
-- SID composition, playback, and analysis
-- Local RAG over examples and docs for smarter prompting
-
-Backends: hardware C64U (primary) and an experimental VICE runner.
+- **Program runners** for BASIC, 6510 assembly, and PRG/CRT  
+- **Full memory access** — read/write operations and text monitoring  
+- **System integration** covering drives, files, and printers  
+- **SID audio tools** for composition, playback, and analysis  
+- **Built-in knowledge base** for smarter AI prompting using local examples and docs  
+- **Multiple backends**: hardware **C64 Ultimate** (primary) and experimental **VICE** runner  
 
 ## Quick Start
 
