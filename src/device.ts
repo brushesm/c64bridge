@@ -405,7 +405,31 @@ export class ViceBackend implements C64Facade {
   async pause(): Promise<RunResult> { return { success: true }; }
 
   async resume(): Promise<RunResult> { return { success: true }; }
-  async poweroff(): Promise<RunResult> { throw unsupported("poweroff"); }
+  async poweroff(): Promise<RunResult> {
+    const key = this.supervisorKey();
+    const managedHandle = this.manageProcess ? ViceBackend.supervisors.get(key) : null;
+    try {
+      await this.withClient(async (client) => {
+        try {
+          await client.quit();
+        } catch {
+          // Ignore transport errors during quit; the emulator will terminate regardless.
+        }
+      });
+      if (managedHandle) {
+        try {
+          await managedHandle.stop();
+        } catch {}
+        ViceBackend.supervisors.delete(key);
+      }
+      return { success: true };
+    } catch (error) {
+      const details = error instanceof Error
+        ? { message: error.message }
+        : error;
+      return { success: false, details };
+    }
+  }
   async menuButton(): Promise<RunResult> { throw unsupported("menuButton"); }
   async debugregRead(): Promise<{ success: boolean; value?: string; details?: unknown }> { throw unsupported("debugregRead"); }
   async debugregWrite(_v: string): Promise<{ success: boolean; value?: string; details?: unknown }> { throw unsupported("debugregWrite"); }
@@ -444,7 +468,11 @@ export class ViceBackend implements C64Facade {
   async filesCreateD71(): Promise<RunResult> { throw unsupported("filesCreateD71"); }
   async filesCreateD81(): Promise<RunResult> { throw unsupported("filesCreateD81"); }
   async filesCreateDnp(): Promise<RunResult> { throw unsupported("filesCreateDnp"); }
+  private supervisorKey(): string {
+    return `${this.host}:${this.port}`;
+  }
 }
+
 function unsupported(name: string): Error { const err = new Error(`Operation '${name}' is not supported by the VICE backend in phase one`); (err as any).code = "UNSUPPORTED"; return err; }
 
 function extractBytes(data: unknown): Uint8Array {

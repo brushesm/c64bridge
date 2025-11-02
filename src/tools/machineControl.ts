@@ -224,7 +224,7 @@ export const machineControlModule = defineToolModule({
       workflowHints: [
         "Use when the user explicitly requests power off; remind them to power on manually or via drive controls afterwards.",
       ],
-      supportedPlatforms: ["c64u"],
+      supportedPlatforms: ["c64u", "vice"],
       async execute(args, ctx) {
         try {
           poweroffArgsSchema.parse(args ?? {});

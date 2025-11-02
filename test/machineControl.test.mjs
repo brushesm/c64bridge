@@ -220,16 +220,21 @@ testC64uOnly("poweroff handles exception", async () => {
 });
 
 if (isVice) {
-  test("poweroff is unsupported on vice", async () => {
+  test("poweroff succeeds on vice", async () => {
+    const calls = [];
     const ctx = {
-      client: createMockClient(),
+      client: createMockClient({
+        async poweroff() {
+          calls.push("poweroff");
+          return { success: true, details: { shutdown: true } };
+        },
+      }),
       logger: createLogger(),
     };
 
-    await assert.rejects(
-      () => machineControlModule.invoke("poweroff", {}, ctx),
-      (error) => error?.name === "ToolUnsupportedPlatformError",
-    );
+    const res = await machineControlModule.invoke("poweroff", {}, ctx);
+    assert.equal(res.metadata?.success, true);
+    assert.deepEqual(calls, ["poweroff"]);
   });
 }
 

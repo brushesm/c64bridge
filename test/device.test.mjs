@@ -87,8 +87,12 @@ test("device: ViceBackend basic operations", async (t) => {
     await assert.rejects(() => facade.sidplayAttachment(new Uint8Array([1, 2, 3])));
   });
 
-  await t.test("poweroff throws unsupported", async () => {
-    await assert.rejects(() => facade.poweroff());
+  await t.test("poweroff succeeds and allows reconnect", async () => {
+    const result = await facade.poweroff();
+    assert.equal(result.success, true);
+    // After poweroff, operations should still succeed thanks to automatic restart.
+    const ping = await facade.ping();
+    assert.equal(ping, true);
   });
 
   await t.test("menuButton throws unsupported", async () => {
