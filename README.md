@@ -12,19 +12,18 @@ Your AI Command Bridge for the Commodore 64.
 
 ## Overview
 
-C64 Bridge is a Model Context Protocol ([MCP](https://modelcontextprotocol.io/docs/getting-started/intro)) server that drives a real Commodore 64 Ultimate or Ultimate 64 over their REST APIs.
+C64 Bridge is a Model Context Protocol ([MCP](https://modelcontextprotocol.io/docs/getting-started/intro)) server that drives a real Commodore 64 Ultimate or Ultimate 64 over their REST APIs. 
 
-It is built on the official TypeScript `@modelcontextprotocol/sdk` and speaks stdio by default (editor‑friendly, zero config). A lightweight HTTP bridge exists for manual testing.
+It is based on the official TypeScript `@modelcontextprotocol/sdk` and supports both **stdio** (for local AI integration) and **HTTP** (for remote access by other applications).
 
 ## Features
 
-- Program runners for BASIC, 6510 assembly, PRG/CRT
-- Memory and screen I/O (read/write, wait for text)
-- System, drives, files, printers
-- SID composition, playback, and analysis
-- Local RAG over examples and docs for smarter prompting
-
-Backends: C64U (primary) and VICE (preview)
+- **Program runners** for BASIC, 6510 assembly, and PRG/CRT  
+- **Full memory access** — read/write operations and text monitoring  
+- **System integration** covering drives, files, and printers  
+- **SID audio tools** for composition, playback, and analysis  
+- **Built-in knowledge base** for smarter AI prompting using local examples and docs  
+- **Multiple backends**: hardware **C64 Ultimate** (primary) and experimental **VICE** runner  
 
 ## Quick Start
 
