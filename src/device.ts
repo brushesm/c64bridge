@@ -234,6 +234,7 @@ export class ViceBackend implements C64Facade {
   private readonly visible: boolean;
   private readonly extraArgs: string[];
   private static readonly supervisors = new Map<string, ViceProcessHandle>();
+  private readonly debugEnabled = process.env.VICE_DEVICE_TEST_DEBUG === "1";
 
   constructor(config: ViceConfig) {
     const envBinary = configuredString(process.env.VICE_BINARY);
@@ -266,8 +267,10 @@ export class ViceBackend implements C64Facade {
   private async tryPingExisting(): Promise<boolean> {
     const client = new ViceClient();
     try {
+      if (this.debugEnabled) console.error("[vice-backend] probing existing VICE", this.host, this.port);
       await client.connect(this.port, this.host);
       await client.info();
+      if (this.debugEnabled) console.error("[vice-backend] existing VICE is reachable");
       return true;
     } catch {
       return false;
@@ -287,6 +290,16 @@ export class ViceBackend implements C64Facade {
       ViceBackend.supervisors.delete(key);
     }
     if (await this.tryPingExisting()) return;
+    if (this.debugEnabled) {
+      console.error("[vice-backend] starting VICE process", {
+        binary: this.exe,
+        host: this.host,
+        port: this.port,
+        warp: this.warp,
+        visible: this.visible,
+        extraArgs: this.extraArgs,
+      });
+    }
     const handle = await startViceProcess({
       binary: this.exe,
       host: this.host,
@@ -295,6 +308,9 @@ export class ViceBackend implements C64Facade {
       visible: this.visible,
       extraArgs: this.extraArgs.length > 0 ? this.extraArgs : undefined,
     });
+    if (this.debugEnabled) {
+      console.error("[vice-backend] VICE process started", { pid: handle.process.pid });
+    }
     ViceBackend.supervisors.set(key, handle);
     handle.process.once("exit", () => {
       ViceBackend.supervisors.delete(key);
@@ -307,10 +323,13 @@ export class ViceBackend implements C64Facade {
   private async withClient<T>(fn: (client: ViceClient) => Promise<T>): Promise<T> {
     if (!this.mockMode) await this.ensureProcess();
     const client = new ViceClient();
+    if (this.debugEnabled) console.error("[vice-backend] connecting to VICE monitor", { host: this.host, port: this.port });
     await client.connect(this.port, this.host);
     try {
+      if (this.debugEnabled) console.error("[vice-backend] connected to VICE monitor");
       return await fn(client);
     } finally {
+      if (this.debugEnabled) console.error("[vice-backend] closing VICE monitor connection");
       client.close();
     }
   }
@@ -325,7 +344,10 @@ export class ViceBackend implements C64Facade {
         await client.info();
       });
       return true;
-    } catch {
+    } catch (error) {
+      if (this.debugEnabled) {
+        console.error("[vice-backend] ping failed", error);
+      }
       return false;
     }
   }
@@ -396,7 +418,17 @@ export class ViceBackend implements C64Facade {
   async reset(): Promise<RunResult> {
     await this.withClient(async (client) => {
       await client.reset();
-      await waitForBasicReady(client, { timeoutMs: 20_000, ensurePrompt: true });
+      const opts = this.debugEnabled
+        ? {
+            timeoutMs: 20_000,
+            ensurePrompt: true,
+            onPointersSample: (p: { tx: number; va: number; ar: number; st: number }) => {
+              console.error("[vice-backend] BASIC pointers", p);
+            },
+          }
+        : { timeoutMs: 20_000, ensurePrompt: true };
+      const readiness = await waitForBasicReady(client, opts);
+      if (this.debugEnabled) console.error("[vice-backend] waitForBasicReady result", readiness);
     });
     return { success: true };
   }

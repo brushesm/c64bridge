@@ -99,8 +99,14 @@ export class ViceClient {
     });
     this.socket.on("data", (chunk) => this.onData(chunk));
     this.socket.on("error", (err) => {
-      for (const [, p] of this.pending) p.reject(err);
-      this.pending.clear();
+      this.rejectAllPending(err);
+    });
+    this.socket.on("close", (hadError) => {
+      const reason = hadError ? new Error("VICE monitor connection closed due to error") : new Error("VICE monitor connection closed");
+      this.rejectAllPending(reason);
+    });
+    this.socket.on("end", () => {
+      this.rejectAllPending(new Error("VICE monitor connection ended"));
     });
   }
 
@@ -108,6 +114,15 @@ export class ViceClient {
     try {
       this.socket?.destroy();
     } catch {}
+  }
+
+  private rejectAllPending(reason: unknown): void {
+    for (const [, pending] of this.pending) {
+      try {
+        pending.reject(reason);
+      } catch {}
+    }
+    this.pending.clear();
   }
 
   private onData(chunk: Buffer): void {

@@ -10,8 +10,14 @@ const platform = (process.env.C64_MODE ?? "").toLowerCase();
 const viceSuite = platform === "vice" ? test : test.skip;
 const viceTarget = (process.env.VICE_TEST_TARGET ?? "mock").toLowerCase();
 const useViceMock = viceTarget !== "vice";
+const debugEnabled = process.env.VICE_DEVICE_TEST_DEBUG === "1";
+function debugLog(...args) {
+  if (debugEnabled) {
+    console.error("[device.test]", ...args);
+  }
+}
 const READY_PATTERN = Uint8Array.of(0x12, 0x05, 0x01, 0x04, 0x19, 0x2E);
-const WAIT_READY_TIMEOUT_MS = useViceMock ? 1_000 : 20_000;
+const WAIT_READY_TIMEOUT_MS = useViceMock ? 1_000 : 10_000;
 const WAIT_READY_INTERVAL_MS = useViceMock ? 25 : 200;
 const WAIT_READY_SCAN_LENGTH = 1_000; // full text screen
 
@@ -25,10 +31,14 @@ async function waitForPattern(
   expected,
   { timeoutMs = WAIT_READY_TIMEOUT_MS, intervalMs = WAIT_READY_INTERVAL_MS, scanLength = WAIT_READY_SCAN_LENGTH } = {},
 ) {
-  const deadline = Date.now() + timeoutMs;
+  const startTime = Date.now();
+  const deadline = startTime + timeoutMs;
   let last = null;
   let matchSlice = null;
+  let attempts = 0;
+  let lastLog = 0;
   while (Date.now() < deadline) {
+    attempts += 1;
     const data = await facade.readMemory(address, scanLength);
     last = data;
     for (let offset = 0; offset <= data.length - expected.length; offset += 1) {
@@ -44,9 +54,21 @@ async function waitForPattern(
         return matchSlice;
       }
     }
+    if (debugEnabled) {
+      const now = Date.now();
+      if (attempts === 1 || now - lastLog >= 1_000) {
+        debugLog(
+          `scan attempt=${attempts}, elapsed=${now - startTime}ms, head=${Array.from(data.slice(0, expected.length))}`,
+        );
+        lastLog = now;
+      }
+    }
     await delay(intervalMs);
   }
   const lastSnapshot = last ? Array.from(last.slice(0, expected.length)) : null;
+  if (debugEnabled) {
+    debugLog(`timeout after ${attempts} attempts (${Date.now() - startTime}ms); lastPrefix=${lastSnapshot}`);
+  }
   throw new Error(
     `Timed out waiting for pattern at $${address.toString(16).toUpperCase()} (expected=${Array.from(expected)}, lastPrefix=${lastSnapshot})`,
   );
@@ -61,6 +83,8 @@ viceSuite("device: ViceBackend basic operations", async (t) => {
   const scratchAddress = 0x1000;
   const scratchBytes = Uint8Array.of(0x11, 0x22, 0x33, 0x44);
 
+  debugLog(`vice target=${viceTarget}; useViceMock=${useViceMock}`);
+
   if (useViceMock) {
     server = await startViceMockServer({ host: "127.0.0.1", port: 0 });
     cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), "vice-config-"));
@@ -68,6 +92,9 @@ viceSuite("device: ViceBackend basic operations", async (t) => {
     fs.writeFileSync(cfgPath, JSON.stringify({ vice: { host: "127.0.0.1", port: server.port } }), "utf8");
     process.env.C64BRIDGE_CONFIG = cfgPath;
     process.env.C64_MODE = "vice";
+    debugLog(`mock vice server listening on ${server.port}`);
+  } else {
+    debugLog("running against real VICE backend");
   }
 
   t.after(async () => {
@@ -80,6 +107,7 @@ viceSuite("device: ViceBackend basic operations", async (t) => {
   });
 
   const { facade } = await createFacade();
+  debugLog(`facade selected=${facade.type}`);
 
   await t.test("ping succeeds", async () => {
     assert.equal(await facade.ping(), true);
@@ -112,6 +140,7 @@ viceSuite("device: ViceBackend basic operations", async (t) => {
     await facade.writeMemory(0x0400, new Uint8Array(READY_PATTERN.length).fill(0));
     await facade.reset();
     const data = await waitForPattern(facade, 0x0400, READY_PATTERN);
+    debugLog("READY prompt restored");
     assert.deepEqual(Array.from(data), Array.from(READY_PATTERN));
   });
 

@@ -87,12 +87,21 @@ async function terminateProcess(child: ChildProcess | null, signal: NodeJS.Signa
 }
 
 export async function startViceProcess(options: ViceProcessOptions): Promise<ViceProcessHandle> {
+  const debugEnabled = process.env.VICE_DEVICE_TEST_DEBUG === "1";
   const { useXvfb, display } = shouldUseXvfb(options.visible);
   const viceEnv: NodeJS.ProcessEnv = { ...process.env };
   let xvfb: ChildProcess | null = null;
 
   if (useXvfb) {
-    xvfb = spawn("Xvfb", [display, "-screen", "0", "640x480x24"], { stdio: "ignore" });
+    if (debugEnabled) {
+      console.error("[vice-process] launching Xvfb", { display });
+    }
+    xvfb = spawn("Xvfb", [display, "-screen", "0", "640x480x24"], { stdio: debugEnabled ? ["ignore", "pipe", "pipe"] : "ignore" });
+    if (debugEnabled) {
+      console.error("[vice-process] Xvfb pid", { pid: xvfb.pid });
+      xvfb.stdout?.on("data", (chunk) => console.error("[vice-process][xvfb stdout]", chunk.toString().trim()));
+      xvfb.stderr?.on("data", (chunk) => console.error("[vice-process][xvfb stderr]", chunk.toString().trim()));
+    }
     viceEnv.DISPLAY = display;
     // Give the server a moment to come up before launching VICE
     await delay(200);
@@ -107,9 +116,25 @@ export async function startViceProcess(options: ViceProcessOptions): Promise<Vic
   ];
   if (options.warp !== false) args.push("-warp");
 
-  const spawnOptions: SpawnOptions = { stdio: "ignore", env: viceEnv };
+  if (debugEnabled) {
+    console.error("[vice-process] starting VICE", {
+      binary: options.binary,
+      args,
+      display: viceEnv.DISPLAY,
+      warp: options.warp !== false,
+    });
+  }
+
+  const spawnOptions: SpawnOptions = debugEnabled
+    ? { stdio: ["ignore", "pipe", "pipe"], env: viceEnv }
+    : { stdio: "ignore", env: viceEnv };
   let spawnError: Error | null = null;
   const child = spawn(options.binary, args, spawnOptions);
+  if (debugEnabled) {
+    console.error("[vice-process] VICE pid", { pid: child.pid });
+    child.stdout?.on("data", (chunk) => console.error("[vice-process][vice stdout]", chunk.toString().trim()));
+    child.stderr?.on("data", (chunk) => console.error("[vice-process][vice stderr]", chunk.toString().trim()));
+  }
   child.once("error", (err) => { spawnError = err; });
 
   try {
@@ -127,6 +152,9 @@ export async function startViceProcess(options: ViceProcessOptions): Promise<Vic
       child.once("error", onError);
       waitForPort(options.host, options.port)
         .then(() => {
+          if (debugEnabled) {
+            console.error("[vice-process] monitor port is ready", { host: options.host, port: options.port });
+          }
           child.removeListener("exit", onExit);
           child.removeListener("error", onError);
           resolve();
@@ -138,6 +166,9 @@ export async function startViceProcess(options: ViceProcessOptions): Promise<Vic
         });
     });
   } catch (err) {
+    if (debugEnabled) {
+      console.error("[vice-process] failed to start VICE", err instanceof Error ? err : new Error(String(err)));
+    }
     await terminateProcess(child, "SIGTERM", 500);
     await terminateProcess(child, "SIGKILL", 200);
     await terminateProcess(xvfb, "SIGTERM", 500);
@@ -146,6 +177,9 @@ export async function startViceProcess(options: ViceProcessOptions): Promise<Vic
   }
 
   const stop = async (): Promise<void> => {
+    if (debugEnabled) {
+      console.error("[vice-process] stopping VICE/xvfb");
+    }
     await terminateProcess(child, "SIGTERM", 750);
     if (child.exitCode === null && child.signalCode === null) {
       await terminateProcess(child, "SIGKILL", 300);
