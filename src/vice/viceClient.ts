@@ -89,9 +89,11 @@ export class ViceClient {
   private buffer: Buffer = Buffer.alloc(0);
   private nextReqId = 1;
   private pending: Map<number, PendingRequest> = new Map();
+  private closing = false;
 
   async connect(port: number, host = "127.0.0.1"): Promise<void> {
     this.socket = net.connect({ host, port });
+    this.closing = false;
     this.socket.setNoDelay(true);
     await new Promise<void>((resolve, reject) => {
       this.socket.once("connect", () => resolve());
@@ -102,16 +104,17 @@ export class ViceClient {
       this.rejectAllPending(err);
     });
     this.socket.on("close", (hadError) => {
+      if (this.pending.size === 0 || this.closing) {
+        return;
+      }
       const reason = hadError ? new Error("VICE monitor connection closed due to error") : new Error("VICE monitor connection closed");
       this.rejectAllPending(reason);
-    });
-    this.socket.on("end", () => {
-      this.rejectAllPending(new Error("VICE monitor connection ended"));
     });
   }
 
   close(): void {
     try {
+      this.closing = true;
       this.socket?.destroy();
     } catch {}
   }

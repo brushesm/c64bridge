@@ -88,6 +88,10 @@ const DEFAULT_C64U_PORT = 80;
 const DEFAULT_VICE_HOST = "127.0.0.1";
 const DEFAULT_VICE_PORT = 6502;
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function readConfigFile(): C64BridgeConfigFile | null {
   const envPath = process.env.C64BRIDGE_CONFIG;
   const candidates: string[] = [];
@@ -235,6 +239,7 @@ export class ViceBackend implements C64Facade {
   private readonly extraArgs: string[];
   private static readonly supervisors = new Map<string, ViceProcessHandle>();
   private readonly debugEnabled = process.env.VICE_DEVICE_TEST_DEBUG === "1";
+  private lastProcessStart = 0;
 
   constructor(config: ViceConfig) {
     const envBinary = configuredString(process.env.VICE_BINARY);
@@ -308,6 +313,7 @@ export class ViceBackend implements C64Facade {
       visible: this.visible,
       extraArgs: this.extraArgs.length > 0 ? this.extraArgs : undefined,
     });
+    this.lastProcessStart = Date.now();
     if (this.debugEnabled) {
       console.error("[vice-backend] VICE process started", { pid: handle.process.pid });
     }
@@ -325,6 +331,13 @@ export class ViceBackend implements C64Facade {
     const client = new ViceClient();
     if (this.debugEnabled) console.error("[vice-backend] connecting to VICE monitor", { host: this.host, port: this.port });
     await client.connect(this.port, this.host);
+    if (this.manageProcess && this.lastProcessStart > 0) {
+      const sinceStart = Date.now() - this.lastProcessStart;
+      const settleDelay = 200 - sinceStart;
+      if (settleDelay > 0) {
+        await delay(settleDelay);
+      }
+    }
     try {
       if (this.debugEnabled) console.error("[vice-backend] connected to VICE monitor");
       return await fn(client);
@@ -339,17 +352,23 @@ export class ViceBackend implements C64Facade {
   }
 
   async ping(): Promise<boolean> {
-    try {
-      await this.withClient(async (client) => {
-        await client.info();
-      });
-      return true;
-    } catch (error) {
-      if (this.debugEnabled) {
-        console.error("[vice-backend] ping failed", error);
+    const attempts = 3;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        await this.withClient(async (client) => {
+          await client.info();
+        });
+        return true;
+      } catch (error) {
+        if (this.debugEnabled) {
+          console.error(`[vice-backend] ping failed (attempt ${attempt}/${attempts})`, error);
+        }
+        if (attempt < attempts) {
+          await delay(150 * attempt);
+        }
       }
-      return false;
     }
+    return false;
   }
 
   private async injectPrg(buffer: Buffer): Promise<void> {
