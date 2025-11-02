@@ -396,6 +396,7 @@ export class ViceBackend implements C64Facade {
   async reset(): Promise<RunResult> {
     await this.withClient(async (client) => {
       await client.reset();
+      await waitForBasicReady(client, { timeoutMs: 20_000, ensurePrompt: true });
     });
     return { success: true };
   }
