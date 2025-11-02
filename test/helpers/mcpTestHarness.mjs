@@ -10,6 +10,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { ListToolsResultSchema, ReadResourceResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { startMockC64Server } from "../../scripts/mockC64Server.mjs";
+import { startViceMockServer } from "../../src/vice/mockServer.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -85,6 +86,13 @@ let shutdownInFlight;
 
 async function setupSharedServer() {
   const mockServer = await startMockC64Server();
+  const viceMockFlag = (process.env.C64_TEST_ENABLE_VICE_MOCK ?? "").toLowerCase();
+  const shouldStartViceMock = (process.env.C64_MODE ?? "").toLowerCase() === "vice"
+    || viceMockFlag === "true"
+    || viceMockFlag === "1";
+  const viceMockServer = shouldStartViceMock
+    ? await startViceMockServer({ host: "127.0.0.1" })
+    : null;
 
   const useBunRunner = typeof globalThis.Bun !== "undefined";
   const serverEntrypointTs = path.join(repoRoot, "src", "mcp-server.ts");
@@ -103,6 +111,12 @@ async function setupSharedServer() {
       port: mockUrl.port ? Number(mockUrl.port) : 80,
     },
   };
+  if (viceMockServer) {
+    configPayload.vice = {
+      host: "127.0.0.1",
+      port: viceMockServer.port,
+    };
+  }
   fs.writeFileSync(configPath, JSON.stringify(configPayload), "utf8");
 
   const transport = new StdioClientTransport({
@@ -131,108 +145,131 @@ async function setupSharedServer() {
     },
   );
 
-  const stderrChunks = [];
-  const stderr = transport.stderr;
-  if (stderr) {
-    stderr.setEncoding("utf8");
-    stderr.on("data", (chunk) => stderrChunks.push(chunk));
-  }
-
-  let resolveClose;
-  const closePromise = new Promise((resolve) => {
-    resolveClose = resolve;
-  });
-
-  const previousOnClose = client.onclose;
-  client.onclose = () => {
-    previousOnClose?.();
-    resolveClose?.();
-  };
-
-  await client.connect(transport);
-
-  const toolSupport = new Map();
-  let activePlatform = (process.env.C64_MODE ?? "").toLowerCase() === "vice" ? "vice" : "c64u";
-
   try {
-    const toolList = await client.request({ method: "tools/list", params: {} }, ListToolsResultSchema);
-    for (const descriptor of toolList.tools ?? []) {
-      const rawPlatforms = Array.isArray(descriptor.metadata?.platforms) && descriptor.metadata.platforms.length > 0
-        ? descriptor.metadata.platforms
-        : ["c64u"];
-      const unique = Array.from(new Set(rawPlatforms.map((value) => String(value).toLowerCase())));
-      toolSupport.set(descriptor.name, Object.freeze(unique));
+    const stderrChunks = [];
+    const stderr = transport.stderr;
+    if (stderr) {
+      stderr.setEncoding("utf8");
+      stderr.on("data", (chunk) => stderrChunks.push(chunk));
     }
-  } catch {
-    // Ignore discovery errors; default behaviour assumes c64u-only tools when metadata is unavailable.
-  }
 
-  try {
-    const resource = await client.request(
-      { method: "resources/read", params: { uri: PLATFORM_RESOURCE_URI } },
-      ReadResourceResultSchema,
-    );
-    const text = resource.contents?.[0]?.text ?? "";
-    const match = text.match(/Current platform:\s*`([^`]+)`/i);
-    if (match) {
-      const candidate = match[1].trim().toLowerCase();
-      if (candidate === "vice" || candidate === "c64u") {
-        activePlatform = candidate;
-      }
-    }
-  } catch {
-    // Resource fetch is best-effort; fall back to environment when unavailable.
-  }
+    let resolveClose;
+    const closePromise = new Promise((resolve) => {
+      resolveClose = resolve;
+    });
 
-  let shutdownStarted = false;
-  async function shutdown({ force = false } = {}) {
-    if (shutdownStarted) {
-      return;
-    }
-    shutdownStarted = true;
+    const previousOnClose = client.onclose;
+    client.onclose = () => {
+      previousOnClose?.();
+      resolveClose?.();
+    };
+
+    await client.connect(transport);
+
+    const toolSupport = new Map();
+    let activePlatform = (process.env.C64_MODE ?? "").toLowerCase() === "vice" ? "vice" : "c64u";
+
     try {
-      await client.close();
-      await closePromise;
-    } catch (error) {
-      if (force && transport.pid) {
-        try {
-          process.kill(transport.pid, "SIGKILL");
-        } catch {
-          // ignore kill failures
+      const toolList = await client.request({ method: "tools/list", params: {} }, ListToolsResultSchema);
+      for (const descriptor of toolList.tools ?? []) {
+        const rawPlatforms = Array.isArray(descriptor.metadata?.platforms) && descriptor.metadata.platforms.length > 0
+          ? descriptor.metadata.platforms
+          : ["c64u"];
+        const unique = Array.from(new Set(rawPlatforms.map((value) => String(value).toLowerCase())));
+        toolSupport.set(descriptor.name, Object.freeze(unique));
+      }
+    } catch {
+      // Ignore discovery errors; default behaviour assumes c64u-only tools when metadata is unavailable.
+    }
+
+    try {
+      const resource = await client.request(
+        { method: "resources/read", params: { uri: PLATFORM_RESOURCE_URI } },
+        ReadResourceResultSchema,
+      );
+      const text = resource.contents?.[0]?.text ?? "";
+      const match = text.match(/Current platform:\s*`([^`]+)`/i);
+      if (match) {
+        const candidate = match[1].trim().toLowerCase();
+        if (candidate === "vice" || candidate === "c64u") {
+          activePlatform = candidate;
         }
       }
-    } finally {
-      fs.rmSync(configPath, { force: true });
-      await mockServer.close();
+    } catch {
+      // Resource fetch is best-effort; fall back to environment when unavailable.
     }
-  }
 
-  function stderrOutput() {
-    if (stderrChunks.length === 0) {
-      return "";
-    }
-    const output = stderrChunks.join("");
-    stderrChunks.length = 0;
-    return output;
-  }
-
-  return {
-    client,
-    transport,
-    mockServer,
-    stderrOutput,
-    shutdown,
-    platform: activePlatform,
-    toolSupport,
-    isToolSupported(toolName, targetPlatform = activePlatform) {
-      const normalizedPlatform = targetPlatform === "vice" ? "vice" : "c64u";
-      const supported = toolSupport.get(toolName);
-      if (!supported || supported.length === 0) {
-        return normalizedPlatform === "c64u";
+    let shutdownStarted = false;
+    async function shutdown({ force = false } = {}) {
+      if (shutdownStarted) {
+        return;
       }
-      return supported.includes(normalizedPlatform);
-    },
-  };
+      shutdownStarted = true;
+      try {
+        await client.close();
+        await closePromise;
+      } catch (error) {
+        if (force && transport.pid) {
+          try {
+            process.kill(transport.pid, "SIGKILL");
+          } catch {
+            // ignore kill failures
+          }
+        }
+      } finally {
+        fs.rmSync(configPath, { force: true });
+        await mockServer.close();
+        if (viceMockServer) {
+          await viceMockServer.stop();
+        }
+      }
+    }
+
+    function stderrOutput() {
+      if (stderrChunks.length === 0) {
+        return "";
+      }
+      const output = stderrChunks.join("");
+      stderrChunks.length = 0;
+      return output;
+    }
+
+    return {
+      client,
+      transport,
+      mockServer,
+      stderrOutput,
+      shutdown,
+      platform: activePlatform,
+      toolSupport,
+      isToolSupported(toolName, targetPlatform = activePlatform) {
+        const normalizedPlatform = targetPlatform === "vice" ? "vice" : "c64u";
+        const supported = toolSupport.get(toolName);
+        if (!supported || supported.length === 0) {
+          return normalizedPlatform === "c64u";
+        }
+        return supported.includes(normalizedPlatform);
+      },
+    };
+  } catch (error) {
+    try {
+      await mockServer.close();
+    } catch {}
+    if (viceMockServer) {
+      try {
+        await viceMockServer.stop();
+      } catch {}
+    }
+    try {
+      fs.rmSync(configPath, { force: true });
+    } catch {}
+    if (transport?.pid) {
+      try {
+        process.kill(transport.pid, "SIGKILL");
+      } catch {}
+    }
+    throw error;
+  }
 }
 
 function isConnected(harness) {

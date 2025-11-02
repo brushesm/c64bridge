@@ -237,7 +237,10 @@ export class ViceBackend implements C64Facade {
 
   constructor(config: ViceConfig) {
     const envBinary = configuredString(process.env.VICE_BINARY);
-    this.exe = configuredString(config.exe) ?? envBinary ?? which("x64sc") ?? which("x64") ?? "x64sc";
+    const configBinary = config.exe !== undefined && config.exe !== null
+      ? configuredString(config.exe) ?? (typeof config.exe === "string" ? config.exe : String(config.exe))
+      : undefined;
+    this.exe = configBinary ?? envBinary ?? which("x64sc") ?? which("x64") ?? "x64sc";
 
     const envHost = normaliseViceHost(process.env.VICE_HOST);
     const envPort = normaliseVicePort(process.env.VICE_PORT);

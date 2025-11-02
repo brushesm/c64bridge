@@ -1,7 +1,14 @@
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { Buffer } from "node:buffer";
-import { getChargenGlyphs } from "../dist/chargen.js";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+const moduleDir = new URL(".", import.meta.url);
+const distUrl = new URL("../dist/chargen.js", moduleDir);
+const srcUrl = new URL("../src/chargen.js", moduleDir);
+const chargenModuleUrl = existsSync(fileURLToPath(distUrl)) ? distUrl : srcUrl;
+const { getChargenGlyphs } = await import(chargenModuleUrl.href);
 
 function parseNumeric(value, defaultRadix = 16) {
   if (!value) {

@@ -21,7 +21,6 @@ function createMockClient(overrides = {}) {
 const platform = (process.env.C64_MODE ?? "").toLowerCase() === "vice" ? "vice" : "c64u";
 const isVice = platform === "vice";
 const testC64uOnly = isVice ? test.skip : test;
-const testViceOnly = isVice ? test : test.skip;
 
 // --- reset_c64 ---
 
@@ -220,17 +219,19 @@ testC64uOnly("poweroff handles exception", async () => {
   assert.equal(res.metadata?.error?.kind, "unknown");
 });
 
-testViceOnly("poweroff is unsupported on vice", async () => {
-  const ctx = {
-    client: createMockClient(),
-    logger: createLogger(),
-  };
+if (isVice) {
+  test("poweroff is unsupported on vice", async () => {
+    const ctx = {
+      client: createMockClient(),
+      logger: createLogger(),
+    };
 
-  await assert.rejects(
-    () => machineControlModule.invoke("poweroff", {}, ctx),
-    (error) => error?.name === "ToolUnsupportedPlatformError",
-  );
-});
+    await assert.rejects(
+      () => machineControlModule.invoke("poweroff", {}, ctx),
+      (error) => error?.name === "ToolUnsupportedPlatformError",
+    );
+  });
+}
 
 // --- menu_button ---
 
@@ -269,14 +270,16 @@ testC64uOnly("menu_button handles exception", async () => {
   assert.equal(res.metadata?.error?.kind, "unknown");
 });
 
-testViceOnly("menu_button is unsupported on vice", async () => {
-  const ctx = {
-    client: createMockClient(),
-    logger: createLogger(),
-  };
+if (isVice) {
+  test("menu_button is unsupported on vice", async () => {
+    const ctx = {
+      client: createMockClient(),
+      logger: createLogger(),
+    };
 
-  await assert.rejects(
-    () => machineControlModule.invoke("menu_button", {}, ctx),
-    (error) => error?.name === "ToolUnsupportedPlatformError",
-  );
-});
+    await assert.rejects(
+      () => machineControlModule.invoke("menu_button", {}, ctx),
+      (error) => error?.name === "ToolUnsupportedPlatformError",
+    );
+  });
+}

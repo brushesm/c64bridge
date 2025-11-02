@@ -57,6 +57,14 @@ async function waitForPort(port: number, timeoutMs = 4000): Promise<void> {
   throw new Error(`Timeout waiting for port ${port}`);
 }
 
+/**
+ * Construct a minimal tokenised BASIC program that prints "HELLO" once.
+ *
+ * Layout:
+ * - $0801: start of BASIC program area
+ * - Line 10 (0x000A) with PRINT token ($99) followed by "HELLO"
+ * - Two zero bytes terminate the line and program
+ */
 function buildHelloProgramBody(): Buffer {
   return Buffer.from([
     0x0E,0x08,

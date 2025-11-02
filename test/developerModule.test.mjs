@@ -12,8 +12,8 @@ function createLogger() {
 }
 
 const platform = (process.env.C64_MODE ?? "").toLowerCase() === "vice" ? "vice" : "c64u";
-const testC64uOnly = platform === "vice" ? test.skip : test;
-const testViceOnly = platform === "vice" ? test : test.skip;
+const isVice = platform === "vice";
+const testC64uOnly = isVice ? test.skip : test;
 
 testC64uOnly("config_list returns categories", async () => {
   const ctx = {
@@ -293,18 +293,20 @@ testC64uOnly("config_reset_to_default failure", async () => {
   assert.ok(result.content[0].text.includes("firmware reported failure"));
 });
 
-testViceOnly("developer tools are unavailable on vice", async () => {
-  const ctx = {
-    client: {
-      async configsList() {
-        throw new Error("should not run");
+if (isVice) {
+  test("developer tools are unavailable on vice", async () => {
+    const ctx = {
+      client: {
+        async configsList() {
+          throw new Error("should not run");
+        },
       },
-    },
-    logger: createLogger(),
-  };
+      logger: createLogger(),
+    };
 
-  await assert.rejects(
-    () => developerModule.invoke("config_list", {}, ctx),
-    (error) => error?.name === "ToolUnsupportedPlatformError",
-  );
-});
+    await assert.rejects(
+      () => developerModule.invoke("config_list", {}, ctx),
+      (error) => error?.name === "ToolUnsupportedPlatformError",
+    );
+  });
+}

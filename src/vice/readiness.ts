@@ -8,7 +8,7 @@ export type TimingSink = (label: string, start: bigint) => void;
 function nowNs(): bigint { return process.hrtime.bigint(); }
 function msSince(start: bigint): number { return Number((process.hrtime.bigint() - start) / 1_000_000n); }
 
-async function resumeEmulation(bm: ViceClient): Promise<void> {
+async function exitMonitorIfNeeded(bm: ViceClient): Promise<void> {
   try {
     await bm.exitMonitor();
   } catch {
@@ -37,11 +37,11 @@ export async function waitForScreenPattern(
     onRead?.("bm_read_screen", t);
     idx = screen.indexOf(pattern);
     if (idx >= 0) break;
-    await resumeEmulation(bm);
+    await exitMonitorIfNeeded(bm);
     if (between) await between();
     await new Promise((r) => setTimeout(r, Math.max(1, tickMs)));
   }
-  await resumeEmulation(bm);
+  await exitMonitorIfNeeded(bm);
   return idx;
 }
 
@@ -64,11 +64,11 @@ export async function waitForAnyScreenText(
         return true;
       }
     }
-    await resumeEmulation(bm);
+    await exitMonitorIfNeeded(bm);
     if (between) await between();
     await new Promise((r) => setTimeout(r, Math.max(1, tickMs)));
   }
-  await resumeEmulation(bm);
+  await exitMonitorIfNeeded(bm);
   return false;
 }
 
@@ -96,26 +96,26 @@ export async function waitForBasicReady(
     options?.onPointersSample?.({ tx, va, ar, st });
     // Be tolerant: we only require TXTTAB at $0801; other pointers may lag until first input
     if (tx === 0x0801 && va >= 0x0801 && ar >= 0x0801 && st >= 0x0801) { pointersOk = true; break; }
-    await resumeEmulation(bm);
+    await exitMonitorIfNeeded(bm);
     await new Promise((r) => setTimeout(r, 50));
   }
   if (!pointersOk) return { pointersOk: false, promptOk: false };
 
   if (!options?.ensurePrompt) {
-    await resumeEmulation(bm);
+    await exitMonitorIfNeeded(bm);
     return { pointersOk: true, promptOk: false };
   }
 
   // Coax READY. by hitting RETURN, then poll for READY.
   await bm.keyboardFeed("\r");
-  await resumeEmulation(bm);
+  await exitMonitorIfNeeded(bm);
   const promptIdx = await waitForScreenPattern(
     bm,
     buildReadyPattern(),
     timeoutMs,
     50,
     options?.onScreenRead,
-    async () => { await resumeEmulation(bm); },
+    async () => { await exitMonitorIfNeeded(bm); },
   );
   return { pointersOk: true, promptOk: promptIdx >= 0 };
 }

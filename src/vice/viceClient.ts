@@ -234,6 +234,7 @@ export class ViceClient {
     const body = Buffer.concat([Buffer.from([bytes.length & 0xff]), bytes]);
     await this.send(0x72, body);
   }
+
   async checkpointGet(id: number): Promise<ViceCheckpoint> {
     const body = Buffer.alloc(4);
     body.writeUInt32LE(id >>> 0, 0);

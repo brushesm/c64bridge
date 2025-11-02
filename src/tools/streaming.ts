@@ -54,6 +54,7 @@ export const streamingModule = defineToolModule({
   prompts: ["sid-music"],
   defaultLifecycle: "stream",
   defaultTags: ["stream", "monitoring"],
+  supportedPlatforms: ["c64u"] as const,
   workflowHints: [
     "Use streaming tools for long-running capture or monitoring workflows such as audio verification.",
     "Clarify that streams keep running until stopped so the user can manage resources.",

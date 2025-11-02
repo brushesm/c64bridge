@@ -3,6 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import process from "node:process";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_TARGET = "mock";
@@ -105,7 +106,34 @@ const cmd = [
 ];
 const bunRuntime = (globalThis as { Bun?: any }).Bun;
 if (!bunRuntime || typeof bunRuntime.spawn !== "function") {
-  throw new Error("[run-tests] Bun runtime is required to execute tests");
+  console.warn("[run-tests] Bun runtime not detected; falling back to Node runner");
+  if (runCoverage) {
+    console.warn("[run-tests] Coverage reporting is unavailable in Node fallback mode");
+  }
+  const nodeScript = path.join(repoRoot, "scripts", "run-tests.mjs");
+  const fallbackArgs = [] as string[];
+  if (target !== DEFAULT_TARGET) {
+    fallbackArgs.push(`--target=${target}`);
+  }
+  if (explicitBaseUrl) {
+    fallbackArgs.push(`--base-url=${explicitBaseUrl}`);
+  }
+  fallbackArgs.push(...passthrough);
+  const fallbackExit = await new Promise<number>((resolve) => {
+    const childProcess = spawn(process.execPath, [nodeScript, ...fallbackArgs], {
+      cwd: repoRoot,
+      env,
+      stdio: "inherit",
+    });
+    childProcess.on("error", (error) => {
+      console.error("[run-tests] Failed to launch Node fallback:", error);
+      resolve(1);
+    });
+    childProcess.on("exit", (code) => {
+      resolve(typeof code === "number" ? code : 1);
+    });
+  });
+  process.exit(fallbackExit);
 }
 const child = bunRuntime.spawn({
   cmd,

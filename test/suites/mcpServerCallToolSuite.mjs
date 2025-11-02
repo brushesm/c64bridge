@@ -50,7 +50,7 @@ function toolIsAvailable(ctx, toolName) {
     try {
       return ctx.isToolSupported(toolName);
     } catch {
-      return true;
+      return false;
     }
   }
   return true;
