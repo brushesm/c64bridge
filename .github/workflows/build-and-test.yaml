@@ -38,7 +38,7 @@ jobs:
         env:
           VICE_DEVICE_TEST_DEBUG: "1"
           npm_config_loglevel: verbose
-        run: npm run test -- --platform=vice --target=device --reporter=spec
+        run: npm run test -- --platform=vice --target=device --reporter=dots
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
         with:
