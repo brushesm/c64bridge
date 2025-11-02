@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import fs from "node:fs";
 import net from "node:net";
 
 export interface ViceProcessOptions {
@@ -93,6 +94,7 @@ export async function startViceProcess(options: ViceProcessOptions): Promise<Vic
   let xvfb: ChildProcess | null = null;
 
   if (useXvfb) {
+    ensureXvfbSocketDir(debugEnabled);
     if (debugEnabled) {
       console.error("[vice-process] launching Xvfb", { display });
     }
@@ -195,4 +197,18 @@ export async function startViceProcess(options: ViceProcessOptions): Promise<Vic
   });
 
   return { host: options.host, port: options.port, process: child, stop };
+}
+
+function ensureXvfbSocketDir(debugEnabled: boolean): void {
+  const socketDir = "/tmp/.X11-unix";
+  try {
+    if (!fs.existsSync(socketDir)) {
+      fs.mkdirSync(socketDir, { mode: 0o1777 });
+    }
+    fs.chmodSync(socketDir, 0o1777);
+  } catch (error) {
+    if (debugEnabled) {
+      console.error("[vice-process] failed to prepare Xvfb socket dir", error);
+    }
+  }
 }
