@@ -1,6 +1,7 @@
 import test from "#test/runner";
 import assert from "#test/assert";
 import { streamingModule } from "../src/tools/streaming.js";
+import { getPlatformStatus, setPlatform } from "../src/platform.js";
 
 function createCtx() {
   return {
@@ -17,6 +18,16 @@ function createCtx() {
 const platform = (process.env.C64_MODE ?? "").toLowerCase() === "vice" ? "vice" : "c64u";
 const isVice = platform === "vice";
 const testC64uOnly = isVice ? test.skip : test;
+
+async function runWithPlatform(target, fn) {
+  const original = getPlatformStatus().id;
+  try {
+    setPlatform(target);
+    await fn();
+  } finally {
+    setPlatform(original);
+  }
+}
 
 testC64uOnly("stream_start forwards parsed payload", async () => {
   const ctx = createCtx();
@@ -89,14 +100,15 @@ testC64uOnly("stream_stop surfaces firmware failure", async () => {
 });
 
 if (isVice) {
-  test("streaming tools are unavailable on vice", async () => {
-    await assert.rejects(
-      () => streamingModule.invoke(
-        "stream_start",
-        { stream: "audio", target: "127.0.0.1:9000" },
-        createCtx(),
-      ),
-      (error) => error?.name === "ToolUnsupportedPlatformError",
-    );
-  });
+  test("streaming tools are unavailable on vice", () =>
+    runWithPlatform("vice", async () => {
+      await assert.rejects(
+        () => streamingModule.invoke(
+          "stream_start",
+          { stream: "audio", target: "127.0.0.1:9000" },
+          createCtx(),
+        ),
+        (error) => error?.name === "ToolUnsupportedPlatformError",
+      );
+    }));
 }

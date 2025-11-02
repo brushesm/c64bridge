@@ -44,6 +44,8 @@ bun install          # faster workflow (respects package-lock)
 
 The runner still accepts legacy flags (`--mock`, `--real`) for c64u workflows, but the explicit matrix keeps cross-platform runs symmetrical.
 
+> **Note**: Only suites that explicitly opt-in touch real hardware. Today that is `test/device.test.mjs` (real VICE via `target=device`) and the "C64Client against real C64" block in `test/c64Client.test.mjs` when `C64_TEST_TARGET=real`; all other tests continue to run against mocks even under a hardware matrix leg.
+
 Subsequent `npm run build` invocations reuse the incremental cache stored in `dist/.tsbuildinfo`; delete that file (or `dist/`) for a fully clean rebuild when needed.
 
 ## 3. Repository Layout (Essentials)

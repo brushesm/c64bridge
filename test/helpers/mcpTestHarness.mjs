@@ -87,9 +87,10 @@ let shutdownInFlight;
 async function setupSharedServer() {
   const mockServer = await startMockC64Server();
   const viceMockFlag = (process.env.C64_TEST_ENABLE_VICE_MOCK ?? "").toLowerCase();
-  const shouldStartViceMock = (process.env.C64_MODE ?? "").toLowerCase() === "vice"
-    || viceMockFlag === "true"
-    || viceMockFlag === "1";
+  const viceTarget = (process.env.VICE_TEST_TARGET ?? "mock").toLowerCase();
+  const shouldStartViceMock = viceMockFlag === "true"
+    || viceMockFlag === "1"
+    || ((process.env.C64_MODE ?? "").toLowerCase() === "vice" && viceTarget !== "vice");
   const viceMockServer = shouldStartViceMock
     ? await startViceMockServer({ host: "127.0.0.1" })
     : null;
