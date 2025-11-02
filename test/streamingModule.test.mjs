@@ -14,7 +14,11 @@ function createCtx() {
   };
 }
 
-test("stream_start forwards parsed payload", async () => {
+const platform = (process.env.C64_MODE ?? "").toLowerCase() === "vice" ? "vice" : "c64u";
+const isVice = platform === "vice";
+const testC64uOnly = isVice ? test.skip : test;
+
+testC64uOnly("stream_start forwards parsed payload", async () => {
   const ctx = createCtx();
   const calls = [];
   ctx.client.streamStart = async (stream, target) => {
@@ -34,7 +38,7 @@ test("stream_start forwards parsed payload", async () => {
   assert.deepEqual(result.metadata.details, { mode: "audio" });
 });
 
-test("stream_start surfaces firmware failure", async () => {
+testC64uOnly("stream_start surfaces firmware failure", async () => {
   const ctx = createCtx();
   ctx.client.streamStart = async () => ({ success: false, details: { reason: "busy" } });
 
@@ -49,7 +53,7 @@ test("stream_start surfaces firmware failure", async () => {
   assert.deepEqual(result.metadata.error.details, { reason: "busy" });
 });
 
-test("stream_stop forwards parsed payload", async () => {
+testC64uOnly("stream_stop forwards parsed payload", async () => {
   const ctx = createCtx();
   const calls = [];
   ctx.client.streamStop = async (stream) => {
@@ -69,7 +73,7 @@ test("stream_stop forwards parsed payload", async () => {
   assert.deepEqual(result.metadata.details, { stopped: "debug" });
 });
 
-test("stream_stop surfaces firmware failure", async () => {
+testC64uOnly("stream_stop surfaces firmware failure", async () => {
   const ctx = createCtx();
   ctx.client.streamStop = async () => ({ success: false, details: { reason: "not-running" } });
 
@@ -83,3 +87,16 @@ test("stream_stop surfaces firmware failure", async () => {
   assert.equal(result.metadata.error.kind, "execution");
   assert.deepEqual(result.metadata.error.details, { reason: "not-running" });
 });
+
+if (isVice) {
+  test("streaming tools are unavailable on vice", async () => {
+    await assert.rejects(
+      () => streamingModule.invoke(
+        "stream_start",
+        { stream: "audio", target: "127.0.0.1:9000" },
+        createCtx(),
+      ),
+      (error) => error?.name === "ToolUnsupportedPlatformError",
+    );
+  });
+}

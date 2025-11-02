@@ -30,7 +30,7 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Build project
         run: bun run build
-      - name: Run test coverage (Bun)
+      - name: Run c64u mock tests with coverage
         run: bun run coverage
       - name: Run vice mock tests
         run: npm run test -- --platform=vice --target=mock
