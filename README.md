@@ -14,8 +14,7 @@ Your AI Command Bridge for the Commodore 64.
 
 C64 Bridge is a Model Context Protocol ([MCP](https://modelcontextprotocol.io/docs/getting-started/intro)) server that drives a real Commodore 64 Ultimate or Ultimate 64 over their REST APIs. 
 
-
-It is built on the official TypeScript `@modelcontextprotocol/sdk` and speaks stdio by default (editor‑friendly, zero config) but also supports HTTP.
+It is built on the official TypeScript `@modelcontextprotocol/sdk`. By default, it uses stdio (standard input/output) so AI tools like Copilot can talk to it directly on your machine. It can also expose an HTTP interface for remote access by other apps.
 
 ## Features
 
