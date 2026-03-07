@@ -3,6 +3,8 @@
  */
 import net from "node:net";
 
+type ViceDataChunk = string | Uint8Array<ArrayBufferLike>;
+
 export class ViceClient {
   private socket!: net.Socket;
   private buffer: Buffer = Buffer.alloc(0);
@@ -16,7 +18,7 @@ export class ViceClient {
       this.socket.once("connect", () => resolve());
       this.socket.once("error", reject);
     });
-    this.socket.on("data", (chunk) => this.onData(chunk));
+    this.socket.on("data", (chunk: ViceDataChunk) => this.onData(chunk));
     this.socket.on("error", (err) => {
       for (const [, p] of this.pending) p.reject(err);
       this.pending.clear();
@@ -25,8 +27,9 @@ export class ViceClient {
 
   close(): void { try { this.socket?.destroy(); } catch {} }
 
-  private onData(chunk: Buffer): void {
-    this.buffer = Buffer.concat([this.buffer, chunk]);
+  private onData(chunk: ViceDataChunk): void {
+    const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    this.buffer = Buffer.concat([this.buffer, data]);
     // Frame: [0]=0x02, [1]=0x02, [2..5]=len, [6]=respType, [7]=err, [8..11]=reqId, [12..]=body
     while (this.buffer.length >= 12) {
       if (this.buffer[0] !== 0x02 || this.buffer[1] !== 0x02) {
