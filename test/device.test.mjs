@@ -427,6 +427,7 @@ test("device: createFacade with config file", async (t) => {
     const { facade, selected, reason } = await createFacade();
     assert.equal(selected, "c64u");
     assert.equal(reason, "config only");
+    assert.equal(await facade.ping(), true);
     const info = await facade.info();
     assert.ok(info && typeof info === "object");
     assert.equal(mock.state.lastRequest.headers["x-password"], "open-sesame");

@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "#test/runner";
@@ -145,5 +145,45 @@ test("loadConfig includes networkPassword from c64u config", (t) => {
       process.env.C64BRIDGE_CONFIG = originalEnv;
     }
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+test("loadConfig prefers repo config over home config when env is unset", (t) => {
+  const originalEnv = process.env.C64BRIDGE_CONFIG;
+  const originalHome = process.env.HOME;
+  const repoConfigPath = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", ".c64bridge.json");
+  const repoConfigExisted = existsSync(repoConfigPath);
+  const repoConfigContents = repoConfigExisted ? readFileSync(repoConfigPath, "utf8") : null;
+  const homeDir = mkdtempSync(path.join(tmpdir(), "c64-home-"));
+
+  writeFileSync(path.join(homeDir, ".c64bridge.json"), JSON.stringify({ c64u: { host: "home.example" } }, null, 2), "utf8");
+  writeFileSync(repoConfigPath, JSON.stringify({ c64u: { host: "repo.example" } }, null, 2), "utf8");
+
+  delete process.env.C64BRIDGE_CONFIG;
+  process.env.HOME = homeDir;
+  __resetConfigCacheForTests();
+
+  const config = loadConfig();
+  assert.equal(config.c64_host, "repo.example");
+  assert.equal(config.baseUrl, "http://repo.example");
+
+  t.after(() => {
+    __resetConfigCacheForTests();
+    if (originalEnv === undefined) {
+      delete process.env.C64BRIDGE_CONFIG;
+    } else {
+      process.env.C64BRIDGE_CONFIG = originalEnv;
+    }
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (repoConfigExisted && repoConfigContents !== null) {
+      writeFileSync(repoConfigPath, repoConfigContents, "utf8");
+    } else if (existsSync(repoConfigPath)) {
+      unlinkSync(repoConfigPath);
+    }
+    rmSync(homeDir, { recursive: true, force: true });
   });
 });

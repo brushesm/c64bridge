@@ -55,6 +55,169 @@ async function importFixtureStart(fixtureDir) {
   }
 }
 
+test("start script helper functions handle project root and file checks", async (t) => {
+  const fixture = createFixture();
+  writeFile(path.join(fixture.dir, "plain-file.txt"), "hello\n");
+
+  t.after(() => {
+    fs.rmSync(fixture.dir, { recursive: true, force: true });
+  });
+
+  const startModule = await importFixtureStart(fixture.dir);
+
+  const restoreProjectRoot = withTempEnv({
+    C64BRIDGE_PROJECT_ROOT: fixture.dir,
+  });
+  try {
+    assert.equal(startModule.resolveProjectRoot(), fixture.dir);
+  } finally {
+    restoreProjectRoot();
+  }
+
+  const restoreDefaultProjectRoot = withTempEnv({
+    C64BRIDGE_PROJECT_ROOT: undefined,
+  });
+  try {
+    assert.equal(startModule.resolveProjectRoot(), repoRoot);
+  } finally {
+    restoreDefaultProjectRoot();
+  }
+
+  const restoreForceNode = withTempEnv({
+    C64BRIDGE_START_FORCE_NODE_RUNTIME: "1",
+  });
+  try {
+    assert.equal(startModule.shouldImportTypeScriptDirectly(), false);
+  } finally {
+    restoreForceNode();
+  }
+
+  assert.equal(await startModule.fileExists(path.join(fixture.dir, "plain-file.txt")), true);
+  assert.equal(await startModule.fileExists(path.join(fixture.dir, "missing.txt")), false);
+  assert.equal(await startModule.fileExists(path.join(fixture.dir, "plain-file.txt", "child.txt")), false);
+});
+
+test("start script resolves configured Bun executables and default fallback", async (t) => {
+  const fixture = createFixture();
+  const configuredBun = path.join(fixture.dir, "configured-bun.sh");
+  const installBun = path.join(fixture.dir, "bun-home", "bin", "bun");
+  writeFile(configuredBun, "#!/bin/sh\nexit 0\n", 0o755);
+  writeFile(installBun, "#!/bin/sh\nexit 0\n", 0o755);
+
+  t.after(() => {
+    fs.rmSync(fixture.dir, { recursive: true, force: true });
+  });
+
+  const startModule = await importFixtureStart(fixture.dir);
+
+  const restoreConfigured = withTempEnv({
+    BUN_BIN: "",
+    C64BRIDGE_TEST_BUN_BIN: path.join(fixture.dir, "missing-bun.sh"),
+    C64BRIDGE_BUN_BIN: configuredBun,
+    BUN_INSTALL: undefined,
+    HOME: fixture.dir,
+  });
+  try {
+    assert.equal(startModule.resolveBunExecutable(), configuredBun);
+  } finally {
+    restoreConfigured();
+  }
+
+  const restoreInstall = withTempEnv({
+    BUN_BIN: undefined,
+    C64BRIDGE_TEST_BUN_BIN: undefined,
+    C64BRIDGE_BUN_BIN: undefined,
+    BUN_INSTALL: path.join(fixture.dir, "bun-home"),
+    HOME: fixture.dir,
+  });
+  try {
+    assert.equal(startModule.resolveBunExecutable(), installBun);
+  } finally {
+    restoreInstall();
+  }
+
+  const restoreFallback = withTempEnv({
+    BUN_BIN: undefined,
+    C64BRIDGE_TEST_BUN_BIN: undefined,
+    C64BRIDGE_BUN_BIN: undefined,
+    BUN_INSTALL: undefined,
+    HOME: fixture.dir,
+  });
+  try {
+    assert.equal(startModule.resolveBunExecutable(), "bun");
+  } finally {
+    restoreFallback();
+  }
+});
+
+test("start script handles Bun child process signals", async (t) => {
+  const fixture = createFixture();
+  const stubPath = path.join(fixture.dir, "bun-signal.sh");
+  writeFile(
+    stubPath,
+    "#!/bin/sh\nkill -TERM $$\n",
+    0o755,
+  );
+
+  const signals = [];
+  const oldKill = process.kill;
+  t.after(() => {
+    process.kill = oldKill;
+    fs.rmSync(fixture.dir, { recursive: true, force: true });
+  });
+
+  process.kill = (pid, signal) => {
+    signals.push([pid, signal]);
+    return true;
+  };
+
+  const startModule = await importFixtureStart(fixture.dir);
+  const restoreEnv = withTempEnv({
+    BUN_BIN: stubPath,
+    HOME: fixture.dir,
+  });
+  try {
+    assert.equal(await startModule.runWithBun(path.join(fixture.dir, "entry.ts")), true);
+  } finally {
+    restoreEnv();
+  }
+
+  assert.deepEqual(signals, [[process.pid, "SIGTERM"]]);
+});
+
+test("start script falls back to dist when Bun cannot be launched", async (t) => {
+  const fixture = createFixture();
+  const markerKey = `__startFixtureDistFallback_${Date.now()}`;
+  writeFile(path.join(fixture.dir, "src", "index.ts"), "export {};\n");
+  writeFile(
+    path.join(fixture.dir, "dist", "index.js"),
+    `globalThis.${markerKey} = "dist-fallback";\n`,
+  );
+
+  t.after(() => {
+    fs.rmSync(fixture.dir, { recursive: true, force: true });
+    delete globalThis[markerKey];
+  });
+
+  const startModule = await importFixtureStart(fixture.dir);
+  const restoreEnv = withTempEnv({
+    C64BRIDGE_PROJECT_ROOT: fixture.dir,
+    C64BRIDGE_START_FORCE_NODE_RUNTIME: "1",
+    BUN_BIN: path.join(fixture.dir, "missing-bun.sh"),
+    C64BRIDGE_TEST_BUN_BIN: undefined,
+    C64BRIDGE_BUN_BIN: undefined,
+    BUN_INSTALL: undefined,
+    HOME: fixture.dir,
+    PATH: fixture.dir,
+  });
+  try {
+    await startModule.launch();
+  } finally {
+    restoreEnv();
+  }
+
+  assert.equal(globalThis[markerKey], "dist-fallback");
+});
 test("start script imports src entry directly when running under Bun", async (t) => {
   const fixture = createFixture();
   const markerKey = `__startFixtureSrc_${Date.now()}`;
@@ -87,7 +250,7 @@ test("start script runs src via configured Bun executable when Bun global is una
   writeFile(path.join(fixture.dir, "src", "index.ts"), "export {};\n");
   writeFile(
     stubPath,
-    "#!/bin/sh\nprintf '%s\n' \"$1\" > \"$START_CAPTURE_FILE\"\n",
+    "#!/bin/sh\nprintf '%s\n%s\n' \"$PWD\" \"$1\" > \"$START_CAPTURE_FILE\"\n",
     0o755,
   );
 
@@ -101,6 +264,7 @@ test("start script runs src via configured Bun executable when Bun global is una
     C64BRIDGE_PROJECT_ROOT: fixture.dir,
     C64BRIDGE_START_FORCE_NODE_RUNTIME: "1",
     BUN_BIN: stubPath,
+    HOME: fixture.dir,
     START_CAPTURE_FILE: captureFile,
   });
   try {
@@ -110,8 +274,9 @@ test("start script runs src via configured Bun executable when Bun global is una
     process.exitCode = previousExitCode;
   }
 
-  const captured = fs.readFileSync(captureFile, "utf8").trim();
-  assert.equal(captured, path.join(fixture.dir, "src", "index.ts"));
+  const [capturedCwd, capturedEntry] = fs.readFileSync(captureFile, "utf8").trim().split("\n");
+  assert.equal(capturedCwd, fixture.dir);
+  assert.equal(capturedEntry, path.join(fixture.dir, "src", "index.ts"));
 });
 
 test("start script falls back to dist entry when src is unavailable", async (t) => {

@@ -59,7 +59,7 @@ It is based on the official TypeScript `@modelcontextprotocol/sdk` and supports 
 
 Verify: `node --version` → v24.x
 
-1) Run the server (choose one)
+2) Run the server (choose one)
 
 - npx (zero setup)
 
@@ -92,8 +92,8 @@ On start, the server probes your target (REST + zero‑page read) and prints dia
 The server reads configuration in this order:
 
 1. `C64BRIDGE_CONFIG`
-2. `~/.c64bridge.json`
-3. `./c64bridge.json`
+2. `.c64bridge.json` in the project root
+3. `~/.c64bridge.json`
 
 If no file is found, it defaults to `c64u:80`.
 

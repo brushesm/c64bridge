@@ -2,8 +2,8 @@
 /**
  * Flexible launcher for the MCP server.
  *
- * - Prefer running the TypeScript sources via ts-node when they are available
- *   (local development workflow).
+ * - Prefer running the TypeScript sources directly under Bun during local
+ *   development.
  * - Fall back to the compiled JavaScript in dist/ when the package is
  *   consumed from npm, where the sources and dev dependencies are omitted.
  */
@@ -40,22 +40,18 @@ async function fileExists(filePath) {
 }
 
 function resolveBunExecutable() {
+  const homeDir = process.env.HOME || os.homedir();
   const candidates = [
     process.env.BUN_BIN,
     process.env.C64BRIDGE_TEST_BUN_BIN,
     process.env.C64BRIDGE_BUN_BIN,
     process.env.BUN_INSTALL ? path.join(process.env.BUN_INSTALL, 'bin', 'bun') : null,
-    path.join(os.homedir(), '.bun', 'bin', 'bun'),
-    'bun',
+    homeDir ? path.join(homeDir, '.bun', 'bin', 'bun') : null,
   ];
 
   for (const candidate of candidates) {
     if (!candidate || !candidate.trim()) {
       continue;
-    }
-
-    if (candidate === 'bun') {
-      return 'bun';
     }
 
     try {
@@ -66,33 +62,43 @@ function resolveBunExecutable() {
     }
   }
 
-  return null;
+  return 'bun';
 }
 
 async function runWithBun(entryPath) {
   const bunExecutable = resolveBunExecutable();
-  if (!bunExecutable) {
-    return false;
+  const projectRoot = path.dirname(path.dirname(entryPath));
+
+  try {
+    await new Promise((resolve, reject) => {
+      const child = spawn(bunExecutable, [entryPath], {
+        cwd: projectRoot,
+        stdio: 'inherit',
+        env: {
+          ...process.env,
+        },
+      });
+
+      child.on('error', reject);
+      child.on('exit', (code, signal) => {
+        if (signal) {
+          try {
+            process.kill(process.pid, signal);
+          } catch {}
+          resolve();
+          return;
+        }
+        process.exitCode = code ?? 1;
+        resolve();
+      });
+    });
+  } catch (error) {
+    const err = error;
+    if (err && typeof err === 'object' && err.code === 'ENOENT') {
+      return false;
+    }
+    throw error;
   }
-
-  await new Promise((resolve, reject) => {
-    const child = spawn(bunExecutable, [entryPath], {
-      stdio: 'inherit',
-      env: {
-        ...process.env,
-      },
-    });
-
-    child.on('error', reject);
-    child.on('exit', (code, signal) => {
-      if (signal) {
-        process.kill(process.pid, signal);
-        return;
-      }
-      process.exitCode = code ?? 1;
-      resolve();
-    });
-  });
 
   return true;
 }

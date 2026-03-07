@@ -57,7 +57,7 @@ Subsequent `npm run build` invocations reuse the incremental cache stored in `di
 
 ## 5. Configuration & Backends
 
-Resolution order: `C64BRIDGE_CONFIG` → `~/.c64bridge.json` → `./c64bridge.json` → defaults (`host=c64u`, `port=80`). Supports hardware (`c64u`) and experimental VICE (`vice.exe`). For secured Ultimate firmware, set `c64u.networkPassword` in the config file to send `X-Password` on every REST request.
+Resolution order: `C64BRIDGE_CONFIG` → `./.c64bridge.json` → `~/.c64bridge.json` → defaults (`host=c64u`, `port=80`). Supports hardware (`c64u`) and experimental VICE (`vice.exe`). For secured Ultimate firmware, set `c64u.networkPassword` in the config file to send `X-Password` on every REST request.
 
 Key env flags:
 

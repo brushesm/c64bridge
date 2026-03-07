@@ -25,26 +25,28 @@ export function loadConfig(): C64BridgeConfig {
     return cachedConfig;
   }
 
-  const configPath = process.env.C64BRIDGE_CONFIG ?? `${process.env.HOME}/.c64bridge.json`;
+  const configPath = process.env.C64BRIDGE_CONFIG;
   const repoConfigPath = join(dirname(fileURLToPath(import.meta.url)), "..", ".c64bridge.json");
+  const homeConfigPath = process.env.HOME ? `${process.env.HOME}/.c64bridge.json` : null;
+  const candidatePaths = [configPath, repoConfigPath, homeConfigPath];
 
   let rawConfig: any;
-  try {
-    rawConfig = JSON.parse(readFileSync(configPath, "utf-8"));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      try {
-        rawConfig = JSON.parse(readFileSync(repoConfigPath, "utf-8"));
-      } catch (fallbackError) {
-        if ((fallbackError as NodeJS.ErrnoException).code === "ENOENT") {
-          rawConfig = {};
-        }
-        else throw fallbackError;
+  for (const candidatePath of candidatePaths) {
+    if (!candidatePath) {
+      continue;
+    }
+
+    try {
+      rawConfig = JSON.parse(readFileSync(candidatePath, "utf-8"));
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
       }
-    } else {
-      throw error;
     }
   }
+
+  rawConfig ??= {};
 
   // New schema: prefer c64u.{host,port,baseUrl}; keep legacy fields as fallback
   const c64u = rawConfig?.c64u as {
