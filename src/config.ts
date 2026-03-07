@@ -6,6 +6,7 @@ export interface C64BridgeConfig {
   c64_host: string;
   baseUrl: string;
   c64_port: number;
+  networkPassword?: string;
 }
 
 const DEFAULT_HOST = "c64u";
@@ -24,26 +25,28 @@ export function loadConfig(): C64BridgeConfig {
     return cachedConfig;
   }
 
-  const configPath = process.env.C64BRIDGE_CONFIG ?? `${process.env.HOME}/.c64bridge.json`;
+  const configPath = process.env.C64BRIDGE_CONFIG;
   const repoConfigPath = join(dirname(fileURLToPath(import.meta.url)), "..", ".c64bridge.json");
+  const homeConfigPath = process.env.HOME ? `${process.env.HOME}/.c64bridge.json` : null;
+  const candidatePaths = [configPath, repoConfigPath, homeConfigPath];
 
   let rawConfig: any;
-  try {
-    rawConfig = JSON.parse(readFileSync(configPath, "utf-8"));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      try {
-        rawConfig = JSON.parse(readFileSync(repoConfigPath, "utf-8"));
-      } catch (fallbackError) {
-        if ((fallbackError as NodeJS.ErrnoException).code === "ENOENT") {
-          rawConfig = {};
-        }
-        else throw fallbackError;
+  for (const candidatePath of candidatePaths) {
+    if (!candidatePath) {
+      continue;
+    }
+
+    try {
+      rawConfig = JSON.parse(readFileSync(candidatePath, "utf-8"));
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
       }
-    } else {
-      throw error;
     }
   }
+
+  rawConfig ??= {};
 
   // New schema: prefer c64u.{host,port,baseUrl}; keep legacy fields as fallback
   const c64u = rawConfig?.c64u as {
@@ -51,6 +54,7 @@ export function loadConfig(): C64BridgeConfig {
     hostname?: string;
     baseUrl?: string;
     port?: number | string;
+    networkPassword?: string;
   } | undefined;
 
   const parsedC64uHost = parseEndpoint(configuredString(c64u?.host));
@@ -90,6 +94,10 @@ export function loadConfig(): C64BridgeConfig {
     c64_host: hostWithPort,
     baseUrl,
     c64_port: port,
+    networkPassword: firstDefined(
+      configuredString(c64u?.networkPassword),
+      configuredString(rawConfig?.networkPassword),
+    ),
   };
 
   cachedConfig = config;

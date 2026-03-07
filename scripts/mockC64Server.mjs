@@ -74,6 +74,7 @@ function sendJson(res, payload = {}, statusCode = 200) {
 
 function createInitialState() {
   return {
+    networkPassword: null,
     lastPrg: null,
     runCount: 0,
     resets: 0,
@@ -145,8 +146,11 @@ function seedReadyPrompt(state) {
   state.memory.set(buffer, 0x0400);
 }
 
-export async function startMockC64Server() {
+export async function startMockC64Server(options = {}) {
   const state = createInitialState();
+  state.networkPassword = typeof options.networkPassword === "string" && options.networkPassword.trim()
+    ? options.networkPassword
+    : null;
 
   // seed memory with READY prompt at $0400 using screen codes
   seedReadyPrompt(state);
@@ -184,6 +188,11 @@ export async function startMockC64Server() {
 
     // Track last request metadata
     state.lastRequest = { method, url, headers: req.headers };
+
+    if (state.networkPassword && req.headers["x-password"] !== state.networkPassword) {
+      sendJson(res, { message: "Forbidden", errors: ["invalid network password"] }, 403);
+      return;
+    }
 
     if (method === "GET" && (url === "/" || url.startsWith("/?"))) {
       sendJson(res, { status: "ok", host: "mock" });
