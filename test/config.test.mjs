@@ -187,3 +187,62 @@ test("loadConfig prefers repo config over home config when env is unset", (t) =>
     rmSync(homeDir, { recursive: true, force: true });
   });
 });
+
+test("loadConfig falls back to defaults when no config candidates exist", (t) => {
+  const originalEnv = process.env.C64BRIDGE_CONFIG;
+  const originalHome = process.env.HOME;
+  const repoConfigPath = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", ".c64bridge.json");
+  const repoConfigExisted = existsSync(repoConfigPath);
+  const repoConfigContents = repoConfigExisted ? readFileSync(repoConfigPath, "utf8") : null;
+
+  delete process.env.C64BRIDGE_CONFIG;
+  delete process.env.HOME;
+  if (repoConfigExisted) {
+    unlinkSync(repoConfigPath);
+  }
+  __resetConfigCacheForTests();
+
+  const config = loadConfig();
+  assert.equal(config.c64_host, "c64u");
+  assert.equal(config.baseUrl, "http://c64u");
+  assert.equal(config.c64_port, 80);
+  assert.equal(config.networkPassword, undefined);
+
+  t.after(() => {
+    __resetConfigCacheForTests();
+    if (originalEnv === undefined) {
+      delete process.env.C64BRIDGE_CONFIG;
+    } else {
+      process.env.C64BRIDGE_CONFIG = originalEnv;
+    }
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (repoConfigExisted && repoConfigContents !== null) {
+      writeFileSync(repoConfigPath, repoConfigContents, "utf8");
+    }
+  });
+});
+
+test("loadConfig rethrows invalid JSON from configured path", (t) => {
+  const originalEnv = process.env.C64BRIDGE_CONFIG;
+  const { dir, file } = writeTempConfig({ c64u: { host: "placeholder" } });
+  writeFileSync(file, "{ invalid json\n", "utf8");
+
+  process.env.C64BRIDGE_CONFIG = file;
+  __resetConfigCacheForTests();
+
+  assert.throws(() => loadConfig(), /Unexpected token|Expected property name|JSON/);
+
+  t.after(() => {
+    __resetConfigCacheForTests();
+    if (originalEnv === undefined) {
+      delete process.env.C64BRIDGE_CONFIG;
+    } else {
+      process.env.C64BRIDGE_CONFIG = originalEnv;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+});

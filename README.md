@@ -87,17 +87,17 @@ Verify: `node --version` → v24.x
 
 On start, the server probes your target (REST + zero‑page read) and prints diagnostics before announcing that it is running on stdio.
 
-## Configure
+## Configuration
 
 The server reads configuration in this order:
 
-1. `C64BRIDGE_CONFIG`
+1. `C64BRIDGE_CONFIG` environment variable containing the path of the config file
 2. `.c64bridge.json` in the project root
-3. `~/.c64bridge.json`
+3. `~/.c64bridge.json` in your home directory
 
-If no file is found, it defaults to `c64u:80`.
+### C64 Ultimate
 
-Use this for a real C64 Ultimate:
+Use this for a C64 Ultimate:
 
 ```json
 {
@@ -109,7 +109,10 @@ Use this for a real C64 Ultimate:
 }
 ```
 
-A `networkPassword` is only required if you specified one in the C64 Ultimate menu under `Network Settings`.
+- If no file is found, it defaults to `c64u:80` and no network password.
+- A `networkPassword` is only required if you specified one in the C64 Ultimate menu under `Network Settings`.
+
+### VICE
 
 Use this for VICE:
 
@@ -120,11 +123,6 @@ Use this for VICE:
   }
 }
 ```
-
-Notes:
-
-- `C64_MODE=c64u|vice` forces the backend.
-- `LOG_LEVEL=debug` enables verbose logging on stderr.
 
 ## VS Code MCP Setup
 
@@ -175,7 +173,8 @@ You can add `env` entries in `.vscode/mcp.json` to select a config file or force
       ],
       "env": {
         "C64BRIDGE_CONFIG": "/home/you/.c64bridge.json",
-        "C64_MODE": "c64u"
+        "C64_MODE": "c64u",
+        "LOG_LEVEL": "debug",
       }
     }
   }
@@ -184,8 +183,7 @@ You can add `env` entries in `.vscode/mcp.json` to select a config file or force
 
 - `C64BRIDGE_CONFIG` points to a specific config file.
 - `C64_MODE` forces `c64u` or `vice`.
-
-If you do not set a config file, the server defaults to `c64u:80`.
+- `LOG_LEVEL=debug` enables verbose logging.
 
 ## Example
 
