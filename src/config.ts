@@ -6,6 +6,7 @@ export interface C64BridgeConfig {
   c64_host: string;
   baseUrl: string;
   c64_port: number;
+  networkPassword?: string;
 }
 
 const DEFAULT_HOST = "c64u";
@@ -51,6 +52,7 @@ export function loadConfig(): C64BridgeConfig {
     hostname?: string;
     baseUrl?: string;
     port?: number | string;
+    networkPassword?: string;
   } | undefined;
 
   const parsedC64uHost = parseEndpoint(configuredString(c64u?.host));
@@ -90,6 +92,10 @@ export function loadConfig(): C64BridgeConfig {
     c64_host: hostWithPort,
     baseUrl,
     c64_port: port,
+    networkPassword: firstDefined(
+      configuredString(c64u?.networkPassword),
+      configuredString(rawConfig?.networkPassword),
+    ),
   };
 
   cachedConfig = config;

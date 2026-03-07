@@ -103,10 +103,13 @@ Use this for a real C64 Ultimate:
 {
   "c64u": {
     "host": "c64u",
-    "port": 80
+    "port": 80,
+    "networkPassword": "secret"
   }
 }
 ```
+
+A `networkPassword` is only required if you specified one in the C64 Ultimate menu under `Network Settings`.
 
 Use this for VICE:
 
@@ -223,7 +226,7 @@ curl -s -X POST -H 'Content-Type: application/json' \
 - `npm run build` — type‑check and build
 - `npm test` — integration tests (mock)
 - `npm test -- --real` — target real hardware (reuses your config)
-- `npm run coverage` — coverage via Bun harness
+- `npm run coverage` — coverage via Bun harness (minimum 90%)
 
 ## Documentation
 

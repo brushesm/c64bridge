@@ -73,6 +73,7 @@ export interface C64uConfig {
   hostname?: string;
   baseUrl?: string;
   port?: number | string;
+  networkPassword?: string;
 }
 export interface ViceConfig { exe?: string }
 export interface C64BridgeConfigFile { c64u?: C64uConfig; vice?: ViceConfig }
@@ -106,12 +107,18 @@ function readConfigFile(): C64BridgeConfigFile | null {
 class C64uBackend implements C64Facade {
   readonly type = "c64u" as const;
   private readonly baseUrl: string;
+  private readonly networkPassword?: string;
   private readonly api: Api<unknown>;
 
   constructor(config: C64uConfig) {
     const baseUrl = resolveBaseUrl(config);
     this.baseUrl = baseUrl;
-    const http = createLoggingHttpClient({ baseURL: baseUrl, timeout: 10_000 });
+    this.networkPassword = configuredString(config.networkPassword);
+    const http = createLoggingHttpClient({
+      baseURL: baseUrl,
+      timeout: 10_000,
+      headers: buildC64uHeaders(this.networkPassword),
+    });
     this.api = new Api(http);
   }
 
@@ -119,7 +126,10 @@ class C64uBackend implements C64Facade {
 
   async ping(): Promise<boolean> {
     try {
-      const res = await axios.get(this.baseUrl, { timeout: 2000 });
+      const res = await axios.get(this.baseUrl, {
+        timeout: 2000,
+        headers: buildC64uHeaders(this.networkPassword),
+      });
       return res.status >= 200 && res.status < 500;
     } catch { return false; }
   }
@@ -328,12 +338,18 @@ async function spawnWithTimeout(file: string, args: string[], timeoutMs: number)
 
 export interface FacadeSelection { facade: C64Facade; selected: DeviceType; reason: string; details?: Record<string, unknown> }
 
-export interface FacadeOptions { preferredC64uBaseUrl?: string }
+export interface FacadeOptions {
+  preferredC64uBaseUrl?: string;
+  preferredC64uNetworkPassword?: string;
+}
 
 export async function createFacade(logger?: { info: (...a: any[]) => void }, options?: FacadeOptions): Promise<FacadeSelection> {
   // Caller-forced preference: use c64u with provided base URL (used by tests and server wiring)
   if (options?.preferredC64uBaseUrl) {
-    const backend = new C64uBackend({ baseUrl: options.preferredC64uBaseUrl });
+    const backend = new C64uBackend({
+      baseUrl: options.preferredC64uBaseUrl,
+      networkPassword: options.preferredC64uNetworkPassword,
+    });
     logger?.info?.("Active backend: c64u (forced by caller)");
     return { facade: backend, selected: "c64u", reason: "forced by caller", details: { baseUrl: options.preferredC64uBaseUrl } };
   }
@@ -450,6 +466,10 @@ function buildBaseUrl(host: string, port: number): string {
   const hostPart = formatHost(host);
   const suffix = normalizedPort === DEFAULT_C64U_PORT ? "" : `:${normalizedPort}`;
   return `http://${hostPart}${suffix}`;
+}
+
+function buildC64uHeaders(networkPassword?: string): Record<string, string> | undefined {
+  return networkPassword ? { "X-Password": networkPassword } : undefined;
 }
 
 function formatHost(host: string): string {

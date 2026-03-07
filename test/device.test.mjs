@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { createFacade } from "../src/device.js";
+import { startMockC64Server } from "../scripts/mockC64Server.mjs";
 
 test("device: ViceBackend unsupported operations", async (t) => {
   // Create a facade with vice backend by setting env
@@ -395,6 +396,40 @@ test("device: createFacade with config file", async (t) => {
     assert.equal(selected, "c64u");
     assert.equal(reason, "both defined (prefer c64u)");
     assert.equal(facade.type, "c64u");
+  });
+
+  await t.test("c64u config forwards networkPassword to REST backend", async () => {
+    const mock = await startMockC64Server({ networkPassword: "open-sesame" });
+    t.after(async () => {
+      await mock.close();
+    });
+
+    const oldEnv = process.env.C64BRIDGE_CONFIG;
+    const oldMode = process.env.C64_MODE;
+    process.env.C64BRIDGE_CONFIG = configPath;
+    delete process.env.C64_MODE;
+
+    t.after(() => {
+      if (oldEnv !== undefined) {
+        process.env.C64BRIDGE_CONFIG = oldEnv;
+      } else {
+        delete process.env.C64BRIDGE_CONFIG;
+      }
+      if (oldMode !== undefined) {
+        process.env.C64_MODE = oldMode;
+      }
+    });
+
+    fs.writeFileSync(configPath, JSON.stringify({
+      c64u: { baseUrl: mock.baseUrl, networkPassword: "open-sesame" },
+    }));
+
+    const { facade, selected, reason } = await createFacade();
+    assert.equal(selected, "c64u");
+    assert.equal(reason, "config only");
+    const info = await facade.info();
+    assert.ok(info && typeof info === "object");
+    assert.equal(mock.state.lastRequest.headers["x-password"], "open-sesame");
   });
 });
 

@@ -27,16 +27,24 @@ export interface MemoryReadResult {
   details?: unknown;
 }
 
+export interface C64ClientOptions {
+  networkPassword?: string;
+}
+
 export class C64Client {
   private readonly http: HttpClient<unknown>;
   private readonly api: Api<unknown>;
   private readonly facadePromise: Promise<C64Facade>;
 
-  constructor(baseUrl: string) {
-    this.http = createLoggingHttpClient({ baseURL: baseUrl, timeout: 10_000 });
+  constructor(baseUrl: string, options: C64ClientOptions = {}) {
+    const headers = options.networkPassword ? { "X-Password": options.networkPassword } : undefined;
+    this.http = createLoggingHttpClient({ baseURL: baseUrl, timeout: 10_000, headers });
     this.api = new Api(this.http);
     // Select backend once lazily; keep REST for hardware-specific fallbacks
-    this.facadePromise = createFacade(undefined, { preferredC64uBaseUrl: baseUrl }).then((sel) => sel.facade);
+    this.facadePromise = createFacade(undefined, {
+      preferredC64uBaseUrl: baseUrl,
+      preferredC64uNetworkPassword: options.networkPassword,
+    }).then((sel) => sel.facade);
   }
 
   /**

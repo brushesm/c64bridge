@@ -25,7 +25,7 @@ bun install          # faster workflow (respects package-lock)
 | Build + refresh generated docs | `npm run build` |
 | Tests (mock backend) | `npm test` |
 | Tests against hardware | `npm test -- --real [--base-url=http://host]` |
-| Coverage report | `npm run coverage` (emits `coverage/lcov.info`) |
+| Coverage report | `npm run coverage` (emits `coverage/lcov.info`, minimum 90%) |
 | End-to-end smoke (local/npm) | `npm run check:run-local` · `npm run check:run-npm` |
 | Node-only sanity | `npm run check:node-compat` |
 | VICE smoke (readiness + HELLO) | `npm run vice:smoke` |
@@ -57,7 +57,7 @@ Subsequent `npm run build` invocations reuse the incremental cache stored in `di
 
 ## 5. Configuration & Backends
 
-Resolution order: `C64BRIDGE_CONFIG` → `~/.c64bridge.json` → `./c64bridge.json` → defaults (`host=c64u`, `port=80`). Supports hardware (`c64u`) and experimental VICE (`vice.exe`).
+Resolution order: `C64BRIDGE_CONFIG` → `~/.c64bridge.json` → `./c64bridge.json` → defaults (`host=c64u`, `port=80`). Supports hardware (`c64u`) and experimental VICE (`vice.exe`). For secured Ultimate firmware, set `c64u.networkPassword` in the config file to send `X-Password` on every REST request.
 
 Key env flags:
 

@@ -68,7 +68,7 @@ async function main() {
   const baseUrl = config.baseUrl ?? `http://${config.c64_host}`;
   
   // Initialize C64 client (reuse existing)
-  const client = new C64Client(baseUrl);
+  const client = new C64Client(baseUrl, { networkPassword: config.networkPassword });
   const rag = await initRag();
 
   const toolLogger = loggerFor("tool");

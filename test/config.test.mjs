@@ -121,3 +121,29 @@ test("legacy configs with only baseUrl continue to work", (t) => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+test("loadConfig includes networkPassword from c64u config", (t) => {
+  const originalEnv = process.env.C64BRIDGE_CONFIG;
+  const { dir, file } = writeTempConfig({
+    c64u: {
+      host: "c64u.local",
+      networkPassword: "secret-pass",
+    },
+  });
+
+  process.env.C64BRIDGE_CONFIG = file;
+  __resetConfigCacheForTests();
+
+  const config = loadConfig();
+  assert.equal(config.networkPassword, "secret-pass");
+
+  t.after(() => {
+    __resetConfigCacheForTests();
+    if (originalEnv === undefined) {
+      delete process.env.C64BRIDGE_CONFIG;
+    } else {
+      process.env.C64BRIDGE_CONFIG = originalEnv;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+});

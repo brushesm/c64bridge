@@ -20,8 +20,10 @@ The server resolves config in this order: `C64BRIDGE_CONFIG` → `~/.c64bridge.j
 Example:
 
 ```json
-{ "c64u": { "host": "c64u", "port": 80 } }
+{ "c64u": { "host": "c64u", "port": 80, "networkPassword": "secret" } }
 ```
+
+When Ultimate firmware network protection is enabled, `networkPassword` is sent as the `X-Password` header on every REST request.
 
 3) VS Code Copilot Chat (MCP)
 

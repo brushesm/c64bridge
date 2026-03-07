@@ -143,6 +143,36 @@ test("C64Client against mock server", async (t) => {
     assert.ok(info && typeof info === "object");
   });
 
+  await t.test("networkPassword is sent as X-Password header when configured", async () => {
+    const passwordClient = new C64Client(mock.baseUrl, { networkPassword: "open-sesame" });
+    await passwordClient.info();
+    assert.equal(mock.state.lastRequest.headers["x-password"], "open-sesame");
+  });
+
+  await t.test("networkPassword-protected mock rejects missing or wrong passwords", async () => {
+    const protectedMock = await startMockC64Server({ networkPassword: "open-sesame" });
+    t.after(async () => {
+      await protectedMock.close();
+    });
+
+    const missingPasswordClient = new C64Client(protectedMock.baseUrl);
+    await assert.rejects(() => missingPasswordClient.info(), (error) => {
+      assert.equal(error?.response?.status, 403);
+      return true;
+    });
+
+    const wrongPasswordClient = new C64Client(protectedMock.baseUrl, { networkPassword: "wrong-pass" });
+    await assert.rejects(() => wrongPasswordClient.info(), (error) => {
+      assert.equal(error?.response?.status, 403);
+      return true;
+    });
+
+    const correctPasswordClient = new C64Client(protectedMock.baseUrl, { networkPassword: "open-sesame" });
+    const info = await correctPasswordClient.info();
+    assert.ok(info && typeof info === "object");
+    assert.equal(protectedMock.state.lastRequest.headers["x-password"], "open-sesame");
+  });
+
   await t.test("pause/resume and debugreg read/write work", async () => {
     let r = await client.pause();
     assert.equal(r.success, true);

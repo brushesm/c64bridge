@@ -15,7 +15,16 @@ import os from 'node:os';
 import { spawn } from 'node:child_process';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const projectRoot = path.resolve(here, '..');
+
+function resolveProjectRoot() {
+  return process.env.C64BRIDGE_PROJECT_ROOT
+    ? path.resolve(process.env.C64BRIDGE_PROJECT_ROOT)
+    : path.resolve(here, '..');
+}
+
+function shouldImportTypeScriptDirectly() {
+  return typeof globalThis.Bun !== 'undefined' && process.env.C64BRIDGE_START_FORCE_NODE_RUNTIME !== '1';
+}
 
 async function fileExists(filePath) {
   try {
@@ -89,10 +98,11 @@ async function runWithBun(entryPath) {
 }
 
 async function launch() {
+  const projectRoot = resolveProjectRoot();
   const srcEntry = path.resolve(projectRoot, 'src/index.ts');
   const distEntry = path.resolve(projectRoot, 'dist/index.js');
 
-  if (typeof globalThis.Bun !== 'undefined' && await fileExists(srcEntry)) {
+  if (shouldImportTypeScriptDirectly() && await fileExists(srcEntry)) {
     await import(pathToFileURL(srcEntry).href);
     return;
   }
@@ -111,4 +121,15 @@ async function launch() {
   process.exitCode = 1;
 }
 
-await launch();
+export {
+  fileExists,
+  resolveBunExecutable,
+  resolveProjectRoot,
+  runWithBun,
+  shouldImportTypeScriptDirectly,
+  launch,
+};
+
+if (process.env.C64BRIDGE_START_SKIP_AUTO_LAUNCH !== '1') {
+  await launch();
+}

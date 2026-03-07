@@ -19,7 +19,7 @@ This repository contains a Model Context Protocol (MCP) server that drives Commo
 ## Coding Standards
 
 - **Test-Driven Development**: write or update tests in `test/` alongside feature work. When fixing bugs, add regression coverage first.
-- **Code Coverage**: maintain or improve overall coverage (check `npm run coverage`) which must exceed 80%, but aim for 85%+.
+- **Code Coverage**: maintain or improve overall coverage (check `npm run coverage`) which must be at least 90%, but aim for 95%+.
 - **KISS & DRY**: keep implementations simple, avoid duplication, and refactor shared logic into helpers when needed.
 - **Maintainability**: prefer readable, well-structured code; limit cleverness; include succinct comments only where the intent is not obvious.
 - **TypeScript**: use strict typing (strict mode enabled). Leverage type definitions and avoid `any` unless absolutely required.
@@ -71,7 +71,7 @@ This repository contains a Model Context Protocol (MCP) server that drives Commo
 - Ensure CI passes before requesting review.
 - Respond to review feedback promptly and professionally.
 
-Thanks for helping keep the Commodore 64 MCP server robust and user-friendly! 
+Thanks for helping keep the Commodore 64 MCP server robust and user-friendly!
 
 ---
 
@@ -96,7 +96,7 @@ Use these rules to ensure Copilot reliably engages the `c64bridge` server when t
 ### Fallback Guidance
 
 - If MCP tooling is unavailable, propose the minimal steps to bring it online:
-  1) ensure MCP is enabled in Copilot, 2) add the stdio server entry for `c64bridge`, 3) run `npm start` (Node.js provides better stdio/MCP compatibility for production runtime).
+  1. ensure MCP is enabled in Copilot, 2) add the stdio server entry for `c64bridge`, 3) run `npm start` (Node.js provides better stdio/MCP compatibility for production runtime).
 - Avoid performing destructive actions (reset/reboot/power) without explicit confirmation.
 
 ### Example Prompts for Activation
