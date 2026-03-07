@@ -41,7 +41,7 @@ function createRepoFixture() {
   writeFileSync(path.join(dir, "mcp.json"), `${JSON.stringify(mcp073, null, 2)}\n`, "utf8");
   writeFileSync(path.join(dir, "CHANGELOG.md"), "# Changelog\n\n## 0.7.3 - 2026-03-06\n\n- Previous release.\n", "utf8");
 
-  run("git init", dir);
+  run("git init -b main", dir);
   run("git config user.name 'Test User'", dir);
   run("git config user.email 'test@example.com'", dir);
   run("git add package.json mcp.json CHANGELOG.md scripts", dir);
