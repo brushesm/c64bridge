@@ -10,6 +10,9 @@
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { stat } from 'node:fs/promises';
+import fs from 'node:fs';
+import os from 'node:os';
+import { spawn } from 'node:child_process';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, '..');
@@ -27,6 +30,64 @@ async function fileExists(filePath) {
   }
 }
 
+function resolveBunExecutable() {
+  const candidates = [
+    process.env.BUN_BIN,
+    process.env.C64BRIDGE_TEST_BUN_BIN,
+    process.env.C64BRIDGE_BUN_BIN,
+    process.env.BUN_INSTALL ? path.join(process.env.BUN_INSTALL, 'bin', 'bun') : null,
+    path.join(os.homedir(), '.bun', 'bin', 'bun'),
+    'bun',
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate || !candidate.trim()) {
+      continue;
+    }
+
+    if (candidate === 'bun') {
+      return 'bun';
+    }
+
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+async function runWithBun(entryPath) {
+  const bunExecutable = resolveBunExecutable();
+  if (!bunExecutable) {
+    return false;
+  }
+
+  await new Promise((resolve, reject) => {
+    const child = spawn(bunExecutable, [entryPath], {
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+      },
+    });
+
+    child.on('error', reject);
+    child.on('exit', (code, signal) => {
+      if (signal) {
+        process.kill(process.pid, signal);
+        return;
+      }
+      process.exitCode = code ?? 1;
+      resolve();
+    });
+  });
+
+  return true;
+}
+
 async function launch() {
   const srcEntry = path.resolve(projectRoot, 'src/index.ts');
   const distEntry = path.resolve(projectRoot, 'dist/index.js');
@@ -36,13 +97,17 @@ async function launch() {
     return;
   }
 
+  if (await fileExists(srcEntry) && await runWithBun(srcEntry)) {
+    return;
+  }
+
   if (await fileExists(distEntry)) {
     await import(pathToFileURL(distEntry).href);
     return;
   }
 
   console.error('[start] Unable to locate server entry point: dist/index.js or src/index.ts.');
-  console.error('[start] Build the project with `npm run build` or install dev dependencies for ts-node.');
+  console.error('[start] Build the project with `npm run build` or install Bun to run the TypeScript sources directly.');
   process.exitCode = 1;
 }
 

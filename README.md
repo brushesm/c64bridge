@@ -12,7 +12,7 @@ Your AI Command Bridge for the Commodore 64.
 
 ## Overview
 
-C64 Bridge is a Model Context Protocol ([MCP](https://modelcontextprotocol.io/docs/getting-started/intro)) server that drives a real Commodore 64 Ultimate or Ultimate 64 over their REST APIs. 
+C64 Bridge is a Model Context Protocol ([MCP](https://modelcontextprotocol.io/docs/getting-started/intro)) server that drives a real Commodore 64 Ultimate or Ultimate 64 over their REST APIs.
 
 It is based on the official TypeScript `@modelcontextprotocol/sdk` and supports both **stdio** (for local AI integration) and **HTTP** (for remote access by other applications).
 
@@ -31,21 +31,25 @@ It is based on the official TypeScript `@modelcontextprotocol/sdk` and supports 
 
 - Linux (Ubuntu/Debian)
   - Recommended:
+
     ```bash
     sudo apt update
     sudo apt install -y curl ca-certificates
     curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
     sudo apt install -y nodejs
     ```
+
   - Fallback (may be older): `sudo apt install -y nodejs npm`
 
 - macOS
+
   ```bash
   brew install node@24
   brew link --overwrite node@24
   ```
 
 - Windows
+
   ```powershell
   # winget
   winget install OpenJS.NodeJS.LTS
@@ -55,14 +59,16 @@ It is based on the official TypeScript `@modelcontextprotocol/sdk` and supports 
 
 Verify: `node --version` → v24.x
 
-2) Run the server (choose one)
+1) Run the server (choose one)
 
 - npx (zero setup)
+
   ```bash
   npx -y c64bridge@latest
   ```
 
 - npm (project‑local)
+
   ```bash
   mkdir -p ~/c64bridge && cd ~/c64bridge
   npm init -y
@@ -71,6 +77,7 @@ Verify: `node --version` → v24.x
   ```
 
 - From source (contributing/testing)
+
   ```bash
   git clone https://github.com/chrisgleissner/c64bridge.git
   cd c64bridge
@@ -82,68 +89,100 @@ On start, the server probes your target (REST + zero‑page read) and prints dia
 
 ## Configure
 
-Configuration is a JSON file resolved in this order (first match wins):
+The server reads configuration in this order:
 
-1. `C64BRIDGE_CONFIG` → absolute path
+1. `C64BRIDGE_CONFIG`
 2. `~/.c64bridge.json`
 3. `./c64bridge.json`
 
-No file? Defaults to `host=c64u`, `port=80`.
+If no file is found, it defaults to `c64u:80`.
 
-Hardware (C64U) example:
-
-```json
-{
-  "c64u": { "host": "<hostname or IP>", "port": 80 }
-}
-```
-
-Experimental VICE runner:
+Use this for a real C64 Ultimate:
 
 ```json
 {
-  "vice": { "exe": "/usr/bin/x64sc" }
-}
-```
-
-Backend selection:
-
-- `C64_MODE=c64u|vice` forces a choice
-- Otherwise: if only one is configured, it’s used; with both, prefer `c64u`; with none, probe `http://c64u` then fall back to VICE
-
-Logging: set `LOG_LEVEL=debug` (logs go to stderr; stdout is reserved for MCP).
-
-## GitHub Copilot Chat (VS Code)
-
-VS Code (1.102+) and Copilot Chat (1.214+) support MCP. Either let VS Code auto‑discover, or add the server explicitly under Settings → GitHub Copilot → Experimental → MCP Servers (see `AGENTS.md`).
-
-Example explicit entry:
-
-```json
-{
-  "github.copilot.chat.experimental.mcp": {
-    "servers": [
-      {
-        "name": "c64bridge",
-        "command": "node",
-        "args": ["./node_modules/c64bridge/dist/index.js"],
-        "type": "stdio"
-      }
-    ]
+  "c64u": {
+    "host": "c64u",
+    "port": 80
   }
 }
 ```
 
-Tips:
+Use this for VICE:
 
-- If you’re in this repo, open `.vscode/mcp.json` and click Start to launch the server.
-- In Chat, pick the “C64” chat mode and try: “Print a greeting on the screen”.
+```json
+{
+  "vice": {
+    "exe": "/usr/bin/x64sc"
+  }
+}
+```
 
-Screenshots:
+Notes:
 
-![VS Code MCP start](./doc/img/vscode/vscode-start-mcp-server.png)
-![VS Code C64 chat mode](./doc/img/vscode/vscode-copilot-c64-chat-mode.png)
-![VS Code C64 Hello World](./doc/img/vscode/vscode-copilot-hello-world.png)
+- `C64_MODE=c64u|vice` forces the backend.
+- `LOG_LEVEL=debug` enables verbose logging on stderr.
+
+## VS Code MCP Setup
+
+If this repository is checked out locally, simply open the prepared [.vscode/mcp.json](./.vscode/mcp.json). Otherwise, put the following text in your `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "c64bridge": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "c64bridge@latest"
+      ]
+    }
+  }
+}
+```
+
+Then click the "Start" icon that appears above the `c64bridge` server entry.
+
+Your C64 Bridge MCP server should now be running:
+
+![VS Code Started MCP server](./doc/img/vscode/vscode-started-mcp-server.png)
+
+For more details, see the official [VS Code MCP Server documentation](https://code.visualstudio.com/docs/copilot/customization/mcp-servers).
+
+### Enable The C64 Agent
+
+After the MCP server is running, switch to the `C64` agent in VS Code.
+
+This agent is useful because it is preconfigured for Commodore 64 tasks. It steers Copilot toward `c64bridge` workflows for BASIC, 6502 assembly, SID audio, VIC-II graphics, memory inspection, disk operations, printing, streaming, and device control.
+
+![VS Code C64 agent](./doc/img/vscode/vscode-copilot-c64-agent.png)
+
+### Optional Overrides
+
+You can add `env` entries in `.vscode/mcp.json` to select a config file or force a backend:
+
+```json
+{
+  "servers": {
+    "c64bridge": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "c64bridge@latest"
+      ],
+      "env": {
+        "C64BRIDGE_CONFIG": "/home/you/.c64bridge.json",
+        "C64_MODE": "c64u"
+      }
+    }
+  }
+}
+```
+
+- `C64BRIDGE_CONFIG` points to a specific config file.
+- `C64_MODE` forces `c64u` or `vice`.
+
+If you do not set a config file, the server defaults to `c64u:80`.
 
 ## Example
 
@@ -154,7 +193,6 @@ Compose a children’s song with ChatGPT + VS Code:
 Then render PETSCII art for it:
 
 ![duck petscii](./doc/img/prompts/duck_petscii.png)
-
 
 ## HTTP Invocation
 
