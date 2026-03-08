@@ -508,20 +508,137 @@ export class ViceBackend implements C64Facade {
     return { host: this.host, port: this.port };
   }
 
-  async drivesList(): Promise<unknown> { throw unsupported("drivesList"); }
-  async driveMount(): Promise<RunResult> { throw unsupported("driveMount"); }
-  async driveRemove(): Promise<RunResult> { throw unsupported("driveRemove"); }
-  async driveReset(): Promise<RunResult> { throw unsupported("driveReset"); }
-  async driveOn(): Promise<RunResult> { throw unsupported("driveOn"); }
-  async driveOff(): Promise<RunResult> { throw unsupported("driveOff"); }
-  async driveSetMode(): Promise<RunResult> { throw unsupported("driveSetMode"); }
+  async drivesList(): Promise<unknown> {
+    return await this.withClient(async (client) => {
+      const drives = [];
+      for (const n of [8, 9, 10, 11]) {
+        try {
+          const enabled = await client.resourceGet(`Drive${n}CPUEnabled`);
+          const image = await client.resourceGet(`Drive${n}Image`);
+          const typeRes = await client.resourceGet(`Drive${n}Type`);
+          drives.push({
+            id: `drive${n}`,
+            power: (typeof enabled.value === "number" ? enabled.value : 0) ? "on" : "off",
+            image: typeof image.value === "string" && image.value ? image.value : null,
+            type: typeRes.value,
+          });
+        } catch {
+          drives.push({ id: `drive${n}`, power: "off", image: null, type: 0 });
+        }
+      }
+      return drives;
+    });
+  }
+
+  async driveMount(drive: string, imagePath: string): Promise<RunResult> {
+    const n = parseDriveNumber(drive);
+    await this.withClient(async (client) => {
+      await client.resourceSet(`Drive${n}CPUEnabled`, 1);
+      await client.resourceSet(`Drive${n}Image`, imagePath);
+    });
+    return { success: true, details: { drive, image: imagePath } };
+  }
+
+  async driveRemove(drive: string): Promise<RunResult> {
+    const n = parseDriveNumber(drive);
+    await this.withClient(async (client) => {
+      await client.resourceSet(`Drive${n}Image`, "");
+    });
+    return { success: true, details: { drive } };
+  }
+
+  async driveReset(drive: string): Promise<RunResult> {
+    const n = parseDriveNumber(drive);
+    await this.withClient(async (client) => {
+      await client.resourceSet(`Drive${n}CPUEnabled`, 0);
+      await client.resourceSet(`Drive${n}CPUEnabled`, 1);
+    });
+    return { success: true, details: { drive } };
+  }
+
+  async driveOn(drive: string): Promise<RunResult> {
+    const n = parseDriveNumber(drive);
+    await this.withClient(async (client) => {
+      await client.resourceSet(`Drive${n}CPUEnabled`, 1);
+    });
+    return { success: true, details: { drive, power: "on" } };
+  }
+
+  async driveOff(drive: string): Promise<RunResult> {
+    const n = parseDriveNumber(drive);
+    await this.withClient(async (client) => {
+      await client.resourceSet(`Drive${n}CPUEnabled`, 0);
+    });
+    return { success: true, details: { drive, power: "off" } };
+  }
+
+  async driveSetMode(drive: string, mode: "1541" | "1571" | "1581"): Promise<RunResult> {
+    const n = parseDriveNumber(drive);
+    const DRIVE_TYPE: Record<string, number> = { "1541": 2, "1571": 8, "1581": 11 };
+    const typeNum = DRIVE_TYPE[mode];
+    if (typeNum === undefined) throw new Error(`Unknown drive mode: ${mode}`);
+    await this.withClient(async (client) => {
+      await client.resourceSet(`Drive${n}Type`, typeNum);
+    });
+    return { success: true, details: { drive, mode } };
+  }
+
   async driveLoadRom(): Promise<RunResult> { throw unsupported("driveLoadRom"); }
   async streamStart(): Promise<RunResult> { throw unsupported("streamStart"); }
   async streamStop(): Promise<RunResult> { throw unsupported("streamStop"); }
-  async configsList(): Promise<unknown> { throw unsupported("configsList"); }
-  async configGet(): Promise<unknown> { throw unsupported("configGet"); }
-  async configSet(): Promise<RunResult> { throw unsupported("configSet"); }
-  async configBatchUpdate(): Promise<RunResult> { throw unsupported("configBatchUpdate"); }
+
+  async configsList(): Promise<unknown> {
+    return {
+      categories: [
+        {
+          name: "VICE",
+          items: [
+            "WarpMode", "SoundVolume", "Drive8CPUEnabled", "Drive9CPUEnabled",
+            "Drive10CPUEnabled", "Drive11CPUEnabled", "Drive8Image", "Drive9Image",
+            "Drive8Type", "Drive9Type", "VICIIBorderMode", "VICIIFullscreen",
+          ],
+        },
+      ],
+    };
+  }
+
+  async configGet(_category: string, item?: string): Promise<unknown> {
+    if (!item) throw unsupported("configGet without item name");
+    return await this.withClient(async (client) => {
+      const res = await client.resourceGet(item as string);
+      return { category: _category, item, value: res.value, type: res.type };
+    });
+  }
+
+  async configSet(_category: string, item: string, value: string): Promise<RunResult> {
+    const numValue = Number(value);
+    const parsed: string | number = !isNaN(numValue) && value.trim() !== "" ? numValue : value;
+    await this.withClient(async (client) => {
+      await client.resourceSet(item, parsed);
+    });
+    return { success: true, details: { item, value: parsed } };
+  }
+
+  async configBatchUpdate(payload: Record<string, object>): Promise<RunResult> {
+    const results: Array<{ item: string; success: boolean; error?: string }> = [];
+    await this.withClient(async (client) => {
+      for (const [category, items] of Object.entries(payload)) {
+        for (const [item, value] of Object.entries(items as Record<string, unknown>)) {
+          try {
+            const str = String(value ?? "");
+            const numValue = Number(str);
+            const parsed: string | number = !isNaN(numValue) && str.trim() !== "" ? numValue : str;
+            await client.resourceSet(item, parsed);
+            results.push({ item: `${category}/${item}`, success: true });
+          } catch (err) {
+            results.push({ item: `${category}/${item}`, success: false, error: err instanceof Error ? err.message : String(err) });
+          }
+        }
+      }
+    });
+    return { success: results.every((r) => r.success), details: { results } };
+  }
+
   async configLoadFromFlash(): Promise<RunResult> { throw unsupported("configLoadFromFlash"); }
   async configSaveToFlash(): Promise<RunResult> { throw unsupported("configSaveToFlash"); }
   async configResetToDefault(): Promise<RunResult> { throw unsupported("configResetToDefault"); }
@@ -536,6 +653,13 @@ export class ViceBackend implements C64Facade {
 }
 
 function unsupported(name: string): Error { const err = new Error(`Operation '${name}' is not supported by the VICE backend in phase one`); (err as any).code = "UNSUPPORTED"; return err; }
+
+function parseDriveNumber(drive: string): number {
+  const match = /\d+/.exec(drive);
+  const n = match ? parseInt(match[0], 10) : NaN;
+  if (isNaN(n) || n < 8 || n > 11) throw new Error(`Invalid drive specification: ${drive}`);
+  return n;
+}
 
 function extractBytes(data: unknown): Uint8Array {
   if (!data) return new Uint8Array();

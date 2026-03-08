@@ -138,17 +138,24 @@ export function renderToolsSection(modules: readonly ToolModuleDescriptor[] = de
       if (operations.length === 0) {
         lines.push("_No operations defined._");
       } else {
+        const toolPlatforms: readonly string[] = tool.metadata.platforms ?? ["c64u"];
+        const opPlatformOverrides: Record<string, readonly string[]> = tool.metadata.operationPlatforms ?? {};
         const operationRows = operations
           .slice()
           .sort((a, b) => a.op.localeCompare(b.op))
-          .map((operation) => [
-            `\`${operation.op}\``,
-            escapeCell(operation.description),
-            escapeCell(toTableValue(operation.required.map((name) => `\`${name}\``))),
-            operation.notes.length ? escapeCell(operation.notes.join(", ")) : "—",
-          ]);
+          .map((operation) => {
+            const effectivePlatforms = opPlatformOverrides[operation.op] ?? toolPlatforms;
+            return [
+              `\`${operation.op}\``,
+              escapeCell(operation.description),
+              escapeCell(toTableValue(operation.required.map((name) => `\`${name}\``))),
+              operation.notes.length ? escapeCell(operation.notes.join(", ")) : "—",
+              effectivePlatforms.includes("c64u") ? "✅" : "",
+              effectivePlatforms.includes("vice") ? "✅" : "",
+            ];
+          });
 
-        lines.push(renderTable(["Operation", "Description", "Required Inputs", "Notes"], operationRows));
+        lines.push(renderTable(["Operation", "Description", "Required Inputs", "Notes", "C64U", "VICE"], operationRows));
       }
 
       lines.push("");

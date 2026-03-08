@@ -116,6 +116,7 @@ const systemOperationHandlers = createOperationHandlers(systemOperations);
 export const systemModuleGroup = defineToolModule({
   domain: "system",
   summary: "Grouped machine control and background task orchestration.",
+  supportedPlatforms: ["c64u", "vice"],
   resources: ["c64://context/bootstrap"],
   prompts: ["memory-debug"],
   defaultTags: ["system", "control"],
@@ -133,6 +134,7 @@ export const systemModuleGroup = defineToolModule({
         variants: systemOperations.map((operation) => operation.schema),
       }),
       tags: ["system", "control", "grouped"],
+      operationPlatforms: { menu: ["c64u"] },
       examples: [
         {
           name: "Soft reset",

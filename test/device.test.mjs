@@ -181,6 +181,145 @@ viceSuite("device: ViceBackend basic operations", async (t) => {
   await t.test("menuButton throws unsupported", async () => {
     await assert.rejects(() => facade.menuButton());
   });
+
+  // Drive tests — resource-backed tests only run against the mock server
+  if (useViceMock) {
+    await t.test("drivesList returns array of 4 drives", async () => {
+      const drives = await facade.drivesList();
+      assert.ok(Array.isArray(drives));
+      assert.equal(drives.length, 4);
+      assert.ok(drives.every((d) => ["drive8", "drive9", "drive10", "drive11"].includes(d.id)));
+      assert.ok(drives.every((d) => d.power === "on" || d.power === "off"));
+    });
+
+    await t.test("driveOn enables drive 8", async () => {
+      const result = await facade.driveOn("drive8");
+      assert.equal(result.success, true);
+      const detail = result.details;
+      assert.equal(detail.drive, "drive8");
+      assert.equal(detail.power, "on");
+    });
+
+    await t.test("driveOff disables drive 8", async () => {
+      const result = await facade.driveOff("drive8");
+      assert.equal(result.success, true);
+      const detail = result.details;
+      assert.equal(detail.drive, "drive8");
+      assert.equal(detail.power, "off");
+    });
+
+    await t.test("driveSetMode sets drive type to 1571", async () => {
+      const result = await facade.driveSetMode("drive8", "1571");
+      assert.equal(result.success, true);
+    });
+
+    await t.test("driveSetMode sets drive type to 1541", async () => {
+      const result = await facade.driveSetMode("drive9", "1541");
+      assert.equal(result.success, true);
+    });
+
+    await t.test("driveSetMode sets drive type to 1581", async () => {
+      const result = await facade.driveSetMode("drive10", "1581");
+      assert.equal(result.success, true);
+    });
+
+    await t.test("driveMount attaches image to drive 8", async () => {
+      const result = await facade.driveMount("drive8", "/tmp/test.d64");
+      assert.equal(result.success, true);
+    });
+
+    await t.test("driveReset resets drive 8", async () => {
+      const result = await facade.driveReset("drive8");
+      assert.equal(result.success, true);
+    });
+
+    await t.test("driveRemove detaches image from drive 8", async () => {
+      const result = await facade.driveRemove("drive8");
+      assert.equal(result.success, true);
+    });
+  }
+
+  // These reject immediately without touching the backend — safe on real VICE too
+  await t.test("driveLoadRom throws unsupported", async () => {
+    await assert.rejects(() => facade.driveLoadRom("drive8", "/tmp/1541.rom"));
+  });
+
+  await t.test("driveOn throws on invalid drive", async () => {
+    await assert.rejects(() => facade.driveOn("drive7"));
+  });
+
+  await t.test("driveOff throws on invalid drive", async () => {
+    await assert.rejects(() => facade.driveOff("drive12"));
+  });
+
+  // Config tests
+  await t.test("configsList returns categories array", async () => {
+    // configsList returns a static structure — no BM round-trip required
+    const list = await facade.configsList();
+    assert.ok(list && typeof list === "object");
+    assert.ok(Array.isArray(list.categories));
+    assert.ok(list.categories.length > 0);
+    assert.ok(list.categories[0].name);
+    assert.ok(Array.isArray(list.categories[0].items));
+  });
+
+  if (useViceMock) {
+    await t.test("configGet returns resource value for known key", async () => {
+      // SidEngine is pre-seeded in mock server as value 1
+      const result = await facade.configGet("VICE", "SidEngine");
+      assert.ok(result && typeof result === "object");
+      assert.ok("value" in result);
+    });
+
+    await t.test("configGet returns empty string for unknown key", async () => {
+      const result = await facade.configGet("VICE", "UnknownKey99");
+      assert.ok(result && typeof result === "object");
+      assert.ok("value" in result);
+    });
+
+    await t.test("configSet writes a resource value", async () => {
+      const result = await facade.configSet("VICE", "WarpMode", "1");
+      assert.equal(result.success, true);
+    });
+
+    await t.test("configBatchUpdate sets multiple resources", async () => {
+      const result = await facade.configBatchUpdate({ VICE: { SoundVolume: "80", WarpMode: "0" } });
+      assert.equal(result.success, true);
+    });
+  }
+
+  // These reject immediately without touching the backend
+  await t.test("configLoadFromFlash throws unsupported", async () => {
+    await assert.rejects(() => facade.configLoadFromFlash());
+  });
+
+  await t.test("configSaveToFlash throws unsupported", async () => {
+    await assert.rejects(() => facade.configSaveToFlash());
+  });
+
+  await t.test("configResetToDefault throws unsupported", async () => {
+    await assert.rejects(() => facade.configResetToDefault());
+  });
+
+  await t.test("filesInfo throws unsupported", async () => {
+    await assert.rejects(() => facade.filesInfo("/tmp/test.d64"));
+  });
+
+  await t.test("filesCreateD64 throws unsupported", async () => {
+    await assert.rejects(() => facade.filesCreateD64("/tmp/new.d64"));
+  });
+
+  await t.test("filesCreateD71 throws unsupported", async () => {
+    await assert.rejects(() => facade.filesCreateD71("/tmp/new.d71"));
+  });
+
+  await t.test("filesCreateD81 throws unsupported", async () => {
+    await assert.rejects(() => facade.filesCreateD81("/tmp/new.d81"));
+  });
+
+  await t.test("filesCreateDnp throws unsupported", async () => {
+    await assert.rejects(() => facade.filesCreateDnp("/tmp/new.dnp"));
+  });
 });
 
 test("device: createFacade with config file", async (t) => {

@@ -75,7 +75,7 @@ export interface ViceDisplaySnapshot {
 }
 
 interface PendingRequest {
-  expected: number;
+  cmd: number;
   resolve: (frame: Buffer) => void;
   reject: (err: unknown) => void;
   onFrame?: (type: number, frame: Buffer) => void;
@@ -166,7 +166,7 @@ export class ViceClient {
         continue;
       }
 
-      if (pending.expected !== responseType) {
+      if (pending.cmd !== responseType) {
         if (pending.onFrame) {
           try {
             pending.onFrame(responseType, frame);
@@ -177,7 +177,7 @@ export class ViceClient {
           continue;
         }
 
-        pending.reject(new Error(`BM mismatched response: expected 0x${pending.expected.toString(16)} got 0x${responseType.toString(16)}`));
+        pending.reject(new Error(`BM mismatched response: expected 0x${pending.cmd.toString(16)} got 0x${responseType.toString(16)}`));
         this.pending.delete(reqId);
         continue;
       }
@@ -197,11 +197,11 @@ export class ViceClient {
     header.writeUInt32LE(reqId, 6);
     header[10] = cmd;
     const packet = Buffer.concat([header, payload]);
-    const expected = options?.responseType ?? cmd;
+    const expectedCmd = options?.responseType ?? cmd;
 
     const promise = new Promise<Buffer>((resolve, reject) => {
       this.pending.set(reqId, {
-        expected,
+        cmd: expectedCmd,
         resolve,
         reject,
         onFrame: options?.onFrame,

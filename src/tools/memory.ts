@@ -427,6 +427,7 @@ export const memoryOperationHandlers: OperationHandlerMap<MemoryOperationMap> = 
 export const memoryModule = defineToolModule({
   domain: "memory",
   summary: "Screen, main memory, and low-level inspection utilities.",
+  supportedPlatforms: ["c64u", "vice"] as const,
   resources: [
     "c64://context/bootstrap",
     "c64://specs/basic",

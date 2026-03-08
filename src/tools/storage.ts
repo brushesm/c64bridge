@@ -172,6 +172,7 @@ const createDnpArgsSchema = objectSchema({
 export const storageModule = defineToolModule({
   domain: "storage",
   summary: "Drive management, disk image creation, and file inspection utilities.",
+  supportedPlatforms: ["c64u", "vice"] as const,
   resources: ["c64://context/bootstrap"],
   prompts: ["memory-debug"],
   defaultTags: ["drive", "storage"],

@@ -1,0 +1,113 @@
+{
+  "type": "object",
+  "description": "VICE emulator operations available via the c64_vice tool.",
+  "oneOf": [
+    {
+      "type": "object",
+      "description": "Capture the emulator display buffer and metadata.",
+      "properties": {
+        "op": {
+          "const": "display_get"
+        },
+        "alternateCanvas": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "When true, request the alternate canvas buffer instead of the primary.",
+          "default": false
+        },
+        "format": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "VICE display format byte (advanced usage, default 0).",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "includePixels": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Include raw pixel data in the response (default true).",
+          "default": true
+        },
+        "encoding": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Encoding to use for pixel payload when included.",
+          "enum": [
+            "base64",
+            "hex"
+          ],
+          "default": "base64"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Read a VICE configuration resource (safe prefixes only).",
+      "properties": {
+        "op": {
+          "const": "resource_get"
+        },
+        "name": {
+          "type": "string",
+          "description": "VICE resource name (example: SidEngine, C64Model).",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Z][A-Za-z0-9_.-]{0,63}$"
+        }
+      },
+      "required": [
+        "op",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Write a VICE configuration resource (safe prefixes only).",
+      "properties": {
+        "op": {
+          "const": "resource_set"
+        },
+        "name": {
+          "type": "string",
+          "description": "VICE resource name (example: SidEngine, C64Model).",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Z][A-Za-z0-9_.-]{0,63}$"
+        },
+        "value": {
+          "description": "VICE resource value (string or integer).",
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "name",
+        "value"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "discriminator": {
+    "propertyName": "op"
+  }
+}

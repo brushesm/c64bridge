@@ -233,6 +233,12 @@ curl -s -X POST -H 'Content-Type: application/json' \
 - [doc/c64u/c64-openapi.yaml](doc/c64u/c64-openapi.yaml) — REST surface (OpenAPI 3.1)
 - [AGENTS.md](AGENTS.md) — LLM-facing quick setup, usage, and personas
 
+## Static MCP Interface
+
+The repository contains an auto-generated static mirror of the MCP server interface in the [./mcp](./mcp) folder.
+
+This allows agents to inspect the available tools, resources, prompts, and schemas without connecting to the server.
+
 ## MCP API Reference
 
 <!-- AUTO-GENERATED:MCP-DOCS-START -->
@@ -245,188 +251,188 @@ This MCP server exposes **14 tools**, **25 resources**, and **7 prompts** for co
 
 Grouped entry point for configuration reads/writes, diagnostics, and snapshots.
 
-| Operation | Description | Required Inputs | Notes |
-| --- | --- | --- | --- |
-| `batch_update` | Apply multiple configuration updates in a single request. | — | — |
-| `diff` | Compare the current configuration with a snapshot. | `path` | — |
-| `get` | Read a configuration category or specific item. | `category` | — |
-| `info` | Retrieve Ultimate hardware information and status. | — | — |
-| `list` | List configuration categories reported by the firmware. | — | — |
-| `load_flash` | Load configuration from flash storage. | — | — |
-| `read_debugreg` | Read the Ultimate debug register ($D7FF). | — | — |
-| `reset_defaults` | Reset firmware configuration to factory defaults. | — | — |
-| `restore` | Restore configuration from a snapshot file. | `path` | — |
-| `save_flash` | Persist the current configuration to flash storage. | — | — |
-| `set` | Write a configuration value in the selected category. | `category`, `item`, `value` | — |
-| `shuffle` | Discover PRG/CRT files and run each with optional screen capture. | — | — |
-| `snapshot` | Snapshot configuration to disk for later restore or diff. | `path` | — |
-| `version` | Fetch firmware version details. | — | — |
-| `write_debugreg` | Write a hex value to the Ultimate debug register ($D7FF). | `value` | — |
+| Operation | Description | Required Inputs | Notes | C64U | VICE |
+| --- | --- | --- | --- | --- | --- |
+| `batch_update` | Apply multiple configuration updates in a single request. | — | — | ✅ |  |
+| `diff` | Compare the current configuration with a snapshot. | `path` | — | ✅ |  |
+| `get` | Read a configuration category or specific item. | `category` | — | ✅ |  |
+| `info` | Retrieve Ultimate hardware information and status. | — | — | ✅ | ✅ |
+| `list` | List configuration categories reported by the firmware. | — | — | ✅ |  |
+| `load_flash` | Load configuration from flash storage. | — | — | ✅ |  |
+| `read_debugreg` | Read the Ultimate debug register ($D7FF). | — | — | ✅ |  |
+| `reset_defaults` | Reset firmware configuration to factory defaults. | — | — | ✅ |  |
+| `restore` | Restore configuration from a snapshot file. | `path` | — | ✅ |  |
+| `save_flash` | Persist the current configuration to flash storage. | — | — | ✅ |  |
+| `set` | Write a configuration value in the selected category. | `category`, `item`, `value` | — | ✅ |  |
+| `shuffle` | Discover PRG/CRT files and run each with optional screen capture. | — | — | ✅ |  |
+| `snapshot` | Snapshot configuration to disk for later restore or diff. | `path` | — | ✅ |  |
+| `version` | Fetch firmware version details. | — | — | ✅ | ✅ |
+| `write_debugreg` | Write a hex value to the Ultimate debug register ($D7FF). | `value` | — | ✅ |  |
 
 #### c64_debug
 
 Grouped entry point for VICE debugger operations (breakpoints, registers, stepping).
 
-| Operation | Description | Required Inputs | Notes |
-| --- | --- | --- | --- |
-| `create_checkpoint` | Create a new checkpoint (breakpoint) in VICE. | `address` | — |
-| `delete_checkpoint` | Remove a checkpoint by id. | `id` | — |
-| `get_checkpoint` | Fetch a single checkpoint by id. | `id` | — |
-| `get_registers` | Read register values, optionally filtered by name or id. | — | — |
-| `list_checkpoints` | List all active VICE checkpoints (breakpoints). | — | — |
-| `list_registers` | List available registers (metadata). | — | — |
-| `set_condition` | Attach a conditional expression to a checkpoint. | `id`, `expression` | — |
-| `set_registers` | Write register values. | `writes` | — |
-| `step` | Single-step CPU execution. | — | — |
-| `step_return` | Continue execution until the current routine returns. | — | — |
-| `toggle_checkpoint` | Enable or disable a checkpoint by id. | `id`, `enabled` | — |
+| Operation | Description | Required Inputs | Notes | C64U | VICE |
+| --- | --- | --- | --- | --- | --- |
+| `create_checkpoint` | Create a new checkpoint (breakpoint) in VICE. | `address` | — |  | ✅ |
+| `delete_checkpoint` | Remove a checkpoint by id. | `id` | — |  | ✅ |
+| `get_checkpoint` | Fetch a single checkpoint by id. | `id` | — |  | ✅ |
+| `get_registers` | Read register values, optionally filtered by name or id. | — | — |  | ✅ |
+| `list_checkpoints` | List all active VICE checkpoints (breakpoints). | — | — |  | ✅ |
+| `list_registers` | List available registers (metadata). | — | — |  | ✅ |
+| `set_condition` | Attach a conditional expression to a checkpoint. | `id`, `expression` | — |  | ✅ |
+| `set_registers` | Write register values. | `writes` | — |  | ✅ |
+| `step` | Single-step CPU execution. | — | — |  | ✅ |
+| `step_return` | Continue execution until the current routine returns. | — | — |  | ✅ |
+| `toggle_checkpoint` | Enable or disable a checkpoint by id. | `id`, `enabled` | — |  | ✅ |
 
 #### c64_disk
 
 Grouped entry point for disk mounts, listings, image creation, and program discovery.
 
-| Operation | Description | Required Inputs | Notes |
-| --- | --- | --- | --- |
-| `create_image` | Create a blank disk image of the specified format. | `format`, `path` | — |
-| `file_info` | Inspect metadata for a file on the Ultimate filesystem. | `path` | — |
-| `find_and_run` | Search for a PRG/CRT by name substring and run the first match. | `nameContains` | — |
-| `list_drives` | List Ultimate drive slots and their mounted images. | — | — |
-| `mount` | Mount a disk image with optional verification and retries. | `drive`, `image` | supports verify |
-| `unmount` | Remove the mounted image from an Ultimate drive slot. | `drive` | — |
+| Operation | Description | Required Inputs | Notes | C64U | VICE |
+| --- | --- | --- | --- | --- | --- |
+| `create_image` | Create a blank disk image of the specified format. | `format`, `path` | — | ✅ |  |
+| `file_info` | Inspect metadata for a file on the Ultimate filesystem. | `path` | — | ✅ |  |
+| `find_and_run` | Search for a PRG/CRT by name substring and run the first match. | `nameContains` | — | ✅ |  |
+| `list_drives` | List Ultimate drive slots and their mounted images. | — | — | ✅ | ✅ |
+| `mount` | Mount a disk image with optional verification and retries. | `drive`, `image` | supports verify | ✅ | ✅ |
+| `unmount` | Remove the mounted image from an Ultimate drive slot. | `drive` | — | ✅ | ✅ |
 
 #### c64_drive
 
 Grouped entry point for drive power, mode, reset, and ROM operations.
 
-| Operation | Description | Required Inputs | Notes |
-| --- | --- | --- | --- |
-| `load_rom` | Temporarily load a custom ROM into an Ultimate drive slot. | `drive`, `path` | — |
-| `power_off` | Power off a specific Ultimate drive slot. | `drive` | — |
-| `power_on` | Power on a specific Ultimate drive slot. | `drive` | — |
-| `reset` | Issue an IEC reset for the selected drive slot. | `drive` | — |
-| `set_mode` | Set the emulation mode for a drive slot (1541/1571/1581). | `drive`, `mode` | — |
+| Operation | Description | Required Inputs | Notes | C64U | VICE |
+| --- | --- | --- | --- | --- | --- |
+| `load_rom` | Temporarily load a custom ROM into an Ultimate drive slot. | `drive`, `path` | — | ✅ |  |
+| `power_off` | Power off a specific Ultimate drive slot. | `drive` | — | ✅ | ✅ |
+| `power_on` | Power on a specific Ultimate drive slot. | `drive` | — | ✅ | ✅ |
+| `reset` | Issue an IEC reset for the selected drive slot. | `drive` | — | ✅ | ✅ |
+| `set_mode` | Set the emulation mode for a drive slot (1541/1571/1581). | `drive`, `mode` | — | ✅ | ✅ |
 
 #### c64_extract
 
 Grouped entry point for sprite/charset extraction, memory dumps, filesystem stats, and firmware health checks.
 
-| Operation | Description | Required Inputs | Notes |
-| --- | --- | --- | --- |
-| `charset` | Locate and extract 2KB character sets from RAM. | — | — |
-| `firmware_health` | Run firmware readiness checks and report status metrics. | — | — |
-| `fs_stats` | Walk the filesystem and aggregate counts/bytes by extension. | — | — |
-| `memory_dump` | Dump a RAM range to hex or binary files with manifest metadata. | `address`, `length`, `outputPath` | — |
-| `sprites` | Scan RAM for sprites and optionally export .spr files. | `address`, `length` | — |
+| Operation | Description | Required Inputs | Notes | C64U | VICE |
+| --- | --- | --- | --- | --- | --- |
+| `charset` | Locate and extract 2KB character sets from RAM. | — | — | ✅ |  |
+| `firmware_health` | Run firmware readiness checks and report status metrics. | — | — | ✅ |  |
+| `fs_stats` | Walk the filesystem and aggregate counts/bytes by extension. | — | — | ✅ |  |
+| `memory_dump` | Dump a RAM range to hex or binary files with manifest metadata. | `address`, `length`, `outputPath` | — | ✅ |  |
+| `sprites` | Scan RAM for sprites and optionally export .spr files. | `address`, `length` | — | ✅ |  |
 
 #### c64_graphics
 
 Grouped entry point for PETSCII art, sprite previews, and future bitmap generation.
 
-| Operation | Description | Required Inputs | Notes |
-| --- | --- | --- | --- |
-| `create_petscii` | Generate PETSCII art from prompts, text, or explicit bitmap data. | — | — |
-| `generate_bitmap` | Reserved high-resolution bitmap generator (coming soon). | — | — |
-| `generate_sprite` | Build and run a sprite PRG from raw 63-byte sprite data. | `sprite` | — |
-| `render_petscii` | Render PETSCII text with optional border/background colours. | `text` | — |
+| Operation | Description | Required Inputs | Notes | C64U | VICE |
+| --- | --- | --- | --- | --- | --- |
+| `create_petscii` | Generate PETSCII art from prompts, text, or explicit bitmap data. | — | — | ✅ | ✅ |
+| `generate_bitmap` | Reserved high-resolution bitmap generator (coming soon). | — | — | ✅ | ✅ |
+| `generate_sprite` | Build and run a sprite PRG from raw 63-byte sprite data. | `sprite` | — | ✅ | ✅ |
+| `render_petscii` | Render PETSCII text with optional border/background colours. | `text` | — | ✅ | ✅ |
 
 #### c64_memory
 
 Grouped entry point for memory I/O, screen reads, and screen polling.
 
-| Operation | Description | Required Inputs | Notes |
-| --- | --- | --- | --- |
-| `read` | Read a range of bytes and return a hex dump with address metadata. | `address` | — |
-| `read_screen` | Return the current 40x25 text screen converted to ASCII. | — | — |
-| `wait_for_text` | Poll the screen until a substring or regex appears, or timeout elapses. | `pattern` | — |
-| `write` | Write a hexadecimal byte sequence into RAM. | `address`, `bytes` | supports verify |
+| Operation | Description | Required Inputs | Notes | C64U | VICE |
+| --- | --- | --- | --- | --- | --- |
+| `read` | Read a range of bytes and return a hex dump with address metadata. | `address` | — | ✅ | ✅ |
+| `read_screen` | Return the current 40x25 text screen converted to ASCII. | — | — | ✅ | ✅ |
+| `wait_for_text` | Poll the screen until a substring or regex appears, or timeout elapses. | `pattern` | — | ✅ | ✅ |
+| `write` | Write a hexadecimal byte sequence into RAM. | `address`, `bytes` | supports verify | ✅ | ✅ |
 
 #### c64_printer
 
 Grouped entry point for Commodore and Epson printing helpers.
 
-| Operation | Description | Required Inputs | Notes |
-| --- | --- | --- | --- |
-| `define_chars` | Define custom printer characters (Commodore DLL mode). | `firstChar`, `chars` | — |
-| `print_bitmap` | Print a bitmap row via Commodore (BIM) or Epson ESC/P workflows. | `printer`, `columns` | — |
-| `print_text` | Generate BASIC that prints text to device 4. | `text` | — |
+| Operation | Description | Required Inputs | Notes | C64U | VICE |
+| --- | --- | --- | --- | --- | --- |
+| `define_chars` | Define custom printer characters (Commodore DLL mode). | `firstChar`, `chars` | — | ✅ |  |
+| `print_bitmap` | Print a bitmap row via Commodore (BIM) or Epson ESC/P workflows. | `printer`, `columns` | — | ✅ |  |
+| `print_text` | Generate BASIC that prints text to device 4. | `text` | — | ✅ |  |
 
 #### c64_program
 
 Grouped entry point for program upload, execution, and batch workflows.
 
-| Operation | Description | Required Inputs | Notes |
-| --- | --- | --- | --- |
-| `batch_run` | Run multiple PRG/CRT programs with post-run assertions. | `programs` | — |
-| `bundle_run` | Capture screen, memory, and debug registers into an artifact bundle. | `runId`, `outputPath` | — |
-| `load_prg` | Load a PRG from Ultimate storage without executing it. | `path` | — |
-| `run_crt` | Mount and run a CRT cartridge image. | `path` | — |
-| `run_prg` | Load and execute a PRG located on the Ultimate filesystem. | `path` | — |
-| `upload_run_asm` | Assemble 6502/6510 source, upload the PRG, and execute it. | `program` | supports verify |
-| `upload_run_basic` | Upload Commodore BASIC v2 source and execute it immediately. | `program` | supports verify |
+| Operation | Description | Required Inputs | Notes | C64U | VICE |
+| --- | --- | --- | --- | --- | --- |
+| `batch_run` | Run multiple PRG/CRT programs with post-run assertions. | `programs` | — | ✅ | ✅ |
+| `bundle_run` | Capture screen, memory, and debug registers into an artifact bundle. | `runId`, `outputPath` | — | ✅ |  |
+| `load_prg` | Load a PRG from Ultimate storage without executing it. | `path` | — | ✅ |  |
+| `run_crt` | Mount and run a CRT cartridge image. | `path` | — | ✅ |  |
+| `run_prg` | Load and execute a PRG located on the Ultimate filesystem. | `path` | — | ✅ | ✅ |
+| `upload_run_asm` | Assemble 6502/6510 source, upload the PRG, and execute it. | `program` | supports verify | ✅ | ✅ |
+| `upload_run_basic` | Upload Commodore BASIC v2 source and execute it immediately. | `program` | supports verify | ✅ | ✅ |
 
 #### c64_rag
 
 Grouped entry point for BASIC and assembly RAG lookups.
 
-| Operation | Description | Required Inputs | Notes |
-| --- | --- | --- | --- |
-| `asm` | Retrieve 6502/6510 assembly references from the local knowledge base. | `q` | — |
-| `basic` | Retrieve BASIC references and snippets from the local knowledge base. | `q` | — |
+| Operation | Description | Required Inputs | Notes | C64U | VICE |
+| --- | --- | --- | --- | --- | --- |
+| `asm` | Retrieve 6502/6510 assembly references from the local knowledge base. | `q` | — | ✅ | ✅ |
+| `basic` | Retrieve BASIC references and snippets from the local knowledge base. | `q` | — | ✅ | ✅ |
 
 #### c64_sound
 
 Grouped entry point for SID control, playback, composition, and analysis workflows.
 
-| Operation | Description | Required Inputs | Notes |
-| --- | --- | --- | --- |
-| `analyze` | Automatically analyze SID playback when verification is requested. | `request` | — |
-| `compile_play` | Compile SIDWAVE or CPG source and optionally play it immediately. | — | — |
-| `generate` | Generate a lightweight SID arpeggio playback sequence. | — | — |
-| `note_off` | Release a SID voice by clearing its gate bit. | `voice` | — |
-| `note_on` | Trigger a SID voice with configurable waveform, ADSR, and pitch. | — | — |
-| `pipeline` | Compile a SIDWAVE score, play it, and analyze the recording. | — | supports verify |
-| `play_mod_file` | Play a MOD tracker module via the Ultimate SID player. | `path` | — |
-| `play_sid_file` | Play a SID file stored on the Ultimate filesystem. | `path` | — |
-| `record_analyze` | Record audio for a fixed duration and return SID analysis metrics. | `durationSeconds` | — |
-| `reset` | Soft or hard reset of SID registers to clear glitches. | — | — |
-| `set_volume` | Set the SID master volume register at $D418 (0-15). | `volume` | — |
-| `silence_all` | Silence all SID voices with optional audio verification. | — | supports verify |
+| Operation | Description | Required Inputs | Notes | C64U | VICE |
+| --- | --- | --- | --- | --- | --- |
+| `analyze` | Automatically analyze SID playback when verification is requested. | `request` | — | ✅ |  |
+| `compile_play` | Compile SIDWAVE or CPG source and optionally play it immediately. | — | — | ✅ | ✅ |
+| `generate` | Generate a lightweight SID arpeggio playback sequence. | — | — | ✅ | ✅ |
+| `note_off` | Release a SID voice by clearing its gate bit. | `voice` | — | ✅ | ✅ |
+| `note_on` | Trigger a SID voice with configurable waveform, ADSR, and pitch. | — | — | ✅ | ✅ |
+| `pipeline` | Compile a SIDWAVE score, play it, and analyze the recording. | — | supports verify | ✅ |  |
+| `play_mod_file` | Play a MOD tracker module via the Ultimate SID player. | `path` | — | ✅ |  |
+| `play_sid_file` | Play a SID file stored on the Ultimate filesystem. | `path` | — | ✅ |  |
+| `record_analyze` | Record audio for a fixed duration and return SID analysis metrics. | `durationSeconds` | — | ✅ |  |
+| `reset` | Soft or hard reset of SID registers to clear glitches. | — | — | ✅ | ✅ |
+| `set_volume` | Set the SID master volume register at $D418 (0-15). | `volume` | — | ✅ | ✅ |
+| `silence_all` | Silence all SID voices with optional audio verification. | — | supports verify | ✅ | ✅ |
 
 #### c64_stream
 
 Grouped entry point for starting and stopping Ultimate streaming sessions.
 
-| Operation | Description | Required Inputs | Notes |
-| --- | --- | --- | --- |
-| `start` | Start an Ultimate streaming session toward a host:port target. | `stream`, `target` | — |
-| `stop` | Stop an active Ultimate streaming session. | `stream` | — |
+| Operation | Description | Required Inputs | Notes | C64U | VICE |
+| --- | --- | --- | --- | --- | --- |
+| `start` | Start an Ultimate streaming session toward a host:port target. | `stream`, `target` | — | ✅ |  |
+| `stop` | Stop an active Ultimate streaming session. | `stream` | — | ✅ |  |
 
 #### c64_system
 
 Grouped entry point for power, reset, menu, and background task control.
 
-| Operation | Description | Required Inputs | Notes |
-| --- | --- | --- | --- |
-| `list_tasks` | List known background tasks with status metadata. | — | — |
-| `menu` | Toggle the Ultimate menu button for navigation. | — | — |
-| `pause` | Pause the machine using DMA halt until resumed. | — | — |
-| `poweroff` | Request a controlled shutdown via the Ultimate firmware. | — | — |
-| `reboot` | Trigger a firmware reboot to recover from faults. | — | — |
-| `reset` | Issue a soft reset without cutting power. | — | — |
-| `resume` | Resume CPU execution after a DMA pause. | — | — |
-| `start_task` | Start a named background task that runs on an interval. | `name`, `operation` | — |
-| `stop_all_tasks` | Stop every running background task and persist state. | — | — |
-| `stop_task` | Stop a specific background task and clear its timer. | `name` | — |
+| Operation | Description | Required Inputs | Notes | C64U | VICE |
+| --- | --- | --- | --- | --- | --- |
+| `list_tasks` | List known background tasks with status metadata. | — | — | ✅ | ✅ |
+| `menu` | Toggle the Ultimate menu button for navigation. | — | — | ✅ |  |
+| `pause` | Pause the machine using DMA halt until resumed. | — | — | ✅ | ✅ |
+| `poweroff` | Request a controlled shutdown via the Ultimate firmware. | — | — | ✅ | ✅ |
+| `reboot` | Trigger a firmware reboot to recover from faults. | — | — | ✅ | ✅ |
+| `reset` | Issue a soft reset without cutting power. | — | — | ✅ | ✅ |
+| `resume` | Resume CPU execution after a DMA pause. | — | — | ✅ | ✅ |
+| `start_task` | Start a named background task that runs on an interval. | `name`, `operation` | — | ✅ | ✅ |
+| `stop_all_tasks` | Stop every running background task and persist state. | — | — | ✅ | ✅ |
+| `stop_task` | Stop a specific background task and clear its timer. | `name` | — | ✅ | ✅ |
 
 #### c64_vice
 
 Grouped entry point for VICE emulator display capture and resource access.
 
-| Operation | Description | Required Inputs | Notes |
-| --- | --- | --- | --- |
-| `display_get` | Capture the emulator display buffer and metadata. | — | — |
-| `resource_get` | Read a VICE configuration resource (safe prefixes only). | `name` | — |
-| `resource_set` | Write a VICE configuration resource (safe prefixes only). | `name`, `value` | — |
+| Operation | Description | Required Inputs | Notes | C64U | VICE |
+| --- | --- | --- | --- | --- | --- |
+| `display_get` | Capture the emulator display buffer and metadata. | — | — |  | ✅ |
+| `resource_get` | Read a VICE configuration resource (safe prefixes only). | `name` | — |  | ✅ |
+| `resource_set` | Write a VICE configuration resource (safe prefixes only). | `name`, `value` | — |  | ✅ |
 
 ### Resources
 

@@ -302,6 +302,7 @@ if (isVice) {
         },
       },
       logger: createLogger(),
+      platform: { id: /** @type {"vice"} */ ("vice"), features: [], limitedFeatures: [] },
     };
 
     await assert.rejects(

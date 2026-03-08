@@ -1,0 +1,49 @@
+{
+  "protocolVersion": "2025-06-18",
+  "examples": {
+    "initialize": {
+      "description": "Client initialization request sent immediately after connecting to the stdio MCP server.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "2025-06-18",
+          "capabilities": {
+            "resources": {},
+            "tools": {},
+            "prompts": {}
+          },
+          "clientInfo": {
+            "name": "c64bridge-static-interface-generator",
+            "version": "1.0.0"
+          }
+        }
+      }
+    },
+    "tools/list": {
+      "description": "Enumerates the full tool catalog and input schemas exposed by the server.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/list",
+        "params": {}
+      }
+    },
+    "tools/call": {
+      "description": "Load and execute a PRG in one call",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+          "name": "c64_program",
+          "arguments": {
+            "op": "run_prg",
+            "path": "//USB0/demo.prg"
+          }
+        }
+      }
+    }
+  }
+}

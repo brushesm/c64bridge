@@ -1,0 +1,193 @@
+{
+  "prompts": [
+    {
+      "name": "basic-program",
+      "title": "BASIC Program Workflow",
+      "description": "Plan, implement, and verify Commodore BASIC v2 programs safely.",
+      "_meta": {
+        "requiredResources": [
+          "c64://specs/basic",
+          "c64://context/bootstrap",
+          "c64://docs/index"
+        ],
+        "optionalResources": [],
+        "tools": [
+          "c64_program",
+          "c64_memory"
+        ],
+        "tags": [
+          "basic",
+          "program"
+        ]
+      }
+    },
+    {
+      "name": "assembly-program",
+      "title": "Assembly Program Workflow",
+      "description": "Author 6502/6510 assembly routines with precise hardware guidance.",
+      "arguments": [
+        {
+          "name": "hardware",
+          "description": "Optional focus area for the routine (sid, vic, cia, or multi for combined work).",
+          "options": [
+            "sid",
+            "vic",
+            "cia",
+            "multi"
+          ]
+        }
+      ],
+      "_meta": {
+        "requiredResources": [
+          "c64://specs/assembly",
+          "c64://specs/vic",
+          "c64://specs/sid",
+          "c64://context/bootstrap"
+        ],
+        "optionalResources": [
+          "c64://docs/sid/best-practices"
+        ],
+        "tools": [
+          "c64_program",
+          "c64_memory"
+        ],
+        "tags": [
+          "assembly",
+          "program"
+        ]
+      }
+    },
+    {
+      "name": "sid-music",
+      "title": "SID Composition Workflow",
+      "description": "Compose SID music with expressive phrasing and iterative audio verification.",
+      "_meta": {
+        "requiredResources": [
+          "c64://specs/sid",
+          "c64://specs/sidwave",
+          "c64://docs/sid/file-structure",
+          "c64://docs/sid/best-practices"
+        ],
+        "optionalResources": [],
+        "tools": [
+          "c64_sound"
+        ],
+        "tags": [
+          "sid",
+          "music"
+        ]
+      }
+    },
+    {
+      "name": "graphics-demo",
+      "title": "Graphics Demo Workflow",
+      "description": "Create VIC-II graphics demos with safe setup and validation steps.",
+      "arguments": [
+        {
+          "name": "mode",
+          "description": "Target VIC-II technique (text, multicolour, bitmap, or sprite).",
+          "options": [
+            "text",
+            "multicolour",
+            "bitmap",
+            "sprite"
+          ]
+        }
+      ],
+      "_meta": {
+        "requiredResources": [
+          "c64://specs/vic",
+          "c64://context/bootstrap"
+        ],
+        "optionalResources": [
+          "c64://specs/assembly",
+          "c64://specs/charset",
+          "c64://docs/petscii-style"
+        ],
+        "tools": [
+          "c64_program",
+          "c64_memory",
+          "c64_graphics"
+        ],
+        "tags": [
+          "graphics",
+          "vic"
+        ]
+      }
+    },
+    {
+      "name": "printer-job",
+      "title": "Printer Job Workflow",
+      "description": "Send formatted output to Commodore or Epson printers with safe teardown steps.",
+      "arguments": [
+        {
+          "name": "printerType",
+          "description": "Select Commodore (device 4) or Epson FX workflow helpers.",
+          "options": [
+            "commodore",
+            "epson"
+          ]
+        }
+      ],
+      "_meta": {
+        "requiredResources": [
+          "c64://specs/printer",
+          "c64://docs/printer/guide",
+          "c64://docs/printer/prompts"
+        ],
+        "optionalResources": [
+          "c64://docs/printer/commodore-text",
+          "c64://docs/printer/commodore-bitmap",
+          "c64://docs/printer/epson-text",
+          "c64://docs/printer/epson-bitmap"
+        ],
+        "tools": [
+          "c64_printer"
+        ],
+        "tags": [
+          "printer"
+        ]
+      }
+    },
+    {
+      "name": "memory-debug",
+      "title": "Memory Debug Workflow",
+      "description": "Inspect or patch memory ranges with reversible steps and logging.",
+      "_meta": {
+        "requiredResources": [
+          "c64://context/bootstrap",
+          "c64://specs/assembly",
+          "c64://docs/index"
+        ],
+        "optionalResources": [],
+        "tools": [
+          "c64_memory",
+          "c64_system"
+        ],
+        "tags": [
+          "memory",
+          "debug"
+        ]
+      }
+    },
+    {
+      "name": "drive-manager",
+      "title": "Drive Manager Workflow",
+      "description": "Mount, create, or power drives while preserving running workloads.",
+      "_meta": {
+        "requiredResources": [
+          "c64://context/bootstrap"
+        ],
+        "optionalResources": [],
+        "tools": [
+          "c64_disk",
+          "c64_drive"
+        ],
+        "tags": [
+          "drive",
+          "storage"
+        ]
+      }
+    }
+  ]
+}

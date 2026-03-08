@@ -446,8 +446,9 @@ export const developerModule = defineToolModule({
     },
     {
       name: "version",
-      description: "Retrieve Ultimate firmware and API version information.",
-      summary: "Calls the firmware version endpoint and returns the structured payload.",
+      description: "Retrieve firmware or emulator version information.",
+      summary: "Calls the firmware version endpoint (Ultimate) or returns emulator info (VICE).",
+      supportedPlatforms: ["c64u", "vice"] as const,
       inputSchema: noArgsSchema.jsonSchema,
       relatedResources: ["c64://context/bootstrap"],
       tags: ["diagnostics", "version"],
@@ -477,8 +478,9 @@ export const developerModule = defineToolModule({
     },
     {
       name: "info",
-      description: "Retrieve Ultimate hardware information and status.",
-      summary: "Returns the raw diagnostics payload reported by the firmware info endpoint.",
+      description: "Retrieve hardware or emulator information and status.",
+      summary: "Returns the diagnostics payload reported by the firmware (Ultimate) or emulator (VICE).",
+      supportedPlatforms: ["c64u", "vice"] as const,
       inputSchema: noArgsSchema.jsonSchema,
       relatedResources: ["c64://context/bootstrap"],
       tags: ["diagnostics", "info"],

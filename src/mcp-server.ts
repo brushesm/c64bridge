@@ -21,6 +21,7 @@ import {
 } from "./rag/knowledgeIndex.js";
 import { initRag } from "./rag/init.js";
 import type { RagRetriever } from "./rag/types.js";
+import { getMcpServerImplementationInfo } from "./mcp/metadata.js";
 import { toolRegistry } from "./tools/registry/index.js";
 import { unknownErrorResult } from "./tools/errors.js";
 import type { ToolRunResult } from "./tools/types.js";
@@ -75,13 +76,11 @@ async function main() {
   const resourceLogger = loggerFor("resource");
   const promptLogger = loggerFor("prompt");
   const promptRegistry = createPromptRegistry();
+  const implementationInfo = getMcpServerImplementationInfo();
 
   // Create MCP server
   const server = new Server(
-    {
-      name: "c64bridge",
-      version: "0.4.0",
-    },
+    implementationInfo,
     {
       capabilities: {
         resources: {},

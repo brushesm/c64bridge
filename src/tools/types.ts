@@ -213,6 +213,7 @@ export interface ToolDefinition {
   readonly workflowHints?: readonly string[];
   readonly prerequisites?: readonly string[];
   readonly supportedPlatforms?: readonly PlatformId[];
+  readonly operationPlatforms?: Record<string, readonly PlatformId[]>;
   readonly execute: (args: unknown, ctx: ToolExecutionContext) => Promise<ToolRunResult>;
 }
 
@@ -231,6 +232,7 @@ export interface ToolDescriptor {
     readonly workflowHints?: readonly string[];
     readonly prerequisites?: readonly string[];
     readonly platforms?: readonly PlatformId[];
+    readonly operationPlatforms?: Record<string, readonly PlatformId[]>;
   };
 }
 
@@ -291,6 +293,7 @@ export function defineToolModule(config: ToolModuleConfig): ToolModule {
           ...(workflowHints ? { workflowHints } : {}),
           ...(prerequisites ? { prerequisites } : {}),
           ...(platforms ? { platforms } : {}),
+          ...(tool.operationPlatforms ? { operationPlatforms: tool.operationPlatforms } : {}),
         };
 
         return {

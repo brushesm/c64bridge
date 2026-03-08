@@ -2,6 +2,9 @@ import test from "#test/runner";
 import assert from "#test/assert";
 import { printerModule } from "../src/tools/printer.js";
 
+const isVice = (process.env.C64_MODE ?? "").toLowerCase() === "vice";
+const testC64uOnly = isVice ? test.skip : test;
+
 function createLogger() {
   return {
     debug() {},
@@ -11,7 +14,7 @@ function createLogger() {
   };
 }
 
-test("print_text prints via Commodore workflow", async () => {
+testC64uOnly("print_text prints via Commodore workflow", async () => {
   const calls = [];
   const ctx = {
     client: {
@@ -38,7 +41,7 @@ test("print_text prints via Commodore workflow", async () => {
   assert.deepEqual(calls[0], { text: "HELLO", target: "commodore", secondaryAddress: 7, formFeed: true });
 });
 
-test("print_text validates required text", async () => {
+testC64uOnly("print_text validates required text", async () => {
   const ctx = {
     client: {
       async printTextOnPrinterAndRun() {
@@ -53,7 +56,7 @@ test("print_text validates required text", async () => {
   assert.equal(result.metadata.error.kind, "validation");
 });
 
-test("print_bitmap_commodore delegates to client", async () => {
+testC64uOnly("print_bitmap_commodore delegates to client", async () => {
   const calls = [];
   const ctx = {
     client: {
@@ -87,7 +90,7 @@ test("print_bitmap_commodore delegates to client", async () => {
   });
 });
 
-test("print_bitmap_epson requires density for '*' mode", async () => {
+testC64uOnly("print_bitmap_epson requires density for '*' mode", async () => {
   const ctx = {
     client: {
       async printBitmapOnEpsonAndRun() {
@@ -107,7 +110,7 @@ test("print_bitmap_epson requires density for '*' mode", async () => {
   assert.equal(result.metadata.error.kind, "validation");
 });
 
-test("define_printer_chars uploads character bitmap", async () => {
+testC64uOnly("define_printer_chars uploads character bitmap", async () => {
   const calls = [];
   const ctx = {
     client: {

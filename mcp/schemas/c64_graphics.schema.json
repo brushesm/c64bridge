@@ -1,0 +1,232 @@
+{
+  "type": "object",
+  "description": "Graphics operations available via the c64_graphics tool.",
+  "oneOf": [
+    {
+      "type": "object",
+      "description": "Generate PETSCII art from prompts, text, or explicit bitmap data.",
+      "properties": {
+        "prompt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Natural language prompt describing the desired PETSCII art.",
+          "minLength": 1
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Exact text to render in PETSCII (overrides prompt derivation).",
+          "minLength": 1
+        },
+        "maxWidth": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Maximum bitmap width in pixels (1-320).",
+          "minimum": 1,
+          "maximum": 320
+        },
+        "maxHeight": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Maximum bitmap height in pixels (1-200).",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "borderColor": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Border colour index (0-15).",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "backgroundColor": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Background colour index (0-15).",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "foregroundColor": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Foreground colour index (0-15).",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "When true, skip uploading the BASIC program to the C64.",
+          "default": false
+        },
+        "bitmap": {
+          "description": "Explicit bitmap definition for PETSCII rendering.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "width": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 320
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "pixels": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          },
+          "required": [
+            "width",
+            "height",
+            "pixels"
+          ],
+          "additionalProperties": false
+        },
+        "op": {
+          "const": "create_petscii"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "op"
+      ]
+    },
+    {
+      "type": "object",
+      "description": "Render PETSCII text with optional border/background colours.",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "The PETSCII text to print after clearing the screen.",
+          "minLength": 1
+        },
+        "borderColor": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Border colour index (0-15).",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "backgroundColor": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Background colour index (0-15).",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "op": {
+          "const": "render_petscii"
+        }
+      },
+      "required": [
+        "text",
+        "op"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Build and run a sprite PRG from raw 63-byte sprite data.",
+      "properties": {
+        "sprite": {
+          "description": "63-byte sprite definition provided as base64/hex string or array of bytes.",
+          "type": [
+            "string",
+            "array"
+          ],
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "minItems": 63,
+          "maxItems": 63
+        },
+        "index": {
+          "type": "integer",
+          "description": "Sprite index (0-7) to configure in screen memory.",
+          "minimum": 0,
+          "maximum": 7,
+          "default": 0
+        },
+        "x": {
+          "type": "integer",
+          "description": "Sprite X position (0-511).",
+          "minimum": 0,
+          "maximum": 511,
+          "default": 100
+        },
+        "y": {
+          "type": "integer",
+          "description": "Sprite Y position (0-255).",
+          "minimum": 0,
+          "maximum": 255,
+          "default": 100
+        },
+        "color": {
+          "type": "integer",
+          "description": "Sprite colour index (0-15).",
+          "minimum": 0,
+          "maximum": 15,
+          "default": 1
+        },
+        "multicolour": {
+          "type": "boolean",
+          "description": "Enable multicolour mode for the sprite.",
+          "default": false
+        },
+        "op": {
+          "const": "generate_sprite"
+        }
+      },
+      "required": [
+        "sprite",
+        "op"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "description": "Reserved high-resolution bitmap generator (coming soon).",
+      "type": "object",
+      "properties": {
+        "op": {
+          "const": "generate_bitmap"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "op"
+      ]
+    }
+  ],
+  "discriminator": {
+    "propertyName": "op"
+  }
+}

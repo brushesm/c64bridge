@@ -268,6 +268,7 @@ export const configModuleGroup = defineToolModule({
         variants: configOperations.map((operation) => operation.schema),
       }),
       tags: ["config", "diagnostics", "grouped"],
+      operationPlatforms: { version: ["c64u", "vice"], info: ["c64u", "vice"] },
       examples: [
         {
           name: "List categories",

@@ -1,0 +1,298 @@
+{
+  "type": "object",
+  "description": "Program operations available via the c64_program tool.",
+  "oneOf": [
+    {
+      "type": "object",
+      "description": "Load a PRG from Ultimate storage without executing it.",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Absolute or Ultimate filesystem path to the PRG file (e.g. //USB0/demo.prg).",
+          "minLength": 1
+        },
+        "op": {
+          "const": "load_prg"
+        }
+      },
+      "required": [
+        "path",
+        "op"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Load and execute a PRG located on the Ultimate filesystem.",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Absolute or Ultimate filesystem path to the PRG file (e.g. //USB0/demo.prg).",
+          "minLength": 1
+        },
+        "op": {
+          "const": "run_prg"
+        }
+      },
+      "required": [
+        "path",
+        "op"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Mount and run a CRT cartridge image.",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Absolute or Ultimate filesystem path to the CRT file (e.g. //USB0/game.crt).",
+          "minLength": 1
+        },
+        "op": {
+          "const": "run_crt"
+        }
+      },
+      "required": [
+        "path",
+        "op"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Upload Commodore BASIC v2 source and execute it immediately.",
+      "properties": {
+        "program": {
+          "type": "string",
+          "description": "Commodore BASIC v2 program source to upload and run.",
+          "minLength": 1
+        },
+        "verify": {
+          "type": "boolean",
+          "description": "Run post-execution polling to ensure the BASIC program executed without errors.",
+          "default": false
+        },
+        "op": {
+          "const": "upload_run_basic"
+        }
+      },
+      "required": [
+        "program",
+        "op"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Assemble 6502/6510 source, upload the PRG, and execute it.",
+      "properties": {
+        "program": {
+          "type": "string",
+          "description": "Assembly source that will be assembled to a PRG and executed.",
+          "minLength": 1
+        },
+        "verify": {
+          "type": "boolean",
+          "description": "Run post-execution polling to confirm the assembly program remained stable.",
+          "default": false
+        },
+        "op": {
+          "const": "upload_run_asm"
+        }
+      },
+      "required": [
+        "program",
+        "op"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Run multiple PRG/CRT programs with post-run assertions.",
+      "properties": {
+        "programs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "description": "Program to run with assertions",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Program path (PRG or CRT)",
+                "minLength": 1
+              },
+              "assertions": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "object",
+                  "description": "Assertion to check after run",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "Assertion type",
+                      "enum": [
+                        "screen_contains",
+                        "memory_equals",
+                        "sid_silent"
+                      ]
+                    },
+                    "pattern": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Pattern for screen_contains",
+                      "minLength": 1
+                    },
+                    "address": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Address for memory_equals",
+                      "minLength": 1
+                    },
+                    "expected": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Expected value (hex)",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "continueOnError": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Continue running programs after assertion failure",
+          "default": false
+        },
+        "durationMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Duration to run each program before assertions",
+          "minimum": 1,
+          "default": 2000
+        },
+        "outputPath": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Output directory for test results",
+          "minLength": 1
+        },
+        "resetDelayMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Delay after reset operations to allow the platform to settle.",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 100
+        },
+        "op": {
+          "const": "batch_run"
+        }
+      },
+      "required": [
+        "programs",
+        "op"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Capture screen, memory, and debug registers into an artifact bundle.",
+      "properties": {
+        "runId": {
+          "type": "string",
+          "description": "Unique identifier for this run",
+          "minLength": 1
+        },
+        "outputPath": {
+          "type": "string",
+          "description": "Output directory for artifacts bundle",
+          "minLength": 1
+        },
+        "captureScreen": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Capture screen content",
+          "default": true
+        },
+        "memoryRanges": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object",
+            "description": "Memory range to snapshot",
+            "properties": {
+              "address": {
+                "type": "string",
+                "description": "Start address",
+                "minLength": 1
+              },
+              "length": {
+                "type": "integer",
+                "description": "Length in bytes",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "address",
+              "length"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "captureDebugReg": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Capture debugreg state",
+          "default": true
+        },
+        "op": {
+          "const": "bundle_run"
+        }
+      },
+      "required": [
+        "runId",
+        "outputPath",
+        "op"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "discriminator": {
+    "propertyName": "op"
+  }
+}

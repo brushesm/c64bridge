@@ -41,7 +41,11 @@ test("toolRegistry.list returns all registered tools", () => {
 });
 
 test("toolRegistry.invoke executes a tool", async () => {
-  const ctx = createStubCtx();
+  // Use explicit c64u platform since c64_config.version is a c64u tool.
+  // This test verifies registry dispatch mechanics, not platform behaviour.
+  const ctx = createStubCtx({
+    platform: { id: "c64u", features: [], limitedFeatures: [] },
+  });
 
   const result = await toolRegistry.invoke("c64_config", { op: "version" }, ctx);
   assert.ok(result, "should return a result");
