@@ -145,9 +145,13 @@ viceSuite("device: ViceBackend basic operations", async (t) => {
     assert.deepEqual(Array.from(data), Array.from(READY_PATTERN));
   });
 
-  await t.test("pause/resume return success", async () => {
-    assert.deepEqual(await facade.pause(), { success: true });
-    assert.deepEqual(await facade.resume(), { success: true });
+  await t.test("pause/resume report unsupported", async () => {
+    const pause = await facade.pause();
+    const resume = await facade.resume();
+    assert.equal(pause.success, false);
+    assert.equal(resume.success, false);
+    assert.equal(pause.details?.code, "UNSUPPORTED");
+    assert.equal(resume.details?.code, "UNSUPPORTED");
   });
 
   await t.test("loadPrgFile throws unsupported", async () => {

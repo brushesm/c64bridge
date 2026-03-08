@@ -24,7 +24,7 @@ const systemOperations: GroupedOperationConfig[] = [
     schema: extendSchemaWithOp(
       "pause",
       ensureDescriptor(machineDescriptorIndex, "pause").inputSchema,
-      { description: "Pause the machine using DMA halt until resumed." },
+      { description: "Pause the machine until resumed." },
     ),
     handler: async (rawArgs, ctx) => invokeModuleTool(machineControlModule, "pause", rawArgs, ctx),
   },
@@ -33,7 +33,7 @@ const systemOperations: GroupedOperationConfig[] = [
     schema: extendSchemaWithOp(
       "resume",
       ensureDescriptor(machineDescriptorIndex, "resume").inputSchema,
-      { description: "Resume CPU execution after a DMA pause." },
+      { description: "Resume CPU execution after a pause." },
     ),
     handler: async (rawArgs, ctx) => invokeModuleTool(machineControlModule, "resume", rawArgs, ctx),
   },
@@ -134,7 +134,7 @@ export const systemModuleGroup = defineToolModule({
         variants: systemOperations.map((operation) => operation.schema),
       }),
       tags: ["system", "control", "grouped"],
-      operationPlatforms: { menu: ["c64u"] },
+      operationPlatforms: { pause: ["c64u"], resume: ["c64u"], menu: ["c64u"] },
       examples: [
         {
           name: "Soft reset",

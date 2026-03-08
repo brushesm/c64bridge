@@ -56,6 +56,46 @@ test("config_snapshot_and_restore diff reports changes", async () => {
   assert.ok(diff.Audio);
 });
 
+test("config_snapshot_and_restore supports vice-style config inventory", async () => {
+  const { file, dir } = tmpPath("config", "config-vice-snapshot.json");
+  await fs.mkdir(dir, { recursive: true });
+  let batchPayload = null;
+
+  const ctx = {
+    client: {
+      type: "vice",
+      async version() { return { version: "1.0.0" }; },
+      async info() { return { emulator: "vice" }; },
+      async configsList() {
+        return { categories: [{ name: "VICE", items: ["WarpMode", "SoundVolume"] }] };
+      },
+      async configGet(category, item) {
+        if (category !== "VICE") return { value: "" };
+        if (item === "WarpMode") return { value: "0" };
+        if (item === "SoundVolume") return { value: "80" };
+        return { value: "" };
+      },
+      async configBatchUpdate(payload) {
+        batchPayload = payload;
+        return { success: true };
+      },
+    },
+    logger: createLogger(),
+    platform: { id: "vice" },
+  };
+
+  const snapshot = await metaModule.invoke("config_snapshot_and_restore", { action: "snapshot", path: file }, ctx);
+  assert.equal(snapshot.metadata?.success, true);
+
+  const content = JSON.parse(await fs.readFile(file, "utf8"));
+  assert.deepEqual(content.inventory, [{ category: "VICE", item: "WarpMode" }, { category: "VICE", item: "SoundVolume" }]);
+  assert.deepEqual(content.categories?.VICE, { WarpMode: "0", SoundVolume: "80" });
+
+  const restore = await metaModule.invoke("config_snapshot_and_restore", { action: "restore", path: file }, ctx);
+  assert.equal(restore.metadata?.success, true);
+  assert.deepEqual(batchPayload, { VICE: { WarpMode: "0", SoundVolume: "80" } });
+});
+
 test("config_snapshot_and_restore validates snapshot input", async () => {
   const { file, dir } = tmpPath("config", "invalid.json");
   await fs.mkdir(dir, { recursive: true });

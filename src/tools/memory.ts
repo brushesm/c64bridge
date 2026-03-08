@@ -107,6 +107,11 @@ function resolveLength(details: Record<string, unknown>): number | undefined {
   return typeof details.length === "number" ? details.length : undefined;
 }
 
+function supportsMachinePause(ctx: { platform?: { id?: string } }): boolean {
+  const platformId = ctx.platform?.id;
+  return platformId !== "vice";
+}
+
 const readScreenArgsSchema = objectSchema<Record<string, never>>({
   description: "No arguments are required for reading the current screen contents.",
   properties: {},
@@ -145,7 +150,7 @@ const writeMemoryArgsSchema = objectSchema({
       pattern: /^[\s_0-9A-Fa-f$]+$/,
     }),
     verify: booleanSchema({
-      description: "When true, pause and verify the write by reading back the affected range.",
+      description: "When true, verify the write by reading before and after the change; Ultimate hardware also pauses during verification.",
       default: false,
     }),
     expected: optionalSchema(stringSchema({
@@ -258,15 +263,18 @@ async function executeWriteMemory(rawArgs: unknown, ctx: ToolExecutionContext): 
       });
     }
 
+    const canPause = supportsMachinePause(ctx);
     let paused = false;
     try {
-      const pauseResult = await ctx.client.pause();
-      if (!pauseResult.success) {
-        throw new ToolExecutionError("C64 firmware reported failure while pausing", {
-          details: normaliseFailure(pauseResult.details),
-        });
+      if (canPause) {
+        const pauseResult = await ctx.client.pause();
+        if (!pauseResult.success) {
+          throw new ToolExecutionError("C64 firmware reported failure while pausing", {
+            details: normaliseFailure(pauseResult.details),
+          });
+        }
+        paused = true;
       }
-      paused = true;
 
       const expectedBytes = expectedInfo?.bytes ?? new Uint8Array();
       const maskBytes = maskInfo?.bytes;
@@ -374,6 +382,7 @@ async function executeWriteMemory(rawArgs: unknown, ctx: ToolExecutionContext): 
         details: detailRecord,
         verified: true,
         verification: verificationMetadata,
+        paused,
       });
     } finally {
       if (paused) {
@@ -471,7 +480,7 @@ export const memoryModule = defineToolModule({
       relatedResources: ["c64://context/bootstrap", "c64://specs/assembly", "c64://docs/index"],
       relatedPrompts: ["memory-debug", "assembly-program"],
       tags: ["memory", "hex"],
-      prerequisites: ["pause"],
+      prerequisites: [],
       examples: [
         {
           name: "Read screen memory",
@@ -490,12 +499,12 @@ export const memoryModule = defineToolModule({
     {
       name: "write",
       description: "Write a hexadecimal byte sequence into main memory at the specified address. See c64://context/bootstrap for safety rules.",
-      summary: "Resolves symbols, validates hex data, and writes bytes to RAM via Ultimate firmware.",
+      summary: "Resolves symbols, validates hex data, and writes bytes to RAM.",
       inputSchema: writeMemoryArgsSchema.jsonSchema,
       relatedResources: ["c64://context/bootstrap", "c64://specs/assembly", "c64://docs/index"],
       relatedPrompts: ["memory-debug", "assembly-program"],
       tags: ["memory", "hex", "write"],
-  prerequisites: ["pause", "read"],
+        prerequisites: ["read"],
       examples: [
         {
           name: "Write to screen",

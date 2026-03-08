@@ -253,19 +253,19 @@ Grouped entry point for configuration reads/writes, diagnostics, and snapshots.
 
 | Operation | Description | Required Inputs | Notes | C64U | VICE |
 | --- | --- | --- | --- | --- | --- |
-| `batch_update` | Apply multiple configuration updates in a single request. | — | — | ✅ |  |
-| `diff` | Compare the current configuration with a snapshot. | `path` | — | ✅ |  |
-| `get` | Read a configuration category or specific item. | `category` | — | ✅ |  |
+| `batch_update` | Apply multiple configuration updates in a single request. | — | — | ✅ | ✅ |
+| `diff` | Compare the current configuration with a snapshot. | `path` | — | ✅ | ✅ |
+| `get` | Read a configuration category or specific item. | `category` | — | ✅ | ✅ |
 | `info` | Retrieve Ultimate hardware information and status. | — | — | ✅ | ✅ |
-| `list` | List configuration categories reported by the firmware. | — | — | ✅ |  |
+| `list` | List configuration categories reported by the firmware. | — | — | ✅ | ✅ |
 | `load_flash` | Load configuration from flash storage. | — | — | ✅ |  |
 | `read_debugreg` | Read the Ultimate debug register ($D7FF). | — | — | ✅ |  |
 | `reset_defaults` | Reset firmware configuration to factory defaults. | — | — | ✅ |  |
-| `restore` | Restore configuration from a snapshot file. | `path` | — | ✅ |  |
+| `restore` | Restore configuration from a snapshot file. | `path` | — | ✅ | ✅ |
 | `save_flash` | Persist the current configuration to flash storage. | — | — | ✅ |  |
-| `set` | Write a configuration value in the selected category. | `category`, `item`, `value` | — | ✅ |  |
+| `set` | Write a configuration value in the selected category. | `category`, `item`, `value` | — | ✅ | ✅ |
 | `shuffle` | Discover PRG/CRT files and run each with optional screen capture. | — | — | ✅ |  |
-| `snapshot` | Snapshot configuration to disk for later restore or diff. | `path` | — | ✅ |  |
+| `snapshot` | Snapshot configuration to disk for later restore or diff. | `path` | — | ✅ | ✅ |
 | `version` | Fetch firmware version details. | — | — | ✅ | ✅ |
 | `write_debugreg` | Write a hex value to the Ultimate debug register ($D7FF). | `value` | — | ✅ |  |
 
@@ -366,7 +366,7 @@ Grouped entry point for program upload, execution, and batch workflows.
 | `bundle_run` | Capture screen, memory, and debug registers into an artifact bundle. | `runId`, `outputPath` | — | ✅ |  |
 | `load_prg` | Load a PRG from Ultimate storage without executing it. | `path` | — | ✅ |  |
 | `run_crt` | Mount and run a CRT cartridge image. | `path` | — | ✅ |  |
-| `run_prg` | Load and execute a PRG located on the Ultimate filesystem. | `path` | — | ✅ | ✅ |
+| `run_prg` | Load and execute a PRG from Ultimate-visible storage on c64u or a host-local path on VICE. | `path` | — | ✅ | ✅ |
 | `upload_run_asm` | Assemble 6502/6510 source, upload the PRG, and execute it. | `program` | supports verify | ✅ | ✅ |
 | `upload_run_basic` | Upload Commodore BASIC v2 source and execute it immediately. | `program` | supports verify | ✅ | ✅ |
 
@@ -415,11 +415,11 @@ Grouped entry point for power, reset, menu, and background task control.
 | --- | --- | --- | --- | --- | --- |
 | `list_tasks` | List known background tasks with status metadata. | — | — | ✅ | ✅ |
 | `menu` | Toggle the Ultimate menu button for navigation. | — | — | ✅ |  |
-| `pause` | Pause the machine using DMA halt until resumed. | — | — | ✅ | ✅ |
+| `pause` | Pause the machine until resumed. | — | — | ✅ |  |
 | `poweroff` | Request a controlled shutdown via the Ultimate firmware. | — | — | ✅ | ✅ |
 | `reboot` | Trigger a firmware reboot to recover from faults. | — | — | ✅ | ✅ |
 | `reset` | Issue a soft reset without cutting power. | — | — | ✅ | ✅ |
-| `resume` | Resume CPU execution after a DMA pause. | — | — | ✅ | ✅ |
+| `resume` | Resume CPU execution after a pause. | — | — | ✅ |  |
 | `start_task` | Start a named background task that runs on an interval. | `name`, `operation` | — | ✅ | ✅ |
 | `stop_all_tasks` | Stop every running background task and persist state. | — | — | ✅ | ✅ |
 | `stop_task` | Stop a specific background task and clear its timer. | `name` | — | ✅ | ✅ |

@@ -71,7 +71,7 @@ Subsequent `npm run build` invocations reuse the incremental cache stored in `di
 
 ## 5. Configuration & Backends
 
-Resolution order: `C64BRIDGE_CONFIG` → `./.c64bridge.json` → `~/.c64bridge.json` → defaults (`host=c64u`, `port=80`). Supports hardware (`c64u`) and experimental VICE (`vice.exe`). For secured Ultimate firmware, set `c64u.networkPassword` in the config file to send `X-Password` on every REST request.
+Resolution order: `C64BRIDGE_CONFIG` → `./.c64bridge.json` → `~/.c64bridge.json` → defaults (`host=c64u`, `port=80`). Supports hardware (`c64u`) and experimental VICE. For secured Ultimate firmware, set `c64u.networkPassword` in the config file to send `X-Password` on every REST request.
 
 Key env flags:
 
@@ -79,6 +79,8 @@ Key env flags:
 - `LOG_LEVEL=debug` — verbose logging (stderr)
 - `C64_TEST_TARGET` / `C64_TEST_BASE_URL` — influence test harness
 - `VICE_TEST_TARGET=mock|vice` — test selection for VICE (default: auto-detect real VICE; set `mock` to run against the BM stub during tests)
+
+Managed VICE launch is currently Linux/X11-oriented. The launcher and smoke workflow assume Unix facilities such as `Xvfb`, `/tmp/.X11-unix`, and `/dev/null`; on other hosts, connect to an already running Binary Monitor endpoint or use the mock backend instead of assuming supervised startup will work.
 
 ## 6. RAG Maintenance
 
@@ -122,7 +124,7 @@ npm run vice:smoke
 
 Env knobs:
 
-- `VICE_BINARY=/path/to/x64sc` — pick emulator binary
+- `VICE_BINARY=/path/to/x64sc` — pick emulator binary on Unix-like hosts
 - `VICE_VISIBLE=1` — show the VICE window (recommended during dev)
 - `VICE_WARP=0` — disable warp so you can observe visible output
 - `VICE_KEEP_OPEN=1` — keep window open after success

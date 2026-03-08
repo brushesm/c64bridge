@@ -121,7 +121,7 @@ test("reboot_c64 handles exception", async () => {
 
 // --- pause ---
 
-test("pause succeeds with valid response", async () => {
+testC64uOnly("pause succeeds with valid response", async () => {
   const ctx = {
     client: createMockClient(),
     logger: createLogger(),
@@ -132,7 +132,7 @@ test("pause succeeds with valid response", async () => {
   assert.equal(res.metadata?.success, true);
 });
 
-test("pause handles failure response", async () => {
+testC64uOnly("pause handles failure response", async () => {
   const ctx = {
     client: createMockClient({
       async pause() { return { success: false, details: undefined }; },
@@ -144,7 +144,7 @@ test("pause handles failure response", async () => {
   assert.equal(res.metadata?.error?.kind, "execution");
 });
 
-test("pause handles exception", async () => {
+testC64uOnly("pause handles exception", async () => {
   const ctx = {
     client: createMockClient({
       async pause() { throw new Error("timeout"); },
@@ -158,7 +158,7 @@ test("pause handles exception", async () => {
 
 // --- resume ---
 
-test("resume succeeds with valid response", async () => {
+testC64uOnly("resume succeeds with valid response", async () => {
   const ctx = {
     client: createMockClient(),
     logger: createLogger(),
@@ -169,7 +169,7 @@ test("resume succeeds with valid response", async () => {
   assert.equal(res.metadata?.success, true);
 });
 
-test("resume handles failure response", async () => {
+testC64uOnly("resume handles failure response", async () => {
   const ctx = {
     client: createMockClient({
       async resume() { return { success: false, details: { code: 500 } }; },
@@ -181,7 +181,7 @@ test("resume handles failure response", async () => {
   assert.equal(res.metadata?.error?.kind, "execution");
 });
 
-test("resume handles exception", async () => {
+testC64uOnly("resume handles exception", async () => {
   const ctx = {
     client: createMockClient({
       async resume() { throw new Error("hardware error"); },
@@ -288,6 +288,32 @@ testC64uOnly("menu_button handles exception", async () => {
 });
 
 if (isVice) {
+  test("pause is unsupported on vice", () =>
+    runWithPlatform("vice", async () => {
+      const ctx = {
+        client: createMockClient(),
+        logger: createLogger(),
+      };
+
+      await assert.rejects(
+        () => machineControlModule.invoke("pause", {}, ctx),
+        (error) => error?.name === "ToolUnsupportedPlatformError",
+      );
+    }));
+
+  test("resume is unsupported on vice", () =>
+    runWithPlatform("vice", async () => {
+      const ctx = {
+        client: createMockClient(),
+        logger: createLogger(),
+      };
+
+      await assert.rejects(
+        () => machineControlModule.invoke("resume", {}, ctx),
+        (error) => error?.name === "ToolUnsupportedPlatformError",
+      );
+    }));
+
   test("menu_button is unsupported on vice", () =>
     runWithPlatform("vice", async () => {
       const ctx = {

@@ -8,7 +8,7 @@
       "properties": {
         "path": {
           "type": "string",
-          "description": "Absolute or Ultimate filesystem path to the PRG file (e.g. //USB0/demo.prg).",
+          "description": "Path to the PRG image. Use an Ultimate-visible filesystem path on c64u, or a host-local filesystem path on VICE.",
           "minLength": 1
         },
         "op": {
@@ -23,11 +23,11 @@
     },
     {
       "type": "object",
-      "description": "Load and execute a PRG located on the Ultimate filesystem.",
+      "description": "Load and execute a PRG from Ultimate-visible storage on c64u or a host-local path on VICE.",
       "properties": {
         "path": {
           "type": "string",
-          "description": "Absolute or Ultimate filesystem path to the PRG file (e.g. //USB0/demo.prg).",
+          "description": "Path to the PRG image. Use an Ultimate-visible filesystem path on c64u, or a host-local filesystem path on VICE.",
           "minLength": 1
         },
         "op": {
@@ -46,7 +46,7 @@
       "properties": {
         "path": {
           "type": "string",
-          "description": "Absolute or Ultimate filesystem path to the CRT file (e.g. //USB0/game.crt).",
+          "description": "Path to the CRT image on Ultimate-visible storage. CRT mounting is only supported on c64u.",
           "minLength": 1
         },
         "op": {

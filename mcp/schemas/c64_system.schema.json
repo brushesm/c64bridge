@@ -4,7 +4,7 @@
   "oneOf": [
     {
       "type": "object",
-      "description": "Pause the machine using DMA halt until resumed.",
+      "description": "Pause the machine until resumed.",
       "properties": {
         "op": {
           "const": "pause"
@@ -17,7 +17,7 @@
     },
     {
       "type": "object",
-      "description": "Resume CPU execution after a DMA pause.",
+      "description": "Resume CPU execution after a pause.",
       "properties": {
         "op": {
           "const": "resume"

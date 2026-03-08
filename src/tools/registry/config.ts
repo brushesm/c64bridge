@@ -253,6 +253,7 @@ export const configModuleGroup = defineToolModule({
   resources: ["c64://context/bootstrap", "c64://docs/index"],
   prompts: ["memory-debug"],
   defaultTags: ["config", "diagnostics"],
+  supportedPlatforms: ["c64u", "vice"],
   workflowHints: [
     "List categories before changing values so users can confirm firmware-provided names.",
     "Mention when operations persist to flash or modify debug registers to highlight impacts.",
@@ -268,7 +269,14 @@ export const configModuleGroup = defineToolModule({
         variants: configOperations.map((operation) => operation.schema),
       }),
       tags: ["config", "diagnostics", "grouped"],
-      operationPlatforms: { version: ["c64u", "vice"], info: ["c64u", "vice"] },
+      operationPlatforms: {
+        load_flash: ["c64u"],
+        save_flash: ["c64u"],
+        reset_defaults: ["c64u"],
+        read_debugreg: ["c64u"],
+        write_debugreg: ["c64u"],
+        shuffle: ["c64u"],
+      },
       examples: [
         {
           name: "List categories",

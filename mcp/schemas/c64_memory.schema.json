@@ -45,7 +45,7 @@
         },
         "verify": {
           "type": "boolean",
-          "description": "When true, pause and verify the write by reading back the affected range.",
+          "description": "When true, verify the write by reading before and after the change; Ultimate hardware also pauses during verification.",
           "default": false
         },
         "expected": {

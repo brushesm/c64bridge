@@ -5,6 +5,7 @@ import { jsonResult } from "../responses.js";
 import { ToolError, ToolExecutionError, ToolValidationError, toolErrorResult, unknownErrorResult } from "../errors.js";
 import { promises as fs } from "node:fs";
 import { dirname, resolve as resolvePath } from "node:path";
+import { captureConfigSnapshot, validateSnapshotCategories } from "./configInventory.js";
 import { normalizeErrorDetails } from "./util.js";
 
 const configSnapshotAndRestoreArgsSchema = objectSchema({
@@ -33,40 +34,38 @@ export const tools: ToolDefinition[] = [
         await fs.mkdir(dirname(path), { recursive: true });
 
         if (action === "snapshot") {
-          const [version, info, cats] = await Promise.all([
+          const [version, info, snapshotData] = await Promise.all([
             (ctx.client as any).version(),
             (ctx.client as any).info(),
-            (ctx.client as any).configsList(),
+            captureConfigSnapshot(ctx.client as any),
           ]);
-          const categories: string[] = Array.isArray((cats as any)?.categories)
-            ? (cats as any).categories
-            : [];
-          const data: Record<string, unknown> = {};
-          for (const category of categories) {
-            try {
-              const v = await (ctx.client as any).configGet(category as any);
-              data[category as any] = v;
-            } catch (e) {
-              data[category as any] = { _error: e instanceof Error ? e.message : String(e) };
-            }
-          }
           const snapshot = {
             createdAt: new Date().toISOString(),
             version,
             info,
-            categories: data,
+            inventory: snapshotData.inventory,
+            categories: snapshotData.categories,
           };
           await fs.writeFile(path, JSON.stringify(snapshot, null, 2), "utf8");
-          return jsonResult({ path, categoryCount: Object.keys(data).length }, { success: true });
+          return jsonResult({
+            path,
+            categoryCount: Object.keys(snapshotData.categories).length,
+            itemCount: snapshotData.inventory.length,
+          }, { success: true });
         }
 
         if (action === "restore") {
           const text = await fs.readFile(path, "utf8");
           const snapshot = JSON.parse(text);
-          if (!snapshot || typeof snapshot !== "object" || typeof snapshot.categories !== "object") {
+          if (!snapshot || typeof snapshot !== "object") {
             throw new ToolValidationError("Invalid snapshot file", { path: "$.path" });
           }
-          const payload = snapshot.categories as Record<string, object>;
+          let payload: Record<string, object>;
+          try {
+            payload = validateSnapshotCategories(snapshot.categories) as Record<string, object>;
+          } catch {
+            throw new ToolValidationError("Invalid snapshot file", { path: "$.path" });
+          }
           const result = await (ctx.client as any).configBatchUpdate(payload);
           if (!result.success) {
             throw new ToolExecutionError("Batch update failed", { details: normalizeErrorDetails(result.details) });
@@ -79,16 +78,9 @@ export const tools: ToolDefinition[] = [
 
         const text = await fs.readFile(path, "utf8");
         const snapshot = JSON.parse(text);
-        const cats = await (ctx.client as any).configsList();
-        const categories: string[] = Array.isArray((cats as any)?.categories)
-          ? (cats as any).categories
-          : [];
-        const current: Record<string, unknown> = {};
-        for (const c of categories) {
-          current[c] = await (ctx.client as any).configGet(c as any);
-        }
+        const snapCats = validateSnapshotCategories(snapshot.categories ?? {});
+        const current = (await captureConfigSnapshot(ctx.client as any)).categories;
         const diff: Record<string, Record<string, { expected: unknown; actual: unknown }>> = {};
-        const snapCats: Record<string, unknown> = snapshot.categories ?? {};
         for (const [cat, snapVal] of Object.entries(snapCats)) {
           const curVal = current[cat];
           if (JSON.stringify(snapVal) !== JSON.stringify(curVal)) {

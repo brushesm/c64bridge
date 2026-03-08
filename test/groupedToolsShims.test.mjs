@@ -79,6 +79,57 @@ test("c64_program run_prg delegates to legacy handler", async () => {
   assert.equal(calls[0].path, "//USB0/demo.prg");
 });
 
+test("c64_config list is available on vice", async () => {
+  const stubClient = {
+    async configsList() {
+      return { categories: [{ name: "VICE", items: ["WarpMode"] }] };
+    },
+  };
+
+  const ctx = {
+    client: stubClient,
+    rag: {},
+    logger: {
+      debug() {},
+      info() {},
+      warn() {},
+      error() {},
+    },
+    platform: { id: "vice", features: [], limitedFeatures: [] },
+    setPlatform,
+  };
+
+  const result = await toolRegistry.invoke("c64_config", { op: "list" }, ctx);
+  assert.equal(result.isError, undefined);
+  const data = result.structuredContent?.data;
+  assert.ok(Array.isArray(data?.categories));
+  assert.equal(data.categories[0]?.name, "VICE");
+});
+
+test("c64_system pause is rejected on vice", async () => {
+  const ctx = {
+    client: {
+      async pause() {
+        throw new Error("should not execute on unsupported platform");
+      },
+    },
+    rag: {},
+    logger: {
+      debug() {},
+      info() {},
+      warn() {},
+      error() {},
+    },
+    platform: { id: "vice", features: [], limitedFeatures: [] },
+    setPlatform,
+  };
+
+  await assert.rejects(
+    () => toolRegistry.invoke("c64_system", { op: "pause" }, ctx),
+    /Tool pause is not available on platform vice/,
+  );
+});
+
 test("c64_program upload_run_basic uses shared BASIC handler", async () => {
   const uploads = [];
   let screenReads = 0;

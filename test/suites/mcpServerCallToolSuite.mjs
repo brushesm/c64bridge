@@ -56,6 +56,16 @@ function toolIsAvailable(ctx, toolName) {
   return true;
 }
 
+function assertUnsupportedOperation(result, platform, expectedTool) {
+  assert.equal(result.isError, true);
+  assert.equal(result.metadata?.error?.kind, "execution");
+  assert.equal(result.metadata?.error?.code, "unsupported_platform");
+  assert.equal(result.metadata?.error?.details?.platform, platform);
+  if (expectedTool) {
+    assert.equal(result.metadata?.error?.details?.tool, expectedTool);
+  }
+}
+
 async function callTool(ctx, toolName, args) {
   const supported = toolIsAvailable(ctx, toolName);
   const result = await ctx.client.request(
@@ -364,18 +374,30 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
 
       const { result: saveResult } = await callTool(ctx, "c64_config", { op: "save_flash" });
 
-      assert.equal(saveResult.metadata?.success, true, "save_flash operation should succeed");
-      assert.ok(mockServer.state.flashSnapshot, "flash snapshot should be captured after save");
+      if (ctx.platform === "vice") {
+        assertUnsupportedOperation(saveResult, ctx.platform, "config_save_to_flash");
+      } else {
+        assert.equal(saveResult.metadata?.success, true, "save_flash operation should succeed");
+        assert.ok(mockServer.state.flashSnapshot, "flash snapshot should be captured after save");
+      }
 
       const { result: resetResult } = await callTool(ctx, "c64_config", { op: "reset_defaults" });
 
-      assert.equal(resetResult.metadata?.success, true, "reset_defaults operation should succeed");
-      assert.equal(mockServer.state.configs.Audio.Volume, "6", "reset should restore default volume");
+      if (ctx.platform === "vice") {
+        assertUnsupportedOperation(resetResult, ctx.platform, "config_reset_to_default");
+      } else {
+        assert.equal(resetResult.metadata?.success, true, "reset_defaults operation should succeed");
+        assert.equal(mockServer.state.configs.Audio.Volume, "6", "reset should restore default volume");
+      }
 
       const { result: loadResult } = await callTool(ctx, "c64_config", { op: "load_flash" });
 
-      assert.equal(loadResult.metadata?.success, true, "load_flash operation should succeed");
-      assert.equal(mockServer.state.configs.Video.Mode, "NTSC", "load should restore saved snapshot");
+      if (ctx.platform === "vice") {
+        assertUnsupportedOperation(loadResult, ctx.platform, "config_load_from_flash");
+      } else {
+        assert.equal(loadResult.metadata?.success, true, "load_flash operation should succeed");
+        assert.equal(mockServer.state.configs.Video.Mode, "NTSC", "load should restore saved snapshot");
+      }
     });
   });
 

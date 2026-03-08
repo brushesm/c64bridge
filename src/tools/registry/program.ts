@@ -33,7 +33,7 @@ const programOperations: GroupedOperationConfig[] = [
     schema: extendSchemaWithOp(
       "run_prg",
       ensureDescriptor(programDescriptorIndex, "run_prg").inputSchema,
-      { description: "Load and execute a PRG located on the Ultimate filesystem." },
+      { description: "Load and execute a PRG from Ultimate-visible storage on c64u or a host-local path on VICE." },
     ),
     handler: groupedProgramHandlers.run_prg,
   },
@@ -94,7 +94,7 @@ export const programModule = defineToolModule({
   defaultTags: ["programs", "execution"],
   workflowHints: [
     "Choose BASIC or assembly uploaders based on the language you just generated for the user.",
-    "Prefer PRG or CRT runners when the user supplies an Ultimate filesystem path instead of source text.",
+    "Prefer PRG or CRT runners when the user supplies a file path instead of source text; PRG paths are host-local on VICE and Ultimate-visible on c64u.",
   ],
   supportedPlatforms: ["c64u", "vice"],
   tools: [

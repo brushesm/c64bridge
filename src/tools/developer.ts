@@ -178,6 +178,7 @@ export const developerModule = defineToolModule({
       workflowHints: [
         "Run first to enumerate categories before reading or writing specific settings; summarise the top-level sections for the user.",
       ],
+      supportedPlatforms: ["c64u", "vice"] as const,
       async execute(args, ctx) {
         try {
           noArgsSchema.parse(args ?? {});
@@ -214,6 +215,7 @@ export const developerModule = defineToolModule({
       workflowHints: [
         "Use after config_list to fetch details; restate category/item so the user can cross-check values before changes.",
       ],
+      supportedPlatforms: ["c64u", "vice"] as const,
       async execute(args, ctx) {
         try {
           const parsed = configGetArgsSchema.parse(args ?? {});
@@ -249,6 +251,7 @@ export const developerModule = defineToolModule({
       workflowHints: [
         "Confirm the user-supplied value before writing; mention whether a reboot is required for the change to take effect.",
       ],
+      supportedPlatforms: ["c64u", "vice"] as const,
       async execute(args, ctx) {
         try {
           const parsed = configSetArgsSchema.parse(args ?? {});
@@ -297,6 +300,7 @@ export const developerModule = defineToolModule({
       workflowHints: [
         "Use when multiple categories must be updated together; remind the user to review validation errors closely.",
       ],
+      supportedPlatforms: ["c64u", "vice"] as const,
       async execute(args, ctx) {
         try {
           const payload = configBatchSchema.parse(args ?? {});

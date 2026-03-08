@@ -35,7 +35,7 @@ function normaliseFailure(details: unknown): Record<string, unknown> | undefined
 
 const resetArgsSchema = createNoArgsSchema("No arguments required to reset the C64.");
 const rebootArgsSchema = createNoArgsSchema("No arguments required to reboot the C64 firmware.");
-const pauseArgsSchema = createNoArgsSchema("No arguments required to pause the machine via DMA.");
+const pauseArgsSchema = createNoArgsSchema("No arguments required to pause the machine.");
 const resumeArgsSchema = createNoArgsSchema("No arguments required to resume the machine after a pause.");
 const poweroffArgsSchema = createNoArgsSchema("No arguments required to power off the machine.");
 const menuButtonArgsSchema = createNoArgsSchema("No arguments required to toggle the Ultimate menu button.");
@@ -133,8 +133,8 @@ export const machineControlModule = defineToolModule({
     },
     {
       name: "pause",
-      description: "Pause the machine using DMA halt. See memory safety checklist in c64://context/bootstrap.",
-      summary: "Suspends CPU execution until resumed.",
+      description: "Pause the machine on Ultimate hardware. See memory safety checklist in c64://context/bootstrap.",
+      summary: "Suspends CPU execution on Ultimate hardware until resumed.",
       inputSchema: pauseArgsSchema.jsonSchema,
       tags: ["pause"],
       prerequisites: [],
@@ -144,7 +144,7 @@ export const machineControlModule = defineToolModule({
       workflowHints: [
         "Pause when the user needs a stable memory snapshot; remind them to resume to continue execution.",
       ],
-      supportedPlatforms: ["c64u", "vice"],
+      supportedPlatforms: ["c64u"],
       async execute(args, ctx) {
         try {
           pauseArgsSchema.parse(args ?? {});
@@ -173,8 +173,8 @@ export const machineControlModule = defineToolModule({
     },
     {
       name: "resume",
-      description: "Resume the machine after a DMA pause.",
-      summary: "Releases the DMA halt so the CPU can continue.",
+      description: "Resume the machine after an Ultimate hardware pause.",
+      summary: "Releases the Ultimate hardware pause so the CPU can continue.",
       inputSchema: resumeArgsSchema.jsonSchema,
       tags: ["resume"],
       prerequisites: ["pause"],
@@ -184,7 +184,7 @@ export const machineControlModule = defineToolModule({
       workflowHints: [
         "Call after a pause or diagnostic halt and confirm the machine is running again.",
       ],
-      supportedPlatforms: ["c64u", "vice"],
+      supportedPlatforms: ["c64u"],
       async execute(args, ctx) {
         try {
           resumeArgsSchema.parse(args ?? {});

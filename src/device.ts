@@ -464,9 +464,25 @@ export class ViceBackend implements C64Facade {
 
   async reboot(): Promise<RunResult> { return this.reset(); }
 
-  async pause(): Promise<RunResult> { return { success: true }; }
+  async pause(): Promise<RunResult> {
+    return {
+      success: false,
+      details: {
+        code: "UNSUPPORTED",
+        message: "VICE pause is not implemented as a durable machine stop; use per-operation monitor access instead.",
+      },
+    };
+  }
 
-  async resume(): Promise<RunResult> { return { success: true }; }
+  async resume(): Promise<RunResult> {
+    return {
+      success: false,
+      details: {
+        code: "UNSUPPORTED",
+        message: "VICE resume is unavailable because durable pause is not supported.",
+      },
+    };
+  }
   async poweroff(): Promise<RunResult> {
     const key = this.supervisorKey();
     const managedHandle = this.manageProcess ? ViceBackend.supervisors.get(key) : null;

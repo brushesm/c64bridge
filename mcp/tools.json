@@ -13,7 +13,7 @@
             "properties": {
               "path": {
                 "type": "string",
-                "description": "Absolute or Ultimate filesystem path to the PRG file (e.g. //USB0/demo.prg).",
+                "description": "Path to the PRG image. Use an Ultimate-visible filesystem path on c64u, or a host-local filesystem path on VICE.",
                 "minLength": 1
               },
               "op": {
@@ -28,11 +28,11 @@
           },
           {
             "type": "object",
-            "description": "Load and execute a PRG located on the Ultimate filesystem.",
+            "description": "Load and execute a PRG from Ultimate-visible storage on c64u or a host-local path on VICE.",
             "properties": {
               "path": {
                 "type": "string",
-                "description": "Absolute or Ultimate filesystem path to the PRG file (e.g. //USB0/demo.prg).",
+                "description": "Path to the PRG image. Use an Ultimate-visible filesystem path on c64u, or a host-local filesystem path on VICE.",
                 "minLength": 1
               },
               "op": {
@@ -51,7 +51,7 @@
             "properties": {
               "path": {
                 "type": "string",
-                "description": "Absolute or Ultimate filesystem path to the CRT file (e.g. //USB0/game.crt).",
+                "description": "Path to the CRT image on Ultimate-visible storage. CRT mounting is only supported on c64u.",
                 "minLength": 1
               },
               "op": {
@@ -339,7 +339,7 @@
         ],
         "workflowHints": [
           "Choose BASIC or assembly uploaders based on the language you just generated for the user.",
-          "Prefer PRG or CRT runners when the user supplies an Ultimate filesystem path instead of source text."
+          "Prefer PRG or CRT runners when the user supplies a file path instead of source text; PRG paths are host-local on VICE and Ultimate-visible on c64u."
         ],
         "platforms": [
           "c64u",
@@ -408,7 +408,7 @@
               },
               "verify": {
                 "type": "boolean",
-                "description": "When true, pause and verify the write by reading back the affected range.",
+                "description": "When true, verify the write by reading before and after the change; Ultimate hardware also pauses during verification.",
                 "default": false
               },
               "expected": {
@@ -1177,7 +1177,7 @@
         "oneOf": [
           {
             "type": "object",
-            "description": "Pause the machine using DMA halt until resumed.",
+            "description": "Pause the machine until resumed.",
             "properties": {
               "op": {
                 "const": "pause"
@@ -1190,7 +1190,7 @@
           },
           {
             "type": "object",
-            "description": "Resume CPU execution after a DMA pause.",
+            "description": "Resume CPU execution after a pause.",
             "properties": {
               "op": {
                 "const": "resume"
@@ -1398,6 +1398,12 @@
           "vice"
         ],
         "operationPlatforms": {
+          "pause": [
+            "c64u"
+          ],
+          "resume": [
+            "c64u"
+          ],
           "menu": [
             "c64u"
           ]
@@ -2999,16 +3005,27 @@
           "Call out snapshot file paths so users can version-control or reuse them later."
         ],
         "platforms": [
-          "c64u"
+          "c64u",
+          "vice"
         ],
         "operationPlatforms": {
-          "version": [
-            "c64u",
-            "vice"
+          "load_flash": [
+            "c64u"
           ],
-          "info": [
-            "c64u",
-            "vice"
+          "save_flash": [
+            "c64u"
+          ],
+          "reset_defaults": [
+            "c64u"
+          ],
+          "read_debugreg": [
+            "c64u"
+          ],
+          "write_debugreg": [
+            "c64u"
+          ],
+          "shuffle": [
+            "c64u"
           ]
         }
       }
