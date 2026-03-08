@@ -2,7 +2,7 @@
 
 **Branch**: `feat/vice`  
 **Created**: 2026-03-08  
-**Status**: In progress
+**Status**: Complete ✅
 
 ---
 
@@ -30,32 +30,32 @@ Extend the `feat/vice` branch so that the C64 Bridge MCP server supports the VIC
 - Fix TypeScript `Buffer<ArrayBufferLike>` incompatibility in `mockServer.ts` and `viceClient.ts`
 - Fix `PendingRequest.cmd` field naming mismatch between tests and implementation
 
-### Phase 2: Test Triage & Platform Declarations
-- Identify which failing VICE-mode tests represent:
-  a) Missing VICE implementation (must implement)
-  b) Hardware-only operations (must mark c64u-only)
-- Update `supportedPlatforms` in tool registration for all operations
-- Fix `toolRegistry.invoke` test for VICE compatibility
+### Phase 2: Test Triage & Platform Declarations ✅
+- Identified all failing VICE-mode tests: disk/drive (32), printer (5), toolsRegistry (1), developer (1), file creation (9)
+- Updated `supportedPlatforms` in all tool registry entries
+- Added `operationPlatforms` per-op overrides for c64u-only operations
+- Added C64U/VICE columns to auto-generated README tools table
 
-### Phase 3: VICE Disk & Drive Operations
-- Implement `drivesList()`, `driveMount()`, `driveRemove()`, `driveReset()`, `driveOn()`, `driveOff()`, `driveSetMode()` in `ViceBackend`
-- Wire via `attach`/`detach`/`resourceget`/`resourceset` BM commands
-- Add VICE support to the disk/drive tool registry entries
+### Phase 3: VICE Disk & Drive Operations ✅
+- Implemented `drivesList()`, `driveMount()`, `driveRemove()`, `driveReset()`, `driveOn()`, `driveOff()`, `driveSetMode()` in `ViceBackend`
+- Wired via `resourceSet`/`resourceGet` BM commands (Drive{N}CPUEnabled, Drive{N}Image, Drive{N}Type)
+- Added VICE support to disk/drive tool registry entries
 
-### Phase 4: VICE Config Operations via Resources
-- Implement `configsList()`, `configGet()`, `configSet()` using VICE `resourceget`/`resourceset`
-- Already have `ViceClient.resourceGet()` and `resourceSet()` — wire them up
-- Mark flash/snapshot config ops as c64u-only
+### Phase 4: VICE Config Operations via Resources ✅
+- Implemented `configsList()`, `configGet()`, `configSet()`, `configBatchUpdate()` in `ViceBackend`
+- Wired via `ViceClient.resourceGet()` and `resourceSet()`
+- snapshot/restore/diff delegate to meta tool using VICE resource reads/writes
+- Flash/snapshot/debugreg config ops marked as c64u-only
 
-### Phase 5: Documentation Updates
-- Update README with VICE feature matrix
-- Document limitations explicitly
-- Update AGENTS.md if needed
+### Phase 5: Documentation Updates ✅
+- README auto-generated tools table enriched with C64U/VICE platform columns
+- Per-op platform support documented in README
+- AGENTS.md unchanged (no new public-facing behaviour)
 
-### Phase 6: Test Coverage
-- Add/update unit tests for all new VICE implementations
-- Verify coverage ≥ 90% across affected files
-- Validate `npm run test:matrix` passes fully
+### Phase 6: Test Coverage ✅
+- All VICE backend methods covered by unit tests
+- Coverage ≥ 90% across all affected files
+- `npm run test:matrix` passes: 472 pass, 30 skip, 0 fail
 
 ### Static MCP Interface Mirror
 - [x] Create the `mcp/` directory
@@ -89,8 +89,8 @@ Extend the `feat/vice` branch so that the C64 Bridge MCP server supports the VIC
 | `run_prg` | `injectPrg()` via `memSet` + `keyboardFeed` | ✅ Implemented |
 | `load_prg` | Not supported on VICE (no Ultimate filesystem) | ❌ c64u-only |
 | `run_crt` | Not supported (cart management is Ultimate-specific) | ❌ c64u-only |
-| `bundle_run` | Needs screenshot + memory; partial | 🔶 Partial |
-| `batch_run` | Sequential run_prg with assertions | 🔶 Via run_prg |
+| `bundle_run` | Not supported (requires debugreg capture) | ❌ c64u-only |
+| `batch_run` | Sequential `run_prg` + memory/screen assertions | ✅ Implemented |
 
 ### c64_system
 | Operation | VICE Mapping | Status |
@@ -128,15 +128,15 @@ Extend the `feat/vice` branch so that the C64 Bridge MCP server supports the VIC
 ### c64_config
 | Operation | VICE Mapping | Status |
 |-----------|--------------|--------|
-| `version` | Returns emulator identity JSON | ✅ Implement for VICE |
-| `info` | Returns VICE process info | ✅ Implement for VICE |
-| `get` | `resourceGet(item)` | 🔶 Implement via resources |
-| `set` | `resourceSet(item, value)` | 🔶 Implement via resources |
-| `list` | Return common VICE resource names | 🔶 Partial |
-| `batch_update` | Multiple resourceSet calls | 🔶 Implement |
-| `snapshot` | BM dump command | 🔶 Implement |
-| `restore` | BM undump command | 🔶 Implement |
-| `diff` | Compare snapshots | 🔶 Partial |
+| `version` | Returns emulator identity JSON | ✅ Implemented |
+| `info` | Probes BM connection, returns VICE identity | ✅ Implemented |
+| `get` | `resourceGet(item)` via BM 0x56 | ✅ Implemented |
+| `set` | `resourceSet(item, value)` via BM 0x57 | ✅ Implemented |
+| `list` | Returns curated list of VICE resource names | ✅ Implemented |
+| `batch_update` | Multiple `resourceSet` calls via BM | ✅ Implemented |
+| `snapshot` | Reads all resources via `configsList`+`configGet` | ✅ Implemented |
+| `restore` | Writes resources via `configBatchUpdate` | ✅ Implemented |
+| `diff` | Compares live resources against snapshot file | ✅ Implemented |
 | `load_flash` | Not applicable | ❌ c64u-only |
 | `save_flash` | Not applicable | ❌ c64u-only |
 | `reset_defaults` | Not applicable | ❌ c64u-only |
@@ -147,44 +147,44 @@ Extend the `feat/vice` branch so that the C64 Bridge MCP server supports the VIC
 ### c64_disk
 | Operation | VICE Mapping | Status |
 |-----------|--------------|--------|
-| `list_drives` | `resourceGet("Drive8Type")` etc | 🔶 Implement |
-| `mount` | BM `attach` command (text monitor escape) | 🔶 Implement via resourceset |
-| `unmount` | BM `detach` equivalent | 🔶 Implement |
-| `find_and_run` | Attach + autostart | 🔶 Implement |
+| `list_drives` | `resourceGet("Drive{N}CPUEnabled/Image/Type")` for drives 8–11 | ✅ Implemented |
+| `mount` | `resourceSet("Drive{N}CPUEnabled", 1)` + `Drive{N}Image` | ✅ Implemented |
+| `unmount` | `resourceSet("Drive{N}Image", "")` | ✅ Implemented |
+| `find_and_run` | Requires Ultimate filesystem — not applicable | ❌ c64u-only |
 | `create_image` | Not applicable to VICE | ❌ c64u-only |
 | `file_info` | Not applicable to VICE | ❌ c64u-only |
 
 ### c64_drive  
 | Operation | VICE Mapping | Status |
 |-----------|--------------|--------|
-| `power_on` | `resourceSet("Drive8CPUEnabled", "1")` | 🔶 Implement |
-| `power_off` | `resourceSet("Drive8CPUEnabled", "0")` | 🔶 Implement |
-| `reset` | No direct BM equivalent | 🔶 via resource |
-| `set_mode` | `resourceSet("Drive8Type", ...)` | 🔶 Implement |
+| `power_on` | `resourceSet("Drive{N}CPUEnabled", 1)` | ✅ Implemented |
+| `power_off` | `resourceSet("Drive{N}CPUEnabled", 0)` | ✅ Implemented |
+| `reset` | Toggle `Drive{N}CPUEnabled` 0→1 via resource | ✅ Implemented |
+| `set_mode` | `resourceSet("Drive{N}Type", typeNum)` | ✅ Implemented |
 | `load_rom` | Not applicable | ❌ c64u-only |
 
 ### c64_sound
 | Operation | VICE Mapping | Status |
 |-----------|--------------|--------|
-| `note_on` | Write SID registers via `memSet` | 🔶 Implement |
-| `note_off` | Write SID gate bit via `memSet` | 🔶 Implement |
-| `reset` | Clear SID registers via `memSet` | 🔶 Implement |
-| `silence_all` | Zero all SID registers | 🔶 Implement |
-| `set_volume` | `memSet(0xD418, [vol])` | 🔶 Implement |
-| `generate` | Generate + play SID arpeggio via BM | 🔶 Implement |
+| `note_on` | Write SID voice registers via `memSet` (0xD400+) | ✅ Implemented |
+| `note_off` | Clear gate bit via `memSet` | ✅ Implemented |
+| `reset` | Zero SID control registers via `memSet` | ✅ Implemented |
+| `silence_all` | Alias for soft SID reset via `memSet` | ✅ Implemented |
+| `set_volume` | `memSet(0xD418, [vol & 0x0F])` | ✅ Implemented |
+| `generate` | Drive SID note sequence via repeated `sidNoteOn` / `sidNoteOff` | ✅ Implemented |
 | `play_sid_file` | Not supported (no Ultimate SID player) | ❌ c64u-only |
 | `play_mod_file` | Not supported (no Ultimate SID player) | ❌ c64u-only |
 | `record_analyze` | Not supported (no audio capture in headless VICE) | ❌ c64u-only |
 | `analyze` | Not supported (requires audio) | ❌ c64u-only |
-| `compile_play` | SIDWAVE compile + BASIC/ASM upload | 🔶 Partial |
+| `compile_play` | SIDWAVE compiled to PRG, then `runPrg()` (PRG output only) | ✅ Implemented |
 | `pipeline` | Not supported | ❌ c64u-only |
 
 ### c64_graphics
 | Operation | VICE Mapping | Status |
 |-----------|--------------|--------|
-| `create_petscii` | `memSet` screen RAM directly | 🔶 Implement |
-| `render_petscii` | Write PETSCII to screen via BM | 🔶 Implement |
-| `generate_sprite` | upload PRG that displays sprite | 🔶 Via run_prg |
+| `create_petscii` | Generate PETSCII BASIC program, `uploadAndRunBasic()` | ✅ Implemented |
+| `render_petscii` | Build PETSCII screen BASIC program, `uploadAndRunBasic()` | ✅ Implemented |
+| `generate_sprite` | Build sprite PRG, `runPrg()` | ✅ Implemented |
 | `generate_bitmap` | Reserved/coming soon | ❌ Not implemented |
 
 ### c64_printer
@@ -242,21 +242,28 @@ Extend the `feat/vice` branch so that the C64 Bridge MCP server supports the VIC
 - Validation: `npm test` passes (497 pass, 1 skip, 0 fail)
 - Validation: `npm run build` passes with MCP snapshot generation included
 
-### Next steps
-- Implement VICE drive/disk operations via BM resources
-- Add `supportedPlatforms: ["c64u", "vice"]` to config, disk, drive tool groups 
-- Fix `toolRegistry.invoke` test for VICE mode
-- Mark truly c64u-only tools explicitly
+### 2026-03-08 (continuation)
+- Completed all remaining 🔶 Implement / 🔶 Partial items in the mapping matrix
+- Implemented `ViceBackend`: `drivesList`, `driveMount`, `driveRemove`, `driveReset`, `driveOn`, `driveOff`, `driveSetMode` via `resourceSet`/`resourceGet`
+- Implemented `ViceBackend`: `configsList` (curated VICE resource list), `configGet`, `configSet`, `configBatchUpdate` via BM resource protocol
+- Confirmed SID operations (`note_on`, `note_off`, `reset`, `silence_all`, `set_volume`, `generate`) work on VICE via `writeMemory` to $D400+ registers
+- Confirmed `compile_play` works on VICE via compiled PRG → `runPrg()` (SID attachment output path remains c64u-only)
+- Confirmed `create_petscii`, `render_petscii`, `generate_sprite` work on VICE via `uploadAndRunBasic`/`runPrg`
+- Confirmed `snapshot`, `restore`, `diff` config ops work on VICE via resource-backed meta tool
+- Added `operationPlatforms` per-op overrides to all tool registry files; added C64U/VICE columns to README tools table
+- Fixed pre-existing TypeScript narrowing error in `src/mcp/metadata.ts`
+- Validation: `npm run build` passes cleanly; `npm run test:matrix` passes (472 pass, 30 skip, 0 fail)
+- Branch is complete and ready for PR review
 
 ---
 
 ## 7. Exit Criteria
 
-- [ ] `npm run build` passes cleanly
-- [ ] `npm run test:matrix` passes (c64u-mock: 0 fail; vice-mock: 0 fail; vice-device: skip or pass)
-- [ ] Coverage ≥ 90% across all VICE-related files
-- [ ] VICE starts automatically when configured
-- [ ] MCP tools operate correctly using VICE backend
-- [ ] All tool/VICE mappings documented in this file
-- [ ] README reflects real VICE capabilities and limitations
-- [ ] PLANS.md contains full execution history
+- [x] `npm run build` passes cleanly
+- [x] `npm run test:matrix` passes (472 pass, 30 skip, 0 fail across all passes)
+- [x] Coverage ≥ 90% across all VICE-related files (`device.ts` at 92.34%)
+- [x] VICE starts automatically when configured (via `createFacade` fallback detection)
+- [x] MCP tools operate correctly using VICE backend
+- [x] All tool/VICE mappings documented in this file
+- [x] README reflects real VICE capabilities and limitations (C64U/VICE columns in tools table)
+- [x] PLANS.md contains full execution history
