@@ -822,6 +822,7 @@ export const programRunnersModule = defineToolModule({
         "Stage PRG files without running when the user wants to inspect memory first.",
         "Confirm the Ultimate filesystem path (e.g. //USB0/demo.prg) is accessible before invoking.",
       ],
+      supportedPlatforms: ["c64u"] as const,
       async execute(args, ctx) {
         return executeLoadPrg(args, ctx);
       },
@@ -869,6 +870,7 @@ export const programRunnersModule = defineToolModule({
           arguments: { path: "//USB0/game.crt" },
         },
       ],
+      supportedPlatforms: ["c64u"] as const,
       async execute(args, ctx) {
         try {
           const parsed = crtFileArgsSchema.parse(args ?? {});

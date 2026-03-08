@@ -12,6 +12,10 @@ function createLogger() {
   };
 }
 
+function createPlatformStatus(id) {
+  return { id, features: [], limitedFeatures: [] };
+}
+
 test("run_prg executes via client", async () => {
   const calls = [];
   const ctx = {
@@ -47,6 +51,8 @@ test("load_prg returns structured content with path", async () => {
       },
     },
     logger: createLogger(),
+    platform: createPlatformStatus("c64u"),
+    setPlatform: () => createPlatformStatus("c64u"),
   };
 
   const result = await programRunnersModule.invoke(
@@ -101,6 +107,8 @@ test("run_crt returns structured content with path", async () => {
       },
     },
     logger: createLogger(),
+    platform: createPlatformStatus("c64u"),
+    setPlatform: () => createPlatformStatus("c64u"),
   };
 
   const result = await programRunnersModule.invoke(
@@ -131,8 +139,8 @@ test("upload_run_basic is available on vice", async () => {
       },
     },
     logger: createLogger(),
-    platform: { id: "vice", features: [], limitedFeatures: [] },
-    setPlatform: () => ({ id: "vice", features: [], limitedFeatures: [] }),
+    platform: createPlatformStatus("vice"),
+    setPlatform: () => createPlatformStatus("vice"),
   };
 
   const result = await programRunnersModule.invoke(
@@ -161,8 +169,8 @@ test("load_prg rejects vice platform", async () => {
       },
     },
     logger: createLogger(),
-    platform: { id: "vice", features: [], limitedFeatures: [] },
-    setPlatform: () => ({ id: "vice", features: [], limitedFeatures: [] }),
+    platform: createPlatformStatus("vice"),
+    setPlatform: () => createPlatformStatus("vice"),
   };
 
   await assert.rejects(
@@ -179,6 +187,8 @@ test("load_prg validates path", async () => {
       },
     },
     logger: createLogger(),
+    platform: createPlatformStatus("c64u"),
+    setPlatform: () => createPlatformStatus("c64u"),
   };
 
   const result = await programRunnersModule.invoke("load_prg", {}, ctx);
@@ -194,6 +204,8 @@ test("run_crt reports firmware failure", async () => {
       },
     },
     logger: createLogger(),
+    platform: createPlatformStatus("c64u"),
+    setPlatform: () => createPlatformStatus("c64u"),
   };
 
   const result = await programRunnersModule.invoke(
@@ -235,6 +247,8 @@ test("load_prg reports firmware failure", async () => {
       },
     },
     logger: createLogger(),
+    platform: createPlatformStatus("c64u"),
+    setPlatform: () => createPlatformStatus("c64u"),
   };
 
   const result = await programRunnersModule.invoke(
