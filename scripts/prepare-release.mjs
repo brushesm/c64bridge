@@ -16,6 +16,22 @@ const updateJsonFile = async (relativePath, updater) => {
   await writeFile(filePath, JSON.stringify(updated, null, 2) + '\n');
 };
 
+const normaliseVersion = (value) => value.replace(/^v/, '');
+
+const isExactVersion = (value) => /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(value);
+
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const changelogHasVersion = async (version) => {
+  try {
+    const raw = await readFile(path.resolve('CHANGELOG.md'), 'utf8');
+    const pattern = new RegExp(`^##\\s+${escapeRegExp(version)}\\b`, 'm');
+    return pattern.test(raw);
+  } catch {
+    return false;
+  }
+};
+
 const usage = `Usage: npm run release:prepare -- <new-version|major|minor|patch>
 
 Examples:
@@ -29,11 +45,22 @@ if (!arg) {
   process.exit(1);
 }
 
-try {
-  run(`npm version ${arg} --no-git-tag-version`);
-} catch (error) {
-  console.error('npm version failed.');
-  process.exit(error.status || 1);
+const currentPkgRaw = await readFile(path.resolve('package.json'), 'utf8');
+const currentPkg = JSON.parse(currentPkgRaw);
+const requestedVersion = normaliseVersion(arg);
+
+let skippedVersionBump = false;
+
+if (isExactVersion(arg) && requestedVersion === currentPkg.version) {
+  skippedVersionBump = true;
+  console.log(`Version already set to ${currentPkg.version}; skipping npm version.`);
+} else {
+  try {
+    run(`npm version ${arg} --no-git-tag-version`);
+  } catch (error) {
+    console.error('npm version failed.');
+    process.exit(error.status || 1);
+  }
 }
 
 const pkgRaw = await readFile(path.resolve('package.json'), 'utf8');
@@ -48,10 +75,16 @@ await updateJsonFile('mcp.json', async (data) => ({
 // Manifest generation removed (runtime discovery via MCP stdio)
 
 // Update CHANGELOG.md from commits since last tag using Conventional Commits subjects.
-try {
-  run(`node scripts/generate-changelog.mjs ${newVersion}`);
-} catch (e) {
-  console.warn('WARN: Failed to generate CHANGELOG.md. You can run it manually: npm run changelog:generate');
+const hasExistingChangelogEntry = await changelogHasVersion(newVersion);
+
+if (skippedVersionBump && hasExistingChangelogEntry) {
+  console.log(`CHANGELOG.md already contains ${newVersion}; skipping changelog generation.`);
+} else {
+  try {
+    run(`node scripts/generate-changelog.mjs ${newVersion}`);
+  } catch (e) {
+    console.warn('WARN: Failed to generate CHANGELOG.md. You can run it manually: npm run changelog:generate');
+  }
 }
 
 console.log(`Release metadata updated to ${newVersion}.`);

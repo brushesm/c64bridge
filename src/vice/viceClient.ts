@@ -3,6 +3,8 @@
  */
 import net from "node:net";
 
+type ViceDataChunk = string | Uint8Array<ArrayBufferLike>;
+
 export type ViceMemspace = 0 | 1 | 2 | 3 | 4;
 
 export interface ViceCheckpoint {
@@ -99,7 +101,7 @@ export class ViceClient {
       this.socket.once("connect", () => resolve());
       this.socket.once("error", reject);
     });
-    this.socket.on("data", (chunk) => this.onData(chunk));
+    this.socket.on("data", (chunk: ViceDataChunk) => this.onData(chunk));
     this.socket.on("error", (err) => {
       this.rejectAllPending(err);
     });
@@ -128,8 +130,9 @@ export class ViceClient {
     this.pending.clear();
   }
 
-  private onData(chunk: Buffer): void {
-    this.buffer = Buffer.concat([this.buffer, chunk]);
+  private onData(chunk: ViceDataChunk): void {
+    const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    this.buffer = Buffer.concat([this.buffer, data]);
     // Frame: [0]=0x02, [1]=0x02, [2..5]=len, [6]=respType, [7]=err, [8..11]=reqId, [12..]=body
     while (this.buffer.length >= 12) {
       if (this.buffer[0] !== 0x02 || this.buffer[1] !== 0x02) {

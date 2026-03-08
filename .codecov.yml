@@ -2,14 +2,15 @@ coverage:
   status:
     project:
       default:
-        target: "85%"
-        threshold: "1%"
+        target: "90%"
+        threshold: "0%"
     patch:
       default:
-        target: "85%"
-        threshold: "5%"
+        target: "90%"
+        threshold: "0%"
 
 ignore:
+  - "generated/**"
   - "test/**"
   - "scripts/**"
   - "**/*.test.ts"

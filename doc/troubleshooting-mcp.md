@@ -75,7 +75,8 @@ Expected structure:
 {
   "c64u": {
     "host": "c64u",
-    "port": 80
+    "port": 80,
+    "networkPassword": "secret"
   }
 }
 ```
@@ -86,10 +87,13 @@ Example with explicit host:
 {
   "c64u": {
     "host": "192.168.1.13",
-    "port": 80
+    "port": 80,
+    "networkPassword": "secret"
   }
 }
 ```
+
+If your Ultimate firmware has a network password configured, `networkPassword` must match it exactly or the REST API returns `403 Forbidden`.
 
 **Test C64 Connectivity:**
 

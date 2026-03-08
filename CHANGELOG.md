@@ -1,5 +1,42 @@
 # Changelog
 
+
+## 0.7.4 - 2026-03-07
+
+### Features
+
+- enhance network security by adding networkPassword support across configurations and clients; update documentation and tests accordingly (eef523d)
+- Extended roll-out plan (3c5710e)
+- Added Vice smoke test (27834c7)
+
+### Bug Fixes
+
+- update configuration resolution order in documentation and code; ensure repo config is preferred over home config (49a8806)
+- update ViceClient to handle string and typed-array data chunks; add corresponding test (a708657)
+
+### Refactoring
+
+- Renamed audio/video data folders to sound/graphics to be consistent with doc folders (4a86a39)
+
+### Documentation
+
+- update configuration section in README for clarity and accuracy; add details on environment variables (0d55473)
+
+### Tests
+
+- add coverage for c64u facade operations with networkPassword support (55f506d)
+- relocate binary monitor smoke test (708a816)
+
+### Chores
+
+- update package version and dependencies in package.json and package-lock.json (a1675d7)
+- prepare release 0.7.3 (9688578)
+
+### Other
+
+- resolve BM smoke-test merge; switch timing logs to ms; add autostart polling; add doc/plans/vice-support (notes/plan/rollout) (c6d097e)
+- Improved Vice binary monitor spec and C64U REST API comparison (6fde781)
+
 ## 0.7.3 - 2025-11-01
 
 ### Chores

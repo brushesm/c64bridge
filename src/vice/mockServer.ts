@@ -93,18 +93,15 @@ export class ViceMockServer {
   }
 
   private handleSocket(socket: net.Socket): void {
-    let buffer = Buffer.alloc(0);
-    socket.on("data", (chunk) => {
-      const next = Buffer.alloc(buffer.length + chunk.length);
-      buffer.copy(next, 0);
-      chunk.copy(next, buffer.length);
-      const remainder = this.processBuffer(next, socket);
-      buffer = Buffer.alloc(remainder.length);
-      remainder.copy(buffer);
+    let buffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+    socket.on("data", (chunk: string | Uint8Array<ArrayBufferLike>) => {
+      const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      buffer = Buffer.concat([buffer, data]);
+      buffer = this.processBuffer(buffer, socket);
     });
   }
 
-  private processBuffer(buffer: Buffer, socket: net.Socket): Buffer {
+  private processBuffer(buffer: Buffer<ArrayBufferLike>, socket: net.Socket): Buffer<ArrayBufferLike> {
     while (buffer.length >= 11) {
       if (buffer[0] !== 0x02 || buffer[1] !== 0x02) {
         buffer = buffer.slice(1);

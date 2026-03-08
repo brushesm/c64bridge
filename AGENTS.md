@@ -15,13 +15,15 @@ On startup the server probes connectivity (REST + zero-page read) and announces 
 
 2) Configure target (optional)
 
-The server resolves config in this order: `C64BRIDGE_CONFIG` → `~/.c64bridge.json` → `./c64bridge.json` → defaults (`host=c64u`, `port=80`).
+The server resolves config in this order: `C64BRIDGE_CONFIG` → `./.c64bridge.json` → `~/.c64bridge.json` → defaults (`host=c64u`, `port=80`).
 
 Example:
 
 ```json
-{ "c64u": { "host": "c64u", "port": 80 } }
+{ "c64u": { "host": "c64u", "port": 80, "networkPassword": "secret" } }
 ```
+
+When Ultimate firmware network protection is enabled, `networkPassword` is sent as the `X-Password` header on every REST request.
 
 3) VS Code Copilot Chat (MCP)
 

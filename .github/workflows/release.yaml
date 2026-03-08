@@ -128,7 +128,7 @@ jobs:
 
       - name: Commit and push release preparation changes
         run: |
-          git add package.json mcp.json CHANGELOG.md
+          git add package.json package-lock.json mcp.json CHANGELOG.md
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
