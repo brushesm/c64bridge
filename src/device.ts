@@ -294,6 +294,27 @@ export class ViceBackend implements C64Facade {
     }
   }
 
+  private async waitForResponsiveMonitor(timeoutMs = 10_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    let lastError: unknown;
+    while (Date.now() < deadline) {
+      const client = new ViceClient();
+      try {
+        await client.connect(this.port, this.host);
+        await client.info();
+        return;
+      } catch (error) {
+        lastError = error;
+        await delay(250);
+      } finally {
+        client.close();
+      }
+    }
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(`VICE monitor at ${this.host}:${this.port} did not become responsive within ${timeoutMs}ms`);
+  }
+
   private async ensureProcess(): Promise<void> {
     if (!this.manageProcess) return;
     const key = `${this.host}:${this.port}`;
@@ -334,6 +355,7 @@ export class ViceBackend implements C64Facade {
     process.once("exit", () => {
       handle.stop().catch(() => {});
     });
+    await this.waitForResponsiveMonitor();
   }
 
   private async withClient<T>(fn: (client: ViceClient) => Promise<T>): Promise<T> {
