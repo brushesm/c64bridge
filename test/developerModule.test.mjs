@@ -104,6 +104,122 @@ testC64uOnly("config_batch_update validates payload", async () => {
   assert.equal(result.metadata.error.kind, "validation");
 });
 
+testC64uOnly("config_list normalizes non-object payloads", async () => {
+  const ctx = {
+    client: {
+      async configsList() {
+        return ["Audio", "Video"];
+      },
+    },
+    logger: createLogger(),
+  };
+
+  const result = await developerModule.invoke("config_list", {}, ctx);
+
+  assert.equal(result.structuredContent.type, "json");
+  assert.deepEqual(result.structuredContent.data, {
+    categories: ["Audio", "Video"],
+  });
+  assert.equal(result.metadata.categoryCount, 2);
+});
+
+testC64uOnly("config_get reads category without item", async () => {
+  const calls = [];
+  const ctx = {
+    client: {
+      async configGet(category, item) {
+        calls.push({ category, item });
+        return { Palette: "colodore" };
+      },
+    },
+    logger: createLogger(),
+  };
+
+  const result = await developerModule.invoke(
+    "config_get",
+    { category: "Video" },
+    ctx,
+  );
+
+  assert.equal(result.metadata.success, true);
+  assert.equal(result.metadata.category, "Video");
+  assert.equal(result.metadata.item, null);
+  assert.deepEqual(result.structuredContent.data, {
+    value: { Palette: "colodore" },
+  });
+  assert.deepEqual(calls, [{ category: "Video", item: undefined }]);
+});
+
+testC64uOnly("config_set stringifies primitive values on success", async () => {
+  const calls = [];
+  const ctx = {
+    client: {
+      async configSet(category, item, value) {
+        calls.push({ category, item, value });
+        return { success: true, details: { updated: true } };
+      },
+    },
+    logger: createLogger(),
+  };
+
+  const result = await developerModule.invoke(
+    "config_set",
+    { category: "Audio", item: "Muted", value: false },
+    ctx,
+  );
+
+  assert.equal(result.content[0].type, "text");
+  assert.equal(result.metadata.success, true);
+  assert.equal(result.metadata.value, false);
+  assert.deepEqual(result.metadata.details, { updated: true });
+  assert.deepEqual(calls, [{ category: "Audio", item: "Muted", value: "false" }]);
+});
+
+testC64uOnly("config_batch_update stringifies nested primitive values on success", async () => {
+  const calls = [];
+  const ctx = {
+    client: {
+      async configBatchUpdate(payload) {
+        calls.push(payload);
+        return { success: true, details: { applied: 2 } };
+      },
+    },
+    logger: createLogger(),
+  };
+
+  const result = await developerModule.invoke(
+    "config_batch_update",
+    { Audio: { Volume: 10, Muted: false } },
+    ctx,
+  );
+
+  assert.equal(result.content[0].type, "text");
+  assert.equal(result.metadata.success, true);
+  assert.equal(result.metadata.categoryCount, 1);
+  assert.deepEqual(result.metadata.details, { applied: 2 });
+  assert.deepEqual(calls, [{ Audio: { Volume: "10", Muted: "false" } }]);
+});
+
+testC64uOnly("config_batch_update rejects non-primitive values", async () => {
+  const ctx = {
+    client: {
+      async configBatchUpdate() {
+        throw new Error("should not run");
+      },
+    },
+    logger: createLogger(),
+  };
+
+  const result = await developerModule.invoke(
+    "config_batch_update",
+    { Audio: { Filters: ["on"] } },
+    ctx,
+  );
+
+  assert.equal(result.isError, true);
+  assert.equal(result.metadata.error.kind, "validation");
+});
+
 testC64uOnly("config_reset_to_default succeeds", async () => {
   const ctx = {
     client: {
@@ -119,6 +235,24 @@ testC64uOnly("config_reset_to_default succeeds", async () => {
   assert.equal(result.content[0].type, "text");
   assert.equal(result.metadata.success, true);
   assert.deepEqual(result.metadata.details, { rebootRequired: true });
+});
+
+testC64uOnly("info returns diagnostics payload", async () => {
+  const ctx = {
+    client: {
+      async info() {
+        return { emulator: "vice", port: 6502 };
+      },
+    },
+    logger: createLogger(),
+  };
+
+  const result = await developerModule.invoke("info", {}, ctx);
+
+  assert.equal(result.content[0].type, "text");
+  assert.deepEqual(JSON.parse(result.content[0].text), { emulator: "vice", port: 6502 });
+  assert.deepEqual(result.structuredContent?.data, { emulator: "vice", port: 6502 });
+  assert.deepEqual(result.metadata.details, { emulator: "vice", port: 6502 });
 });
 
 testC64uOnly("debugreg_read returns uppercase value", async () => {
@@ -139,6 +273,23 @@ testC64uOnly("debugreg_read returns uppercase value", async () => {
   assert.deepEqual(result.metadata.details, { raw: "1a" });
 });
 
+testC64uOnly("debugreg_read reports firmware failure", async () => {
+  const ctx = {
+    client: {
+      async debugregRead() {
+        return { success: false, details: { raw: "ff" } };
+      },
+    },
+    logger: createLogger(),
+  };
+
+  const result = await developerModule.invoke("debugreg_read", {}, ctx);
+
+  assert.equal(result.isError, true);
+  assert.equal(result.metadata.error.kind, "execution");
+  assert.deepEqual(result.metadata.error.details, { raw: "ff" });
+});
+
 testC64uOnly("debugreg_write validates input", async () => {
   const ctx = {
     client: {
@@ -153,6 +304,43 @@ testC64uOnly("debugreg_write validates input", async () => {
 
   assert.equal(result.isError, true);
   assert.equal(result.metadata.error.kind, "validation");
+});
+
+testC64uOnly("debugreg_write normalizes hex value on success", async () => {
+  const calls = [];
+  const ctx = {
+    client: {
+      async debugregWrite(value) {
+        calls.push(value);
+        return { success: true, details: { latched: value } };
+      },
+    },
+    logger: createLogger(),
+  };
+
+  const result = await developerModule.invoke("debugreg_write", { value: "0f" }, ctx);
+
+  assert.equal(result.metadata.success, true);
+  assert.equal(result.metadata.value, "0F");
+  assert.deepEqual(result.metadata.details, { latched: "0F" });
+  assert.deepEqual(calls, ["0F"]);
+});
+
+testC64uOnly("debugreg_write reports firmware failure", async () => {
+  const ctx = {
+    client: {
+      async debugregWrite() {
+        return { success: false, details: "write failed" };
+      },
+    },
+    logger: createLogger(),
+  };
+
+  const result = await developerModule.invoke("debugreg_write", { value: "AA" }, ctx);
+
+  assert.equal(result.isError, true);
+  assert.equal(result.metadata.error.kind, "execution");
+  assert.deepEqual(result.metadata.error.details, { value: "write failed" });
 });
 
 testC64uOnly("version returns firmware payload", async () => {
@@ -171,6 +359,22 @@ testC64uOnly("version returns firmware payload", async () => {
   assert.deepEqual(JSON.parse(result.content[0].text), { version: "1.2.3" });
   assert.equal(result.structuredContent?.type, "json");
   assert.deepEqual(result.structuredContent?.data, { version: "1.2.3" });
+});
+
+testC64uOnly("version wraps primitive payloads into objects", async () => {
+  const ctx = {
+    client: {
+      async version() {
+        return "1.2.4";
+      },
+    },
+    logger: createLogger(),
+  };
+
+  const result = await developerModule.invoke("version", {}, ctx);
+
+  assert.deepEqual(result.structuredContent?.data, { value: "1.2.4" });
+  assert.deepEqual(result.metadata.details, { value: "1.2.4" });
 });
 
 testC64uOnly("config_set with firmware failure", async () => {

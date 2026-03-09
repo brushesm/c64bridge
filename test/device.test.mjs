@@ -615,6 +615,99 @@ test("device: createFacade fallback behavior", async (t) => {
     assert.ok(selected === "vice" || selected === "c64u");
     assert.ok(facade.type === "vice" || facade.type === "c64u");
   });
+
+  await t.test("preferred baseUrl forces c64u backend and forwards password", async () => {
+    const mock = await startMockC64Server({ networkPassword: "sesame" });
+    t.after(async () => {
+      await mock.close();
+    });
+
+    const loggerCalls = [];
+    const { facade, selected, reason, details } = await createFacade(
+      { info(message) { loggerCalls.push(message); } },
+      {
+        preferredC64uBaseUrl: mock.baseUrl,
+        preferredC64uNetworkPassword: "sesame",
+      },
+    );
+
+    assert.equal(selected, "c64u");
+    assert.equal(reason, "forced by caller");
+    assert.deepEqual(details, { baseUrl: mock.baseUrl });
+    assert.equal(facade.type, "c64u");
+    assert.equal(await facade.ping(), true);
+    await facade.info();
+    assert.equal(mock.state.lastRequest.headers["x-password"], "sesame");
+    assert.ok(loggerCalls.some((message) => message.includes("forced by caller")));
+  });
+
+  await t.test("env override selects vice endpoint from config", async () => {
+    const server = await startViceMockServer({ host: "127.0.0.1", port: 0 });
+    t.after(async () => {
+      await server.stop();
+    });
+
+    const oldEnv = process.env.C64BRIDGE_CONFIG;
+    const oldMode = process.env.C64_MODE;
+    const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), "vice-env-config-"));
+    const cfgPath = path.join(cfgDir, "c64bridge.json");
+    fs.writeFileSync(cfgPath, JSON.stringify({ vice: { host: "127.0.0.1", port: server.port } }), "utf8");
+    process.env.C64BRIDGE_CONFIG = cfgPath;
+    process.env.C64_MODE = "vice";
+
+    t.after(() => {
+      fs.rmSync(cfgDir, { recursive: true, force: true });
+      if (oldEnv !== undefined) {
+        process.env.C64BRIDGE_CONFIG = oldEnv;
+      } else {
+        delete process.env.C64BRIDGE_CONFIG;
+      }
+      if (oldMode !== undefined) {
+        process.env.C64_MODE = oldMode;
+      } else {
+        delete process.env.C64_MODE;
+      }
+    });
+
+    const { facade, selected, reason, details } = await createFacade();
+
+    assert.equal(selected, "vice");
+    assert.equal(reason, "env override");
+    assert.equal(facade.type, "vice");
+    assert.deepEqual(details, { host: "127.0.0.1", port: server.port });
+    assert.equal(await facade.ping(), true);
+  });
+
+  await t.test("config host strings with embedded ports resolve to normalized base URLs", async () => {
+    const oldEnv = process.env.C64BRIDGE_CONFIG;
+    const oldMode = process.env.C64_MODE;
+    const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), "c64u-host-config-"));
+    const cfgPath = path.join(cfgDir, "c64bridge.json");
+    fs.writeFileSync(cfgPath, JSON.stringify({ c64u: { host: "demo.local:8081" } }), "utf8");
+    process.env.C64BRIDGE_CONFIG = cfgPath;
+    delete process.env.C64_MODE;
+
+    t.after(() => {
+      fs.rmSync(cfgDir, { recursive: true, force: true });
+      if (oldEnv !== undefined) {
+        process.env.C64BRIDGE_CONFIG = oldEnv;
+      } else {
+        delete process.env.C64BRIDGE_CONFIG;
+      }
+      if (oldMode !== undefined) {
+        process.env.C64_MODE = oldMode;
+      } else {
+        delete process.env.C64_MODE;
+      }
+    });
+
+    const { facade, selected, reason } = await createFacade();
+
+    assert.equal(selected, "c64u");
+    assert.equal(reason, "config only");
+    assert.equal(facade.type, "c64u");
+    assert.equal(facade.getBaseUrl(), "http://demo.local:8081");
+  });
 });
 
 test("device: URL helpers parse endpoints and ports", () => {
