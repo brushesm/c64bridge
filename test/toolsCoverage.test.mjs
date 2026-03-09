@@ -100,8 +100,8 @@ test("C64Client MCP tool coverage", async (t) => {
   await t.test("graphics helpers", async () => {
     const writeStart = writes.length;
     const spriteBytes = new Uint8Array(63).fill(0x11);
-    expectSuccess(await client.generateAndRunSpritePrg({ spriteBytes, spriteIndex: 0, x: 100, y: 50, color: 2, multicolour: false }), "generate_sprite");
-    expectSuccess(await client.renderPetsciiScreenAndRun({ text: "PETSCII" }), "render_petscii");
+    expectSuccess(await client.generateAndRunSpritePrg({ spriteBytes, spriteIndex: 0, x: 100, y: 50, color: 2, multicolour: false }), "render_sprite");
+    expectSuccess(await client.renderPetsciiScreenAndRun({ text: "PETSCII" }), "render_petscii_text");
 
     const display = await client.displayBitmap({
       mode: "hires",
@@ -120,7 +120,7 @@ test("C64Client MCP tool coverage", async (t) => {
       bitmapAddress: 0x2000,
       screenAddress: 0x0400,
     });
-    expectSuccess(display, "generate_bitmap");
+    expectSuccess(display, "render_bitmap");
     assert.equal(display.details.bank, 0);
 
     const displayWrites = writes.slice(writeStart);
@@ -163,7 +163,7 @@ test("C64Client MCP tool coverage", async (t) => {
       bitmapAddress: 0x2000,
       screenAddress: 0x0400,
     });
-    expectSuccess(viceDisplay, "generate_bitmap_vice");
+    expectSuccess(viceDisplay, "render_bitmap_vice");
     assert.equal(viceDisplay.details.registers.d016, 0x18);
     assert.ok(viceWrites.some((entry) => entry.address === 0x2000 && entry.bytes.length === 8000));
   });

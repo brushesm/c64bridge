@@ -37,13 +37,16 @@ Colour presets and character codes for C64 PETSCII art. Target: LLM optimization
 ## Contrast Guidelines
 
 **Readable combinations** (luminance difference ≥3):
+
 - 0/1 (Black/White), 0/7 (Black/Yellow), 0/13 (Black/Lt.Green)
 - 6/1 (Blue/White), 6/7 (Blue/Yellow), 11/1 (Dk.Grey/White)
 
 **Marginal** (luminance difference 2):
+
 - 0/3 (Black/Cyan), 6/14 (Blue/Lt.Blue), 12/1 (Grey/White)
 
 **Unreadable** (insufficient contrast):
+
 - 12/15 (Grey/Lt.Grey), 11/12 (Dk.Grey/Grey), 2/4 (Red/Purple)
 - 6/11 (Blue/Dk.Grey), 9/11 (Brown/Dk.Grey)
 
@@ -57,9 +60,10 @@ Border matching: Set border=background for seamless look.
 Conversion: Screen code ≠ PETSCII code. Use charset reference (c64://specs/charset) for mapping.
 
 **Usage**:
+
 - BASIC/printing: Use PETSCII codes with CHR$() or PRINT
 - Direct screen memory: Use screen codes with POKE to $0400+offset
-- Tools: `c64_graphics` (`create_petscii`) returns both `petsciiCodes` array and screen memory data
+- Tools: `c64_graphics` (`render_petscii_art`) returns both `petsciiCodes` array and screen memory data
 
 ## Essential PETSCII Symbols
 
@@ -89,7 +93,7 @@ Conversion: Screen code ≠ PETSCII code. Use charset reference (c64://specs/cha
 
 ```javascript
 await callTool("c64_graphics", {
-  op: "create_petscii",
+  op: "render_petscii_art",
   prompt: "cat",
   borderColor: 0,
   backgroundColor: 6,

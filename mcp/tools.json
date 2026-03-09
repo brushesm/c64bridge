@@ -1461,8 +1461,8 @@
     },
     {
       "name": "c64_graphics",
-      "title": "Generates PETSCII art, renders text screens, imports bitmap images, or runs sprite demos from one tool.",
-      "description": "Grouped entry point for PETSCII art, sprite previews, bitmap import, and frame capture.",
+      "title": "Captures frames, renders PETSCII text or art, previews sprites, and displays bitmap images from one tool.",
+      "description": "Grouped entry point for frame capture and graphics rendering workflows.",
       "inputSchema": {
         "type": "object",
         "description": "Graphics operations available via the c64_graphics tool.",
@@ -1512,7 +1512,7 @@
           },
           {
             "type": "object",
-            "description": "Generate PETSCII art from prompts, text, or explicit bitmap data.",
+            "description": "Create PETSCII art from prompts, text, or explicit bitmap data, and optionally display it on the C64.",
             "properties": {
               "prompt": {
                 "type": [
@@ -1577,7 +1577,7 @@
               },
               "dryRun": {
                 "type": "boolean",
-                "description": "When true, skip uploading the BASIC program to the C64.",
+                "description": "When true, skip uploading the generated BASIC program to the C64.",
                 "default": false
               },
               "bitmap": {
@@ -1614,7 +1614,7 @@
                 "additionalProperties": false
               },
               "op": {
-                "const": "create_petscii"
+                "const": "render_petscii_art"
               }
             },
             "additionalProperties": false,
@@ -1624,7 +1624,7 @@
           },
           {
             "type": "object",
-            "description": "Render PETSCII text with optional border/background colours.",
+            "description": "Display PETSCII text with optional border and background colours.",
             "properties": {
               "text": {
                 "type": "string",
@@ -1650,7 +1650,7 @@
                 "maximum": 15
               },
               "op": {
-                "const": "render_petscii"
+                "const": "render_petscii_text"
               }
             },
             "required": [
@@ -1661,7 +1661,7 @@
           },
           {
             "type": "object",
-            "description": "Build and run a sprite PRG from raw 63-byte sprite data.",
+            "description": "Display supplied 63-byte sprite data at the requested position and colour by writing memory and patching VIC-II registers directly.",
             "properties": {
               "sprite": {
                 "description": "63-byte sprite definition provided as base64/hex string or array of bytes.",
@@ -1711,7 +1711,7 @@
                 "default": false
               },
               "op": {
-                "const": "generate_sprite"
+                "const": "render_sprite"
               }
             },
             "required": [
@@ -1722,7 +1722,7 @@
           },
           {
             "type": "object",
-            "description": "Import an image file, convert it to VIC bitmap memory, and enable bitmap mode.",
+            "description": "Import an image file, convert it to VIC-II bitmap memory, write it into RAM, and display it.",
             "properties": {
               "imagePath": {
                 "type": "string",
@@ -1781,7 +1781,7 @@
                 "default": true
               },
               "op": {
-                "const": "generate_bitmap"
+                "const": "render_bitmap"
               }
             },
             "required": [
@@ -1798,7 +1798,7 @@
       },
       "_meta": {
         "domain": "graphics",
-        "summary": "Generates PETSCII art, renders text screens, imports bitmap images, or runs sprite demos from one tool.",
+        "summary": "Captures frames, renders PETSCII text or art, previews sprites, and displays bitmap images from one tool.",
         "lifecycle": "request-response",
         "resources": [
           "c64://specs/vic",
@@ -1822,7 +1822,7 @@
             "name": "Create PETSCII art (dry run)",
             "description": "Synthesize art without uploading to the C64",
             "arguments": {
-              "op": "create_petscii",
+              "op": "render_petscii_art",
               "prompt": "duck on a pond",
               "dryRun": true
             }
@@ -1831,7 +1831,7 @@
             "name": "Render PETSCII text",
             "description": "Print HELLO with blue border",
             "arguments": {
-              "op": "render_petscii",
+              "op": "render_petscii_text",
               "text": "HELLO",
               "borderColor": 6
             }
@@ -1840,7 +1840,7 @@
             "name": "Display sprite",
             "description": "Show sprite data at coordinates",
             "arguments": {
-              "op": "generate_sprite",
+              "op": "render_sprite",
               "sprite": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
             }
           },
@@ -1848,7 +1848,7 @@
             "name": "Import bitmap image",
             "description": "Convert a PNG into VIC bitmap memory and display it",
             "arguments": {
-              "op": "generate_bitmap",
+              "op": "render_bitmap",
               "imagePath": "./artifacts/sample.png",
               "format": "hires"
             }
@@ -1860,7 +1860,7 @@
           "grouped"
         ],
         "workflowHints": [
-          "Use PETSCII helpers for text art and clarify whether the BASIC program executed or stayed a dry run.",
+          "Use render helpers for PETSCII text, PETSCII art, sprites, and bitmaps; clarify whether PETSCII art executed or stayed a dry run.",
           "Mention sprite positions/colours so follow-up memory inspection stays grounded."
         ],
         "platforms": [

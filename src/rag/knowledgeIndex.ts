@@ -515,7 +515,7 @@ const INDEX_RESOURCE: KnowledgeResourceDefinition = {
       "upload_run_basic",
       "upload_run_asm",
       "music_generate",
-      "render_petscii_screen",
+      "render_petscii_text",
       "printer_guide",
   "read",
     ],

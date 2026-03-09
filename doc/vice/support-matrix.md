@@ -24,7 +24,7 @@ This document is the source of truth for VICE support in the public MCP surface.
 | `c64_program` | `run_prg`, `upload_run_basic`, `upload_run_asm`, `batch_run` |
 | `c64_memory` | `read`, `read_screen`, `wait_for_text`, `write` |
 | `c64_system` | `reset`, `reboot`, `poweroff`, `start_task`, `stop_task`, `stop_all_tasks`, `list_tasks` |
-| `c64_graphics` | `create_petscii`, `generate_bitmap`, `generate_sprite`, `render_petscii` |
+| `c64_graphics` | `render_petscii_art`, `render_bitmap`, `render_sprite`, `render_petscii_text` |
 | `c64_rag` | `basic`, `asm` |
 | `c64_disk` | `list_drives`, `mount`, `unmount` |
 | `c64_drive` | `reset`, `power_on`, `power_off`, `set_mode` |

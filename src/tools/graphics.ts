@@ -181,7 +181,7 @@ const spriteBytesSchema: Schema<Uint8Array> = {
 };
 
 const spriteArgsSchema = objectSchema<SpriteArgs>({
-  description: "Generate a PRG that displays a single sprite using raw sprite data.",
+  description: "Display a single sprite by writing supplied sprite data into RAM and patching the relevant VIC-II registers.",
   properties: {
     sprite: spriteBytesSchema,
     index: numberSchema({
@@ -314,7 +314,7 @@ const petsciiImageArgsSchema = objectSchema<PetsciiImageArgs>({
       maximum: 15,
     })),
     dryRun: booleanSchema({
-      description: "When true, skip uploading the BASIC program to the C64.",
+      description: "When true, skip uploading the generated BASIC program to the C64.",
       default: false,
     }),
     bitmap: optionalSchema(bitmapSchema),
@@ -407,7 +407,7 @@ function stripOperationDiscriminator<T extends Record<string, unknown>>(
 async function executeGenerateSprite(rawArgs: unknown, ctx: ToolExecutionContext): Promise<ToolRunResult> {
   try {
     const parsed = spriteArgsSchema.parse(rawArgs ?? {});
-    ctx.logger.info("Generating sprite PRG", {
+    ctx.logger.info("Rendering sprite", {
       index: parsed.index,
       x: parsed.x,
       y: parsed.y,
@@ -425,12 +425,12 @@ async function executeGenerateSprite(rawArgs: unknown, ctx: ToolExecutionContext
     });
 
     if (!result.success) {
-      throw new ToolExecutionError("C64 firmware reported failure while running sprite PRG", {
+      throw new ToolExecutionError("C64 firmware reported failure while rendering sprite", {
         details: normaliseFailure(result.details),
       });
     }
 
-    return textResult("Sprite PRG generated and executed successfully.", {
+    return textResult("Sprite rendered successfully.", {
       success: true,
       index: parsed.index,
       x: parsed.x,
@@ -444,7 +444,7 @@ async function executeGenerateSprite(rawArgs: unknown, ctx: ToolExecutionContext
     if (error instanceof ToolError) {
       return toolErrorResult(error);
     }
-    return toolErrorResult(new ToolExecutionError("Unable to generate sprite PRG", {
+    return toolErrorResult(new ToolExecutionError("Unable to render sprite", {
       details: normaliseFailure(error instanceof Error ? { message: error.message } : error),
     }));
   }
@@ -486,7 +486,7 @@ async function executeRenderPetscii(rawArgs: unknown, ctx: ToolExecutionContext)
 async function executeGenerateBitmap(rawArgs: unknown, ctx: ToolExecutionContext): Promise<ToolRunResult> {
   try {
     const parsed = generateBitmapArgsSchema.parse(rawArgs ?? {});
-    ctx.logger.info("Generating VIC bitmap", {
+    ctx.logger.info("Rendering bitmap", {
       imagePath: parsed.imagePath,
       format: parsed.format,
       bitmapAddress: parsed.bitmapAddress,
@@ -625,21 +625,21 @@ async function executeCreatePetscii(rawArgs: unknown, ctx: ToolExecutionContext)
 }
 
 export interface GraphicsOperationMap extends OperationMap {
-  readonly create_petscii: PetsciiImageArgs;
-  readonly generate_bitmap: GenerateBitmapArgs;
-  readonly render_petscii: {
+  readonly render_petscii_art: PetsciiImageArgs;
+  readonly render_bitmap: GenerateBitmapArgs;
+  readonly render_petscii_text: {
     readonly text: string;
     readonly borderColor?: number;
     readonly backgroundColor?: number;
   };
-  readonly generate_sprite: SpriteArgs;
+  readonly render_sprite: SpriteArgs;
 }
 
 export const graphicsOperationHandlers: OperationHandlerMap<GraphicsOperationMap> = {
-  create_petscii: async (args, ctx) => executeCreatePetscii(stripOperationDiscriminator(args), ctx),
-  generate_bitmap: async (args, ctx) => executeGenerateBitmap(stripOperationDiscriminator(args), ctx),
-  render_petscii: async (args, ctx) => executeRenderPetscii(stripOperationDiscriminator(args), ctx),
-  generate_sprite: async (args, ctx) => executeGenerateSprite(stripOperationDiscriminator(args), ctx),
+  render_petscii_art: async (args, ctx) => executeCreatePetscii(stripOperationDiscriminator(args), ctx),
+  render_bitmap: async (args, ctx) => executeGenerateBitmap(stripOperationDiscriminator(args), ctx),
+  render_petscii_text: async (args, ctx) => executeRenderPetscii(stripOperationDiscriminator(args), ctx),
+  render_sprite: async (args, ctx) => executeGenerateSprite(stripOperationDiscriminator(args), ctx),
 };
 
 export const graphicsModule = defineToolModule({
@@ -658,9 +658,9 @@ export const graphicsModule = defineToolModule({
   ],
   tools: [
     {
-      name: "generate_sprite",
-      description: "Generate and execute a PRG that displays a sprite from raw 63-byte data. See c64://specs/vic for registers.",
-      summary: "Uploads minimal machine code to copy sprite data, configure VIC-II, and render a sprite.",
+      name: "render_sprite",
+      description: "Display supplied 63-byte sprite data at the requested position and colour by writing memory and patching VIC-II registers directly. See c64://specs/vic for registers.",
+      summary: "Writes sprite data into RAM, updates the sprite pointer table, and patches VIC-II registers to render a sprite preview.",
       inputSchema: spriteArgsSchema.jsonSchema,
       relatedResources: ["c64://specs/vic"],
       relatedPrompts: ["graphics-demo", "assembly-program"],
@@ -683,9 +683,9 @@ export const graphicsModule = defineToolModule({
       },
     },
     {
-      name: "generate_bitmap",
-      description: "Import an image file, convert it to a VIC-II bitmap, write it into RAM, and enable the selected bitmap mode.",
-      summary: "Decodes a source image, quantizes it into C64 colours, writes bitmap/screen/color RAM, and switches the VIC-II into hires or multicolor bitmap mode.",
+      name: "render_bitmap",
+      description: "Import an image file, convert it to a VIC-II bitmap, write it into RAM, and display it.",
+      summary: "Decodes a source image, quantizes it into C64 colours, writes bitmap/screen/color RAM, and displays it in hires or multicolor bitmap mode.",
       inputSchema: generateBitmapArgsSchema.jsonSchema,
       relatedResources: ["c64://specs/vic", "c64://context/bootstrap"],
       relatedPrompts: ["graphics-demo"],
@@ -700,8 +700,8 @@ export const graphicsModule = defineToolModule({
       },
     },
     {
-      name: "render_petscii",
-      description: "Render PETSCII text to the screen with optional border/background colours. See c64://specs/basic.",
+      name: "render_petscii_text",
+      description: "Display PETSCII text with optional border and background colours. See c64://specs/basic.",
       summary: "Generates a BASIC program that clears the screen, sets colours, and prints text.",
       inputSchema: renderPetsciiScreenArgsSchema.jsonSchema,
       relatedResources: ["c64://specs/basic", "c64://context/bootstrap"],
@@ -725,8 +725,8 @@ export const graphicsModule = defineToolModule({
       },
     },
     {
-      name: "create_petscii",
-      description: "Create PETSCII art from prompts or text, optionally run it on the C64, and return metadata including PETSCII codes and glyphs. See c64://specs/basic, c64://specs/vic, and c64://specs/charset.",
+      name: "render_petscii_art",
+      description: "Create PETSCII art from prompts, text, or bitmap input, and optionally display it on the C64. Returns metadata including PETSCII codes and glyphs. See c64://specs/basic, c64://specs/vic, and c64://specs/charset.",
       summary: "Synthesises PETSCII art, generates a BASIC program with preview metadata (petsciiCodes, glyphs, dimensions), and uploads it unless dry-run is requested.",
       inputSchema: petsciiImageArgsSchema.jsonSchema,
       relatedResources: ["c64://specs/basic", "c64://specs/vic", "c64://specs/charset"],

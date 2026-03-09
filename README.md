@@ -330,15 +330,15 @@ Grouped entry point for sprite/charset extraction, memory dumps, filesystem stat
 
 #### c64_graphics
 
-Grouped entry point for PETSCII art, sprite previews, bitmap import, and frame capture.
+Grouped entry point for frame capture and graphics rendering workflows.
 
 | Operation | Description | Required Inputs | Notes | C64U | VICE |
 | --- | --- | --- | --- | --- | --- |
 | `capture_frame` | Capture one or more complete video frames from the active backend. | — | — | ✅ | ✅ |
-| `create_petscii` | Generate PETSCII art from prompts, text, or explicit bitmap data. | — | — | ✅ | ✅ |
-| `generate_bitmap` | Import an image file, convert it to VIC bitmap memory, and enable bitmap mode. | `imagePath`, `format` | — | ✅ | ✅ |
-| `generate_sprite` | Build and run a sprite PRG from raw 63-byte sprite data. | `sprite` | — | ✅ | ✅ |
-| `render_petscii` | Render PETSCII text with optional border/background colours. | `text` | — | ✅ | ✅ |
+| `render_bitmap` | Import an image file, convert it to VIC-II bitmap memory, write it into RAM, and display it. | `imagePath`, `format` | — | ✅ | ✅ |
+| `render_petscii_art` | Create PETSCII art from prompts, text, or explicit bitmap data, and optionally display it on the C64. | — | — | ✅ | ✅ |
+| `render_petscii_text` | Display PETSCII text with optional border and background colours. | `text` | — | ✅ | ✅ |
+| `render_sprite` | Display supplied 63-byte sprite data at the requested position and colour by writing memory and patching VIC-II registers directly. | `sprite` | — | ✅ | ✅ |
 
 #### c64_memory
 

@@ -88,6 +88,43 @@ export interface BitmapDisplayResult {
   readonly colorRamBytes: number;
 }
 
+export interface SpriteDisplayResult {
+  readonly bank: number;
+  readonly spriteAddress: string;
+  readonly screenAddress: string;
+  readonly colorRamAddress: string;
+  readonly pointerAddress: string;
+  readonly pointerValue: number;
+  readonly registers: {
+    readonly dd00: number;
+    readonly d011: number;
+    readonly d016: number;
+    readonly d018: number;
+    readonly d020: number;
+    readonly d021: number;
+    readonly d010: number;
+    readonly d015: number;
+    readonly d01c: number;
+  };
+  readonly index: number;
+  readonly x: number;
+  readonly y: number;
+  readonly color: number;
+  readonly multicolour: boolean;
+  readonly spriteByteLength: number;
+}
+
+const TEXT_SCREEN_COLUMNS = 40;
+const TEXT_SCREEN_ROWS = 25;
+const TEXT_SCREEN_SIZE = TEXT_SCREEN_COLUMNS * TEXT_SCREEN_ROWS;
+const TEXT_SCREEN_ADDRESS = 0x0400;
+const TEXT_COLOR_RAM_ADDRESS = 0xD800;
+const SPRITE_DATA_BASE_ADDRESS = 0x2000;
+const DEFAULT_TEXT_FOREGROUND = 1;
+const DEFAULT_BORDER_COLOR = 6;
+const DEFAULT_BACKGROUND_COLOR = 0;
+const SPACE_SCREEN_CODE = 0x20;
+
 export class C64Client {
   private readonly baseUrl: string;
   private readonly http: HttpClient<unknown>;
@@ -186,8 +223,7 @@ export class C64Client {
   }
 
   /**
-   * Build a simple sprite PRG from raw 63-byte sprite data and position/color attributes.
-   * Returns the REST result after uploading and running the generated PRG.
+   * Render a sprite directly by writing sprite data, screen memory, and VIC-II registers.
    */
   async generateAndRunSpritePrg(options: {
     spriteBytes: Uint8Array | Buffer;
@@ -197,8 +233,7 @@ export class C64Client {
     color?: number;
     multicolour?: boolean;
   }): Promise<RunBasicResult> {
-    const prg = buildSingleSpriteProgram(options);
-    return this.runPrg(prg);
+    return this.displaySprite(options);
   }
 
   /**
@@ -212,6 +247,100 @@ export class C64Client {
   }): Promise<RunBasicResult> {
     const program = buildPetsciiScreenBasic(options);
     return this.uploadAndRunBasic(program);
+  }
+
+  async displaySprite(options: {
+    readonly spriteBytes: Uint8Array | Buffer;
+    readonly spriteIndex?: number;
+    readonly x?: number;
+    readonly y?: number;
+    readonly color?: number;
+    readonly multicolour?: boolean;
+  }): Promise<RunBasicResult & { details?: SpriteDisplayResult | unknown }> {
+    try {
+      const index = Math.max(0, Math.min(7, Math.floor(options.spriteIndex ?? 0)));
+      const x = Math.max(0, Math.min(511, Math.floor(options.x ?? 100)));
+      const y = Math.max(0, Math.min(255, Math.floor(options.y ?? 100)));
+      const color = normaliseColorNibble(options.color ?? 1);
+      const multicolour = options.multicolour === true;
+      const spriteBytes = Buffer.from(options.spriteBytes);
+      if (spriteBytes.length !== 63) {
+        throw new Error("spriteBytes must be exactly 63 bytes");
+      }
+
+      const spriteSlot = Buffer.alloc(64, 0x00);
+      spriteBytes.copy(spriteSlot, 0, 0, 63);
+
+      const spriteAddress = SPRITE_DATA_BASE_ADDRESS + index * 0x40;
+      const pointerAddress = TEXT_SCREEN_ADDRESS + 0x03F8 + index;
+      const pointerValue = (spriteAddress & 0x3FFF) >> 6;
+      const bitMask = 1 << index;
+
+      const screenRam = new Uint8Array(TEXT_SCREEN_SIZE).fill(SPACE_SCREEN_CODE);
+      screenRam[0x03F8 + index] = pointerValue & 0xFF;
+      const colorRam = new Uint8Array(TEXT_SCREEN_SIZE).fill(DEFAULT_TEXT_FOREGROUND);
+
+      const facade = await this.facadePromise;
+      const currentDd00 = await this.readByteOrDefault(facade, 0xDD00, 0);
+      const currentBorder = await this.readByteOrDefault(facade, 0xD020, DEFAULT_BORDER_COLOR);
+      const currentBackground = await this.readByteOrDefault(facade, 0xD021, DEFAULT_BACKGROUND_COLOR);
+      const currentD010 = await this.readByteOrDefault(facade, 0xD010, 0);
+      const currentD015 = await this.readByteOrDefault(facade, 0xD015, 0);
+      const currentD01C = await this.readByteOrDefault(facade, 0xD01C, 0);
+      const textRegisters = buildVicTextRegisters({
+        currentDd00,
+        borderColor: currentBorder,
+        backgroundColor: currentBackground,
+      });
+      const d010 = (currentD010 & ~bitMask) | (x > 0xFF ? bitMask : 0);
+      const d015 = currentD015 | bitMask;
+      const d01c = (currentD01C & ~bitMask) | (multicolour ? bitMask : 0);
+
+      await facade.writeMemory(spriteAddress, spriteSlot);
+      await facade.writeMemory(TEXT_SCREEN_ADDRESS, screenRam);
+      await facade.writeMemory(TEXT_COLOR_RAM_ADDRESS, colorRam);
+      await facade.writeMemory(0xDD00, Uint8Array.of(textRegisters.dd00));
+      await facade.writeMemory(0xD011, Uint8Array.of(textRegisters.d011));
+      await facade.writeMemory(0xD016, Uint8Array.of(textRegisters.d016));
+      await facade.writeMemory(0xD018, Uint8Array.of(textRegisters.d018));
+      await facade.writeMemory(0xD020, Uint8Array.of(textRegisters.d020));
+      await facade.writeMemory(0xD021, Uint8Array.of(textRegisters.d021));
+      await facade.writeMemory(0xD000 + index * 2, Uint8Array.of(x & 0xFF));
+      await facade.writeMemory(0xD001 + index * 2, Uint8Array.of(y & 0xFF));
+      await facade.writeMemory(0xD010, Uint8Array.of(d010));
+      await facade.writeMemory(0xD015, Uint8Array.of(d015));
+      await facade.writeMemory(0xD01C, Uint8Array.of(d01c));
+      await facade.writeMemory(0xD027 + index, Uint8Array.of(color));
+
+      return {
+        success: true,
+        details: {
+          bank: 0,
+          spriteAddress: this.formatAddress(spriteAddress),
+          screenAddress: this.formatAddress(TEXT_SCREEN_ADDRESS),
+          colorRamAddress: this.formatAddress(TEXT_COLOR_RAM_ADDRESS),
+          pointerAddress: this.formatAddress(pointerAddress),
+          pointerValue,
+          registers: {
+            ...textRegisters,
+            d010,
+            d015,
+            d01c,
+          },
+          index,
+          x,
+          y,
+          color,
+          multicolour,
+          spriteByteLength: spriteBytes.length,
+        } satisfies SpriteDisplayResult,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        details: this.normaliseError(error),
+      };
+    }
   }
 
   async displayBitmap(bitmap: PreparedVicBitmap, options?: {
@@ -1252,6 +1381,15 @@ export class C64Client {
     return error;
   }
 
+  private async readByteOrDefault(facade: C64Facade, address: number, fallback: number): Promise<number> {
+    try {
+      const bytes = await facade.readMemory(address, 1);
+      return bytes[0] ?? fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
   private parseNumeric(value: string): number {
     if (typeof value !== "string") {
       throw new Error("Expected string input");
@@ -1356,6 +1494,32 @@ export class C64Client {
 function toByte(value: number | undefined, fallback = 0): number {
   const v = value ?? fallback;
   return Math.max(0, Math.min(255, v)) & 0xff;
+}
+
+function normaliseColorNibble(value: number): number {
+  return Math.max(0, Math.min(0x0F, Math.floor(value))) & 0x0F;
+}
+
+function buildVicTextRegisters(options: {
+  readonly currentDd00?: number;
+  readonly borderColor?: number;
+  readonly backgroundColor?: number;
+}): {
+  readonly dd00: number;
+  readonly d011: number;
+  readonly d016: number;
+  readonly d018: number;
+  readonly d020: number;
+  readonly d021: number;
+} {
+  return {
+    dd00: ((options.currentDd00 ?? 0) & 0xFC) | 0x03,
+    d011: 0x1B,
+    d016: 0x08,
+    d018: 0x14,
+    d020: normaliseColorNibble(options.borderColor ?? DEFAULT_BORDER_COLOR),
+    d021: normaliseColorNibble(options.backgroundColor ?? DEFAULT_BACKGROUND_COLOR),
+  };
 }
 
 function buildSingleSpriteProgram(opts: {

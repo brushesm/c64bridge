@@ -1352,7 +1352,7 @@ test("c64_config shuffle delegates to program shuffle workflow", async () => {
   }
 });
 
-test("c64_graphics render_petscii delegates to legacy handler", async () => {
+test("c64_graphics render_petscii_text delegates to shared handler", async () => {
   const calls = [];
   const stubClient = {
     async renderPetsciiScreenAndRun(payload) {
@@ -1382,7 +1382,7 @@ test("c64_graphics render_petscii delegates to legacy handler", async () => {
 
   const result = await toolRegistry.invoke(
     "c64_graphics",
-    { op: "render_petscii", text: "HELLO", borderColor: 6 },
+    { op: "render_petscii_text", text: "HELLO", borderColor: 6 },
     ctx,
   );
 
@@ -1444,7 +1444,7 @@ test("c64_graphics capture_frame returns normalized frame payload", async () => 
   assert.equal(data.frames[0].pixels.encoding, "base64");
 });
 
-test("c64_graphics generate_sprite proxies to sprite helper", async () => {
+test("c64_graphics render_sprite proxies to sprite helper", async () => {
   const calls = [];
   const stubClient = {
     async generateAndRunSpritePrg(payload) {
@@ -1475,7 +1475,7 @@ test("c64_graphics generate_sprite proxies to sprite helper", async () => {
   const sprite = Array.from({ length: 63 }, () => 0);
   const result = await toolRegistry.invoke(
     "c64_graphics",
-    { op: "generate_sprite", sprite, index: 1, x: 140, y: 120, color: 5 },
+    { op: "render_sprite", sprite, index: 1, x: 140, y: 120, color: 5 },
     ctx,
   );
 
@@ -1488,7 +1488,7 @@ test("c64_graphics generate_sprite proxies to sprite helper", async () => {
   assert.equal(calls[0].color, 5);
 });
 
-test("c64_graphics generate_bitmap imports images and delegates to displayBitmap", async () => {
+test("c64_graphics render_bitmap imports images and delegates to displayBitmap", async () => {
   const { dir, file } = tmpPath("graphics", "grouped-bitmap.png");
   await fs.mkdir(dir, { recursive: true });
   const image = new Jimp({ width: 8, height: 8, color: 0x813338FF });
@@ -1531,7 +1531,7 @@ test("c64_graphics generate_bitmap imports images and delegates to displayBitmap
 
   const result = await toolRegistry.invoke(
     "c64_graphics",
-    { op: "generate_bitmap", imagePath: file, format: "hires", borderColor: 2 },
+    { op: "render_bitmap", imagePath: file, format: "hires", borderColor: 2 },
     ctx,
   );
 
