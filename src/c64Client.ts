@@ -808,11 +808,39 @@ export class C64Client {
 
     const frames: CapturedFrame[] = [];
     for (let index = 0; index < count; index += 1) {
-      const snapshot = await viceFacade.withMonitor((client) => client.displayGet({}));
+      const snapshot = await this.captureViceDisplaySnapshot(viceFacade);
       frames.push(this.normaliseViceDisplaySnapshot(snapshot));
     }
 
     return { backend: "vice", frames };
+  }
+
+  private async captureViceDisplaySnapshot(viceFacade: ViceBackend): Promise<{
+    readonly debugWidth: number;
+    readonly debugHeight: number;
+    readonly offsetX?: number;
+    readonly offsetY?: number;
+    readonly innerWidth?: number;
+    readonly innerHeight?: number;
+    readonly bitsPerPixel: number;
+    readonly pixels: Uint8Array | Buffer;
+  }> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 8; attempt += 1) {
+      try {
+        const snapshot = await viceFacade.withMonitor((client) => client.displayGet({}));
+        if (snapshot.pixels.length > 0) {
+          return snapshot;
+        }
+        lastError = new Error("VICE display capture returned an empty frame");
+      } catch (error) {
+        lastError = error;
+      }
+      if (attempt < 8) {
+        await new Promise((resolve) => setTimeout(resolve, Math.min(1_000, 150 * attempt)));
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError ?? "VICE display capture failed"));
   }
 
   private async captureC64uAudioSamples(

@@ -343,7 +343,7 @@ export class ViceBackend implements C64Facade {
     await client.connect(this.port, this.host);
     if (this.manageProcess && this.lastProcessStart > 0) {
       const sinceStart = Date.now() - this.lastProcessStart;
-      const settleDelay = 200 - sinceStart;
+      const settleDelay = 500 - sinceStart;
       if (settleDelay > 0) {
         await delay(settleDelay);
       }
@@ -362,7 +362,7 @@ export class ViceBackend implements C64Facade {
   }
 
   async ping(): Promise<boolean> {
-    const attempts = 3;
+    const attempts = 8;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       try {
         await this.withClient(async (client) => {
@@ -374,7 +374,7 @@ export class ViceBackend implements C64Facade {
           console.error(`[vice-backend] ping failed (attempt ${attempt}/${attempts})`, error);
         }
         if (attempt < attempts) {
-          await delay(150 * attempt);
+          await delay(Math.min(1_000, 200 * attempt));
         }
       }
     }
