@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
+import { createOutputTailCapture, getDiagnosticsSessionInfo, writeDiagnosticEvent } from "../diagnostics.js";
 
 export interface ViceProcessOptions {
   binary: string;
@@ -113,18 +114,44 @@ export async function startViceProcess(options: ViceProcessOptions): Promise<Vic
   const { useXvfb, display } = shouldUseXvfb(options.visible);
   const viceEnv: NodeJS.ProcessEnv = { ...process.env };
   let xvfb: ChildProcess | null = null;
+  const xvfbOutput = createOutputTailCapture("xvfb");
+  const viceOutput = createOutputTailCapture("vice");
+
+  writeDiagnosticEvent("vice_process_start_requested", {
+    binary: options.binary,
+    display,
+    extraArgs: options.extraArgs ?? [],
+    host: options.host,
+    port: options.port,
+    useXvfb,
+    visible: options.visible === true,
+    warp: options.warp !== false,
+  });
 
   if (useXvfb) {
     ensureXvfbSocketDir(debugEnabled);
     if (debugEnabled) {
       console.error("[vice-process] launching Xvfb", { display });
     }
-    xvfb = spawn("Xvfb", [display, "-screen", "0", "640x480x24"], { stdio: debugEnabled ? ["ignore", "pipe", "pipe"] : "ignore" });
+    xvfb = spawn("Xvfb", [display, "-screen", "0", "640x480x24"], { stdio: ["ignore", "pipe", "pipe"] });
     if (debugEnabled) {
       console.error("[vice-process] Xvfb pid", { pid: xvfb.pid });
-      xvfb.stdout?.on("data", (chunk) => console.error("[vice-process][xvfb stdout]", chunk.toString().trim()));
-      xvfb.stderr?.on("data", (chunk) => console.error("[vice-process][xvfb stderr]", chunk.toString().trim()));
     }
+    xvfb.stdout?.on("data", (chunk) => {
+      xvfbOutput.pushStdout(chunk);
+      if (debugEnabled) console.error("[vice-process][xvfb stdout]", chunk.toString().trim());
+    });
+    xvfb.stderr?.on("data", (chunk) => {
+      xvfbOutput.pushStderr(chunk);
+      if (debugEnabled) console.error("[vice-process][xvfb stderr]", chunk.toString().trim());
+    });
+    xvfb.once("exit", (code, signal) => {
+      writeDiagnosticEvent("xvfb_exit", {
+        code,
+        signal,
+        output: xvfbOutput.snapshot(),
+      });
+    });
     viceEnv.DISPLAY = display;
     await waitForXvfb(display);
   }
@@ -147,16 +174,27 @@ export async function startViceProcess(options: ViceProcessOptions): Promise<Vic
     });
   }
 
-  const spawnOptions: SpawnOptions = debugEnabled
-    ? { stdio: ["ignore", "pipe", "pipe"], env: viceEnv }
-    : { stdio: "ignore", env: viceEnv };
+  const spawnOptions: SpawnOptions = { stdio: ["ignore", "pipe", "pipe"], env: viceEnv };
   let spawnError: Error | null = null;
   const child = spawn(options.binary, args, spawnOptions);
   if (debugEnabled) {
     console.error("[vice-process] VICE pid", { pid: child.pid });
-    child.stdout?.on("data", (chunk) => console.error("[vice-process][vice stdout]", chunk.toString().trim()));
-    child.stderr?.on("data", (chunk) => console.error("[vice-process][vice stderr]", chunk.toString().trim()));
   }
+  child.stdout?.on("data", (chunk) => {
+    viceOutput.pushStdout(chunk);
+    if (debugEnabled) console.error("[vice-process][vice stdout]", chunk.toString().trim());
+  });
+  child.stderr?.on("data", (chunk) => {
+    viceOutput.pushStderr(chunk);
+    if (debugEnabled) console.error("[vice-process][vice stderr]", chunk.toString().trim());
+  });
+  child.once("exit", (code, signal) => {
+    writeDiagnosticEvent("vice_process_exit", {
+      code,
+      signal,
+      output: viceOutput.snapshot(),
+    });
+  });
   child.once("error", (err) => { spawnError = err; });
 
   try {
@@ -177,6 +215,11 @@ export async function startViceProcess(options: ViceProcessOptions): Promise<Vic
           if (debugEnabled) {
             console.error("[vice-process] monitor port is ready", { host: options.host, port: options.port });
           }
+          writeDiagnosticEvent("vice_process_monitor_ready", {
+            host: options.host,
+            port: options.port,
+            pid: child.pid,
+          });
           child.removeListener("exit", onExit);
           child.removeListener("error", onError);
           resolve();
@@ -188,6 +231,20 @@ export async function startViceProcess(options: ViceProcessOptions): Promise<Vic
         });
     });
   } catch (err) {
+    const diagnosticsFile = getDiagnosticsSessionInfo()?.filePath;
+    const detail = {
+      diagnosticsFile,
+      display,
+      host: options.host,
+      output: {
+        vice: viceOutput.snapshot(),
+        xvfb: xvfbOutput.snapshot(),
+      },
+      pid: child.pid,
+      useXvfb,
+      error: err,
+    };
+    writeDiagnosticEvent("vice_process_start_failed", detail);
     if (debugEnabled) {
       console.error("[vice-process] failed to start VICE", err instanceof Error ? err : new Error(String(err)));
     }
@@ -195,13 +252,27 @@ export async function startViceProcess(options: ViceProcessOptions): Promise<Vic
     await terminateProcess(child, "SIGKILL", 200);
     await terminateProcess(xvfb, "SIGTERM", 500);
     await terminateProcess(xvfb, "SIGKILL", 200);
-    throw err instanceof Error ? err : new Error(String(err));
+    const stderrTail = viceOutput.snapshot().stderrTail || xvfbOutput.snapshot().stderrTail;
+    const suffix = diagnosticsFile
+      ? ` Diagnostics: ${diagnosticsFile}`
+      : "";
+    const error = err instanceof Error ? err : new Error(String(err));
+    if (stderrTail) {
+      error.message = `${error.message}${suffix} Last stderr: ${stderrTail}`;
+    } else if (suffix) {
+      error.message = `${error.message}${suffix}`;
+    }
+    throw error;
   }
 
   const stop = async (): Promise<void> => {
     if (debugEnabled) {
       console.error("[vice-process] stopping VICE/xvfb");
     }
+    writeDiagnosticEvent("vice_process_stop_requested", {
+      pid: child.pid,
+      useXvfb,
+    });
     await terminateProcess(child, "SIGTERM", 750);
     if (child.exitCode === null && child.signalCode === null) {
       await terminateProcess(child, "SIGKILL", 300);
@@ -227,6 +298,7 @@ export function ensureXvfbSocketDir(debugEnabled: boolean): void {
     }
     fs.chmodSync(socketDir, 0o1777);
   } catch (error) {
+    writeDiagnosticEvent("xvfb_socket_dir_failed", { socketDir, error });
     if (debugEnabled) {
       console.error("[vice-process] failed to prepare Xvfb socket dir", error);
     }

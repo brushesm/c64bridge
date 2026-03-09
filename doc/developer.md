@@ -81,10 +81,14 @@ Key env flags:
 
 - `C64_MODE=c64u|vice` — force backend
 - `LOG_LEVEL=debug` — verbose logging (stderr)
+- `C64BRIDGE_DIAGNOSTICS_DIR=/path` — persistent NDJSON crash and request diagnostics (default: `~/.c64bridge/diagnostics`)
+- `C64BRIDGE_DISABLE_DIAGNOSTICS=1` — disable persistent diagnostics if they interfere with a constrained environment
 - `C64_TEST_TARGET` / `C64_TEST_BASE_URL` — influence test harness
 - `VICE_TEST_TARGET=mock|vice` — test selection for VICE (default: auto-detect real VICE; set `mock` to run against the BM stub during tests)
 
 Managed VICE launch is currently Linux/X11-oriented. The launcher and smoke workflow assume Unix facilities such as `Xvfb`, `/tmp/.X11-unix`, and `/dev/null`; on other hosts, connect to an already running Binary Monitor endpoint or use the mock backend instead of assuming supervised startup will work.
+
+For MCP stability work, always check the latest file under `~/.c64bridge/diagnostics/` before assuming a VS Code or Copilot crash came from repository logic. The file captures MCP request flow plus VICE/Xvfb stderr tails, which is usually enough to separate a repo fault from an editor or extension-host crash.
 
 Public VICE support excludes mock-only behaviors. If a capability only works in the BM stub or an internal backend experiment, keep it out of grouped tool support tables until it is explicitly promoted in [doc/vice/support-matrix.md](vice/support-matrix.md).
 
