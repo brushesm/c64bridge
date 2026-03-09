@@ -1,9 +1,18 @@
+import { Buffer } from "node:buffer";
 import {
   createOperationDispatcher,
   defineToolModule,
   discriminatedUnionSchema,
 } from "../types.js";
 import { graphicsModule, graphicsOperationHandlers as groupedGraphicsHandlers } from "../graphics.js";
+import {
+  booleanSchema,
+  literalSchema,
+  numberSchema,
+  objectSchema,
+  optionalSchema,
+  stringSchema,
+} from "../schema.js";
 import {
   buildDescriptorIndex,
   ensureDescriptor,
@@ -12,11 +21,101 @@ import {
   type GroupedOperationConfig,
   type GenericOperationMap,
 } from "./utils.js";
-import { ToolExecutionError, toolErrorResult } from "../errors.js";
+import {
+  ToolError,
+  ToolExecutionError,
+  toolErrorResult,
+  unknownErrorResult,
+} from "../errors.js";
+import { jsonResult } from "../responses.js";
 
 const graphicsDescriptorIndex = buildDescriptorIndex(graphicsModule);
 
+const captureFrameArgsSchema = objectSchema({
+  description: "Capture one or more complete video frames from the active backend.",
+  properties: {
+    op: literalSchema("capture_frame"),
+    count: optionalSchema(numberSchema({
+      description: "Number of frames to capture.",
+      integer: true,
+      minimum: 1,
+      maximum: 32,
+      default: 1,
+    }), 1),
+    includePixels: optionalSchema(booleanSchema({
+      description: "Include pixel payload bytes in the response.",
+      default: true,
+    }), true),
+    encoding: optionalSchema(stringSchema({
+      description: "Encoding used for the pixel payload when included.",
+      enum: ["base64", "hex"],
+      default: "base64",
+    }), "base64"),
+  },
+  required: ["op"],
+  additionalProperties: false,
+});
+
 const graphicsOperations: GroupedOperationConfig[] = [
+  {
+    op: "capture_frame",
+    schema: captureFrameArgsSchema.jsonSchema,
+    handler: async (rawArgs, ctx) => {
+      try {
+        const parsed = captureFrameArgsSchema.parse(rawArgs);
+        ctx.logger.info("Capturing frame buffer", {
+          count: parsed.count,
+          includePixels: parsed.includePixels,
+          encoding: parsed.encoding,
+        });
+
+        const capture = await ctx.client.captureFrames({ count: parsed.count });
+        const includePixels = parsed.includePixels !== false;
+        const encoding = parsed.encoding ?? "base64";
+        const frames = capture.frames.map((frame, index) => {
+          const pixels = includePixels
+            ? {
+                encoding,
+                data: encoding === "hex"
+                  ? Buffer.from(frame.pixels).toString("hex")
+                  : Buffer.from(frame.pixels).toString("base64"),
+              }
+            : undefined;
+
+          return {
+            index,
+            frameNumber: frame.frameNumber,
+            width: frame.width,
+            height: frame.height,
+            bitsPerPixel: frame.bitsPerPixel,
+            byteLength: frame.pixels.length,
+            complete: frame.complete,
+            ...(pixels ? { pixels } : {}),
+          };
+        });
+
+        return jsonResult(
+          {
+            backend: capture.backend,
+            count: frames.length,
+            frames,
+          },
+          {
+            success: true,
+            backend: capture.backend,
+            count: frames.length,
+            includePixels,
+            encoding: includePixels ? encoding : null,
+          },
+        );
+      } catch (error) {
+        if (error instanceof ToolError) {
+          return toolErrorResult(error);
+        }
+        return unknownErrorResult(error);
+      }
+    },
+  },
   {
     op: "create_petscii",
     schema: extendSchemaWithOp(
@@ -68,7 +167,7 @@ const graphicsOperationHandlers = createOperationHandlers(graphicsOperations);
 
 export const graphicsModuleGroup = defineToolModule({
   domain: "graphics",
-  summary: "Grouped PETSCII, sprite, and upcoming bitmap helpers.",
+  summary: "Grouped PETSCII, sprite, frame capture, and upcoming bitmap helpers.",
   resources: ["c64://specs/vic", "c64://specs/basic", "c64://specs/assembly"],
   prompts: ["graphics-demo", "basic-program", "assembly-program"],
   defaultTags: ["graphics", "vic"],
@@ -88,6 +187,11 @@ export const graphicsModuleGroup = defineToolModule({
       }),
       tags: ["graphics", "vic", "grouped"],
       examples: [
+        {
+          name: "Capture one frame",
+          description: "Grab the current framebuffer from the active backend",
+          arguments: { op: "capture_frame" },
+        },
         {
           name: "Create PETSCII art (dry run)",
           description: "Synthesize art without uploading to the C64",

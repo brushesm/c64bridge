@@ -3,7 +3,7 @@ import assert from "#test/assert";
 import fs from "node:fs/promises";
 import { toolRegistry } from "../src/tools/registry/index.js";
 import { metaModule } from "../src/tools/meta/index.js";
-import { ToolValidationError } from "../src/tools/errors.js";
+import { ToolUnsupportedPlatformError, ToolValidationError } from "../src/tools/errors.js";
 import { getPlatformStatus, setPlatform } from "../src/platform.js";
 import { createLogger, tmpPath } from "./meta/helpers.mjs";
 
@@ -128,6 +128,32 @@ test("c64_system pause is rejected on vice", async () => {
     () => toolRegistry.invoke("c64_system", { op: "pause" }, ctx),
     /Tool pause is not available on platform vice/,
   );
+});
+
+test("c64_program c64u-only grouped operations reject on vice", async () => {
+  const ctx = {
+    client: {},
+    rag: {},
+    logger: createLogger(),
+    platform: { id: "vice", features: [], limitedFeatures: [] },
+    setPlatform,
+  };
+
+  for (const [args, expectedTool] of [
+    [{ op: "load_prg", path: "//USB0/demo.prg" }, "load_prg"],
+    [{ op: "run_crt", path: "//USB0/demo.crt" }, "run_crt"],
+    [{ op: "bundle_run", runId: "demo", outputPath: "/tmp/demo" }, "bundle_run_artifacts"],
+  ]) {
+    await assert.rejects(
+      () => toolRegistry.invoke("c64_program", args, ctx),
+      (error) => {
+        assert.ok(error instanceof ToolUnsupportedPlatformError);
+        assert.equal(error.tool, expectedTool);
+        assert.equal(error.platform, "vice");
+        return true;
+      },
+    );
+  }
 });
 
 test("c64_program upload_run_basic uses shared BASIC handler", async () => {
@@ -390,6 +416,40 @@ test("c64_sound silence_all verify runs audio analyzer", async () => {
   assert.ok(result.metadata?.verification?.maxRms <= 0.02);
 });
 
+test("c64_sound capture_samples returns encoded PCM payload", async () => {
+  const stubClient = {
+    async captureSamples({ count }) {
+      assert.equal(count, 256);
+      return {
+        backend: "c64u",
+        channels: 2,
+        sampleRateHz: 47982.8869047619,
+        samplePairs: 256,
+        samples: new Int16Array([0x0102, -2, 0x0304, -4]),
+      };
+    },
+  };
+
+  const ctx = {
+    client: stubClient,
+    rag: {},
+    logger: createLogger(),
+    platform: getPlatformStatus(),
+    setPlatform,
+  };
+
+  const result = await toolRegistry.invoke("c64_sound", { op: "capture_samples" }, ctx);
+
+  assert.equal(result.isError, undefined);
+  assert.equal(result.structuredContent?.type, "json");
+  assert.equal(result.metadata?.samplePairs, 256);
+  const data = result.structuredContent?.data;
+  assert.equal(data.backend, "c64u");
+  assert.equal(data.channels, 2);
+  assert.equal(data.sampleRateHz, 47982.8869047619);
+  assert.equal(data.samples.encoding, "base64");
+});
+
 test("c64_system reset delegates to machine control", async () => {
   const calls = [];
   const stubClient = {
@@ -613,6 +673,32 @@ test("c64_disk create_image validates D64 tracks", async () => {
   );
 });
 
+test("c64_disk c64u-only grouped operations reject on vice", async () => {
+  const ctx = {
+    client: {},
+    rag: {},
+    logger: createLogger(),
+    platform: { id: "vice", features: [], limitedFeatures: [] },
+    setPlatform,
+  };
+
+  for (const [args, expectedTool] of [
+    [{ op: "file_info", path: "/tmp/demo.d64" }, "file_info"],
+    [{ op: "create_image", format: "d81", path: "/tmp/demo.d81" }, "create_image"],
+    [{ op: "find_and_run", nameContains: "demo" }, "find_and_run_program_by_name"],
+  ]) {
+    await assert.rejects(
+      () => toolRegistry.invoke("c64_disk", args, ctx),
+      (error) => {
+        assert.ok(error instanceof ToolUnsupportedPlatformError);
+        assert.equal(error.tool, expectedTool);
+        assert.equal(error.platform, "vice");
+        return true;
+      },
+    );
+  }
+});
+
 test("c64_drive set_mode delegates to storage module", async () => {
   const calls = [];
   const stubClient = {
@@ -643,6 +729,55 @@ test("c64_drive set_mode delegates to storage module", async () => {
 
   assert.equal(result.isError, undefined);
   assert.deepEqual(calls, [{ drive: "drive8", mode: "1581" }]);
+});
+
+test("c64_drive load_rom rejects on vice", async () => {
+  const ctx = {
+    client: {},
+    rag: {},
+    logger: createLogger(),
+    platform: { id: "vice", features: [], limitedFeatures: [] },
+    setPlatform,
+  };
+
+  await assert.rejects(
+    () => toolRegistry.invoke("c64_drive", { op: "load_rom", drive: "drive8", path: "/roms/custom.rom" }, ctx),
+    (error) => {
+      assert.ok(error instanceof ToolUnsupportedPlatformError);
+      assert.equal(error.tool, "drive_load_rom");
+      assert.equal(error.platform, "vice");
+      return true;
+    },
+  );
+});
+
+test("c64_sound c64u-only grouped operations reject on vice", async () => {
+  const ctx = {
+    client: {},
+    rag: {},
+    logger: createLogger(),
+    platform: { id: "vice", features: [], limitedFeatures: [] },
+    setPlatform,
+  };
+
+  for (const [args, expectedTool] of [
+    [{ op: "capture_samples" }, "capture_samples"],
+    [{ op: "play_sid_file", path: "//USB0/demo.sid" }, "sidplay_file"],
+    [{ op: "play_mod_file", path: "//USB0/demo.mod" }, "modplay_file"],
+    [{ op: "pipeline", source: "A4 q" }, "music_compile_play_analyze"],
+    [{ op: "analyze", request: { durationSeconds: 1 } }, "analyze_audio"],
+    [{ op: "record_analyze", durationSeconds: 1 }, "record_and_analyze_audio"],
+  ]) {
+    await assert.rejects(
+      () => toolRegistry.invoke("c64_sound", args, ctx),
+      (error) => {
+        assert.ok(error instanceof ToolUnsupportedPlatformError);
+        assert.equal(error.tool, expectedTool);
+        assert.equal(error.platform, "vice");
+        return true;
+      },
+    );
+  }
 });
 
 test("c64_printer print_text delegates to printer module", async () => {
@@ -1256,6 +1391,58 @@ test("c64_graphics render_petscii delegates to legacy handler", async () => {
   assert.equal(calls[0].borderColor, 6);
 });
 
+test("c64_graphics capture_frame returns normalized frame payload", async () => {
+  const stubClient = {
+    async captureFrames({ count }) {
+      assert.equal(count, 2);
+      return {
+        backend: "vice",
+        frames: [
+          {
+            frameNumber: null,
+            width: 320,
+            height: 200,
+            bitsPerPixel: 8,
+            pixels: Uint8Array.from([0, 1, 2, 3]),
+            complete: true,
+          },
+          {
+            frameNumber: null,
+            width: 320,
+            height: 200,
+            bitsPerPixel: 8,
+            pixels: Uint8Array.from([4, 5, 6, 7]),
+            complete: true,
+          },
+        ],
+      };
+    },
+  };
+
+  const ctx = {
+    client: stubClient,
+    rag: {},
+    logger: createLogger(),
+    platform: getPlatformStatus(),
+    setPlatform,
+  };
+
+  const result = await toolRegistry.invoke(
+    "c64_graphics",
+    { op: "capture_frame", count: 2 },
+    ctx,
+  );
+
+  assert.equal(result.isError, undefined);
+  assert.equal(result.structuredContent?.type, "json");
+  assert.equal(result.metadata?.backend, "vice");
+  assert.equal(result.metadata?.count, 2);
+  const data = result.structuredContent?.data;
+  assert.equal(data.frames.length, 2);
+  assert.equal(data.frames[0].byteLength, 4);
+  assert.equal(data.frames[0].pixels.encoding, "base64");
+});
+
 test("c64_graphics generate_sprite proxies to sprite helper", async () => {
   const calls = [];
   const stubClient = {
@@ -1553,56 +1740,6 @@ test("c64_debug step over delegates to VICE stepping", async () => {
     assert.equal(stepCalls.length, 1);
     assert.equal(stepCalls[0].count, 2);
     assert.equal(stepCalls[0].options.stepOver, true);
-  } finally {
-    setPlatform(restore);
-  }
-});
-
-test("c64_vice display_get returns snapshot metadata", async () => {
-  const restore = getPlatformStatus().id;
-  setPlatform("vice");
-  try {
-    let calls = 0;
-    const stubClient = {
-      async viceDisplayGet(options) {
-        calls += 1;
-        assert.ok(options);
-        return {
-          debugWidth: 320,
-          debugHeight: 200,
-          innerWidth: 320,
-          innerHeight: 200,
-          offsetX: 0,
-          offsetY: 0,
-          bitsPerPixel: 8,
-          pixels: Buffer.from([0, 1, 2, 3]),
-        };
-      },
-    };
-
-    const ctx = {
-      client: stubClient,
-      rag: {},
-      logger: {
-        debug() {},
-        info() {},
-        warn() {},
-        error() {},
-      },
-      platform: getPlatformStatus(),
-      setPlatform,
-    };
-
-    const result = await toolRegistry.invoke("c64_vice", { op: "display_get" }, ctx);
-
-    assert.equal(result.isError, undefined);
-    assert.equal(calls, 1);
-    assert.equal(result.structuredContent?.type, "json");
-    const data = result.structuredContent?.data;
-    assert.ok(data);
-    assert.equal(data.byteLength, 4);
-    assert.equal(data.pixels.encoding, "base64");
-    assert.equal(data.pixels.data, Buffer.from([0, 1, 2, 3]).toString("base64"));
   } finally {
     setPlatform(restore);
   }

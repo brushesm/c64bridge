@@ -511,11 +511,11 @@ export class ViceClient {
 
   private parseDisplay(frame: Buffer): ViceDisplaySnapshot {
     const body = frame.subarray(12);
-    if (body.length < 21) {
+    if (body.length < 17) {
       throw new Error("Display response too short");
     }
     const infoLength = body.readUInt32LE(0);
-    if (body.length < 4 + infoLength + 4) {
+    if (body.length < 4 + infoLength) {
       throw new Error("Display response length mismatch");
     }
     const debugWidth = body.readUInt16LE(4);
@@ -526,7 +526,7 @@ export class ViceClient {
     const innerHeight = body.readUInt16LE(14);
     const bitsPerPixel = body[16] ?? 8;
     const pixelLength = body.readUInt32LE(17);
-    const pixelStart = 21;
+    const pixelStart = 4 + infoLength;
     if (pixelStart + pixelLength > body.length) {
       throw new Error("Display pixel buffer truncated");
     }

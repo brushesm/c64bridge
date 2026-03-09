@@ -135,6 +135,7 @@ export const systemModuleGroup = defineToolModule({
       }),
       tags: ["system", "control", "grouped"],
       operationPlatforms: { pause: ["c64u"], resume: ["c64u"], menu: ["c64u"] },
+      operationToolNames: { pause: "pause", resume: "resume", menu: "menu_button" },
       examples: [
         {
           name: "Soft reset",

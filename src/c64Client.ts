@@ -7,6 +7,7 @@ See <https://www.gnu.org/licenses/> for details.
 */
 
 import { Buffer } from "node:buffer";
+import { createSocket, type Socket } from "node:dgram";
 import axios from "axios";
 import { basicToPrg } from "./basicConverter.js";
 import { assemblyToPrg } from "./assemblyConverter.js";
@@ -19,13 +20,20 @@ import type {
   ViceClient,
   ViceCheckpoint,
   ViceCheckpointCreateOptions,
-  ViceDisplaySnapshot,
   ViceMemspace,
   ViceRegisterMetadata,
   ViceRegisterValue,
   ViceRegisterWrite,
   ViceResourceValue,
 } from "./vice/viceClient.js";
+import {
+  C64U_NTSC_AUDIO_SAMPLE_RATE,
+  C64U_PAL_AUDIO_SAMPLE_RATE,
+  collectCompleteVideoFrames,
+  parseAudioPacket,
+  parseVideoPacket,
+  type CapturedFrame,
+} from "./streamCapture.js";
 
 export interface RunBasicResult {
   success: boolean;
@@ -40,22 +48,43 @@ export interface MemoryReadResult {
 
 export interface C64ClientOptions {
   networkPassword?: string;
+  forceC64uFacade?: boolean;
+}
+
+export interface FrameCaptureResult {
+  readonly backend: "c64u" | "vice";
+  readonly frames: readonly CapturedFrame[];
+}
+
+export interface SampleCaptureResult {
+  readonly backend: "c64u";
+  readonly channels: 2;
+  readonly sampleRateHz: number;
+  readonly samplePairs: number;
+  readonly samples: Int16Array;
 }
 
 export class C64Client {
+  private readonly baseUrl: string;
   private readonly http: HttpClient<unknown>;
   private readonly api: Api<unknown>;
   private readonly facadePromise: Promise<C64Facade>;
 
   constructor(baseUrl: string, options: C64ClientOptions = {}) {
+    this.baseUrl = baseUrl;
     const headers = options.networkPassword ? { "X-Password": options.networkPassword } : undefined;
     this.http = createLoggingHttpClient({ baseURL: baseUrl, timeout: 10_000, headers });
     this.api = new Api(this.http);
-    // Select backend once lazily; keep REST for hardware-specific fallbacks
-    this.facadePromise = createFacade(undefined, {
-      preferredC64uBaseUrl: baseUrl,
-      preferredC64uNetworkPassword: options.networkPassword,
-    }).then((sel) => sel.facade);
+    const forceC64uFacade = options.forceC64uFacade ?? true;
+    this.facadePromise = createFacade(
+      undefined,
+      forceC64uFacade
+        ? {
+            preferredC64uBaseUrl: baseUrl,
+            preferredC64uNetworkPassword: options.networkPassword,
+          }
+        : undefined,
+    ).then((sel) => sel.facade);
   }
 
   private async requireViceBackend(): Promise<ViceBackend> {
@@ -588,12 +617,38 @@ export class C64Client {
     try { const facade = await this.facadePromise; return await facade.streamStop(stream); } catch (error) { return { success: false, details: this.normaliseError(error) }; }
   }
 
+  async captureFrames(options?: { readonly count?: number }): Promise<FrameCaptureResult> {
+    const requestedCount = Math.max(1, Math.min(32, Math.trunc(options?.count ?? 1)));
+    const activeMode = (process.env.C64_MODE ?? "").toLowerCase().trim();
+    if (activeMode === "vice") {
+      return this.captureViceFrames(requestedCount);
+    }
+
+    const facade = await this.facadePromise;
+    if (facade.type === "vice") {
+      return this.captureViceFrames(requestedCount);
+    }
+
+    return this.captureC64uVideoFrames(facade, requestedCount);
+  }
+
+  async captureSamples(options?: { readonly count?: number }): Promise<SampleCaptureResult> {
+    const requestedPairs = Math.max(1, Math.min(65_536, Math.trunc(options?.count ?? 256)));
+    const facade = await this.facadePromise;
+    if (facade.type !== "c64u") {
+      throw new Error("Audio sample capture is only available on C64 Ultimate");
+    }
+    return this.captureC64uAudioSamples(facade, requestedPairs);
+  }
+
   async configsList(): Promise<unknown> {
-    const facade = await this.facadePromise; return facade.configsList();
+    const facade = await this.facadePromise;
+    return facade.configsList();
   }
 
   async configGet(category: string, item?: string): Promise<unknown> {
-    const facade = await this.facadePromise; return facade.configGet(category, item);
+    const facade = await this.facadePromise;
+    return facade.configGet(category, item);
   }
 
   async configSet(category: string, item: string, value: string): Promise<RunBasicResult> {
@@ -683,6 +738,277 @@ export class C64Client {
     }
 
     return new Uint8Array();
+  }
+
+  private async captureC64uVideoFrames(
+    facade: C64Facade,
+    count: number,
+  ): Promise<FrameCaptureResult> {
+    const host = new URL(this.baseUrl).hostname;
+    const bindAddress = await this.resolveLocalCaptureAddress(host);
+    const socket = createSocket("udp4");
+    const packets: ReturnType<typeof parseVideoPacket>[] = [];
+    let stopError: Error | null = null;
+
+    try {
+      await this.bindCaptureSocket(socket, bindAddress);
+      const target = this.socketEndpoint(socket, bindAddress);
+      await this.ensureStreamSuccess(await facade.streamStart("video", target), "start video stream");
+
+      const frames = await new Promise<readonly CapturedFrame[]>((resolve, reject) => {
+        const timeoutMs = Math.max(1_500, count * 750);
+        const timer = setTimeout(() => {
+          reject(new Error(`Timed out after ${timeoutMs}ms while capturing ${count} video frame(s)`));
+        }, timeoutMs);
+
+        socket.on("message", (msg) => {
+          try {
+            packets.push(parseVideoPacket(Buffer.from(msg)));
+            const frames = collectCompleteVideoFrames(packets, count);
+            if (frames.length >= count) {
+              clearTimeout(timer);
+              resolve(frames);
+            }
+          } catch (error) {
+            clearTimeout(timer);
+            reject(error);
+          }
+        });
+
+        socket.once("error", (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+      });
+
+      return { backend: "c64u", frames };
+    } finally {
+      try {
+        await this.ensureStreamSuccess(await facade.streamStop("video"), "stop video stream");
+      } catch (error) {
+        stopError = error instanceof Error ? error : new Error(String(error));
+      }
+      socket.close();
+      if (stopError) {
+        throw stopError;
+      }
+    }
+  }
+
+  private async captureViceFrames(count: number): Promise<FrameCaptureResult> {
+    const facade = await this.facadePromise;
+    const viceFacade = facade.type === "vice"
+      ? facade as ViceBackend
+      : await createFacade(undefined).then((selection) => {
+          if (selection.facade.type !== "vice") {
+            throw new Error("VICE frame capture requested while the active backend is not VICE");
+          }
+          return selection.facade as ViceBackend;
+        });
+
+    const frames: CapturedFrame[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const snapshot = await viceFacade.withMonitor((client) => client.displayGet({}));
+      frames.push(this.normaliseViceDisplaySnapshot(snapshot));
+    }
+
+    return { backend: "vice", frames };
+  }
+
+  private async captureC64uAudioSamples(
+    facade: C64Facade,
+    samplePairs: number,
+  ): Promise<SampleCaptureResult> {
+    const host = new URL(this.baseUrl).hostname;
+    const bindAddress = await this.resolveLocalCaptureAddress(host);
+    const socket = createSocket("udp4");
+    const chunks: Int16Array[] = [];
+    let collectedValues = 0;
+    let stopError: Error | null = null;
+
+    try {
+      await this.bindCaptureSocket(socket, bindAddress);
+      const target = this.socketEndpoint(socket, bindAddress);
+      await this.ensureStreamSuccess(await facade.streamStart("audio", target), "start audio stream");
+
+      const neededValues = samplePairs * 2;
+      await new Promise<void>((resolve, reject) => {
+        const timeoutMs = Math.max(1_000, Math.ceil(samplePairs / 192) * 500);
+        const timer = setTimeout(() => {
+          reject(new Error(`Timed out after ${timeoutMs}ms while capturing ${samplePairs} audio sample pair(s)`));
+        }, timeoutMs);
+
+        socket.on("message", (msg) => {
+          try {
+            const packet = parseAudioPacket(Buffer.from(msg));
+            chunks.push(packet.samples);
+            collectedValues += packet.samples.length;
+            if (collectedValues >= neededValues) {
+              clearTimeout(timer);
+              resolve();
+            }
+          } catch (error) {
+            clearTimeout(timer);
+            reject(error);
+          }
+        });
+
+        socket.once("error", (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+      });
+
+      const samples = new Int16Array(samplePairs * 2);
+      let offset = 0;
+      for (const chunk of chunks) {
+        const remaining = samples.length - offset;
+        if (remaining <= 0) {
+          break;
+        }
+        samples.set(chunk.subarray(0, remaining), offset);
+        offset += Math.min(chunk.length, remaining);
+      }
+
+      return {
+        backend: "c64u",
+        channels: 2,
+        sampleRateHz: await this.getC64uAudioSampleRate(facade),
+        samplePairs,
+        samples,
+      };
+    } finally {
+      try {
+        await this.ensureStreamSuccess(await facade.streamStop("audio"), "stop audio stream");
+      } catch (error) {
+        stopError = error instanceof Error ? error : new Error(String(error));
+      }
+      socket.close();
+      if (stopError) {
+        throw stopError;
+      }
+    }
+  }
+
+  private async getC64uAudioSampleRate(facade: C64Facade): Promise<number> {
+    try {
+      const response = await facade.configGet("Video", "Mode");
+      const raw = (response as { value?: unknown })?.value ?? response;
+      const mode = typeof raw === "string" ? raw.trim().toUpperCase() : "";
+      if (mode.includes("NTSC")) {
+        return C64U_NTSC_AUDIO_SAMPLE_RATE;
+      }
+    } catch {
+      // Fall back to PAL below.
+    }
+    return C64U_PAL_AUDIO_SAMPLE_RATE;
+  }
+
+  private async resolveLocalCaptureAddress(remoteHost: string): Promise<string> {
+    const socket = createSocket("udp4");
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once("error", reject);
+        socket.connect(64, remoteHost, () => {
+          socket.off("error", reject);
+          resolve();
+        });
+      });
+      const address = socket.address();
+      if (typeof address === "object" && address.address) {
+        return address.address;
+      }
+    } catch {
+      // Fall back below.
+    } finally {
+      socket.close();
+    }
+    return "127.0.0.1";
+  }
+
+  private async bindCaptureSocket(socket: Socket, bindAddress: string): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      socket.once("error", reject);
+      socket.bind(0, bindAddress, () => {
+        socket.off("error", reject);
+        resolve();
+      });
+    });
+  }
+
+  private socketEndpoint(socket: Socket, bindAddress: string): string {
+    const address = socket.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Unable to determine UDP capture socket endpoint");
+    }
+    return `${bindAddress}:${address.port}`;
+  }
+
+  private async ensureStreamSuccess(result: RunBasicResult, action: string): Promise<void> {
+    if (result.success) {
+      return;
+    }
+    throw new Error(`Failed to ${action}: ${JSON.stringify(result.details ?? null)}`);
+  }
+
+  private normaliseViceDisplaySnapshot(snapshot: {
+    readonly debugWidth: number;
+    readonly debugHeight: number;
+    readonly offsetX?: number;
+    readonly offsetY?: number;
+    readonly innerWidth?: number;
+    readonly innerHeight?: number;
+    readonly bitsPerPixel: number;
+    readonly pixels: Uint8Array | Buffer;
+  }): CapturedFrame {
+    const bytesPerPixel = snapshot.bitsPerPixel > 0 && snapshot.bitsPerPixel % 8 === 0
+      ? snapshot.bitsPerPixel / 8
+      : 0;
+    const pixels = Uint8Array.from(snapshot.pixels);
+    const innerWidth = typeof snapshot.innerWidth === "number" && snapshot.innerWidth > 0
+      ? snapshot.innerWidth
+      : snapshot.debugWidth;
+    const innerHeight = typeof snapshot.innerHeight === "number" && snapshot.innerHeight > 0
+      ? snapshot.innerHeight
+      : snapshot.debugHeight;
+    const offsetX = Math.max(0, snapshot.offsetX ?? 0);
+    const offsetY = Math.max(0, snapshot.offsetY ?? 0);
+
+    const canCrop = bytesPerPixel > 0
+      && snapshot.debugWidth > 0
+      && snapshot.debugHeight > 0
+      && pixels.length >= snapshot.debugWidth * snapshot.debugHeight * bytesPerPixel
+      && offsetX + innerWidth <= snapshot.debugWidth
+      && offsetY + innerHeight <= snapshot.debugHeight;
+
+    if (!canCrop) {
+      return {
+        frameNumber: null,
+        width: snapshot.debugWidth,
+        height: snapshot.debugHeight,
+        bitsPerPixel: snapshot.bitsPerPixel,
+        pixels,
+        complete: true,
+      };
+    }
+
+    const rowStride = snapshot.debugWidth * bytesPerPixel;
+    const croppedRowStride = innerWidth * bytesPerPixel;
+    const cropped = new Uint8Array(croppedRowStride * innerHeight);
+    for (let row = 0; row < innerHeight; row += 1) {
+      const sourceStart = ((offsetY + row) * rowStride) + (offsetX * bytesPerPixel);
+      const sourceEnd = sourceStart + croppedRowStride;
+      cropped.set(pixels.subarray(sourceStart, sourceEnd), row * croppedRowStride);
+    }
+
+    return {
+      frameNumber: null,
+      width: innerWidth,
+      height: innerHeight,
+      bitsPerPixel: snapshot.bitsPerPixel,
+      pixels: cropped,
+      complete: true,
+    };
   }
 
   /**
@@ -778,10 +1104,6 @@ export class C64Client {
 
     async viceStepReturn(): Promise<void> {
       await this.withViceMonitor((client) => client.stepReturn());
-    }
-
-    async viceDisplayGet(options?: { readonly alternateCanvas?: boolean; readonly format?: number }): Promise<ViceDisplaySnapshot> {
-      return this.withViceMonitor((client) => client.displayGet(options));
     }
 
     async viceResourceGet(name: string): Promise<ViceResourceValue> {

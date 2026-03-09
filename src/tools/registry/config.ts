@@ -277,6 +277,14 @@ export const configModuleGroup = defineToolModule({
         write_debugreg: ["c64u"],
         shuffle: ["c64u"],
       },
+      operationToolNames: {
+        load_flash: "config_load_from_flash",
+        save_flash: "config_save_to_flash",
+        reset_defaults: "config_reset_to_default",
+        read_debugreg: "debugreg_read",
+        write_debugreg: "debugreg_write",
+        shuffle: "program_shuffle",
+      },
       examples: [
         {
           name: "List categories",

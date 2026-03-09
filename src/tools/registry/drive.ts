@@ -87,6 +87,7 @@ export const driveModuleGroup = defineToolModule({
       }),
       tags: ["drive", "hardware", "grouped"],
       operationPlatforms: { load_rom: ["c64u"] },
+      operationToolNames: { load_rom: "drive_load_rom" },
       examples: [
         {
           name: "Power on drive",

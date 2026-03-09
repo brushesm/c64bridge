@@ -10,6 +10,7 @@ const DEFAULT_TARGET = "mock";
 const DEFAULT_PLATFORM = "c64u";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaultEmbeddingsDir = path.join(repoRoot, "artifacts", "test-embeddings");
+const defaultTestFiles = listRepoTestFiles(path.join(repoRoot, "test"));
 
 let target = DEFAULT_TARGET;
 let platform: "c64u" | "vice" = DEFAULT_PLATFORM;
@@ -102,7 +103,7 @@ const cmd = [
         "--coverage-reporter=text",
       ]
     : []),
-  ...passthrough,
+  ...(passthrough.length > 0 ? passthrough : defaultTestFiles),
 ];
 const bunRuntime = (globalThis as { Bun?: any }).Bun;
 if (!bunRuntime || typeof bunRuntime.spawn !== "function") {
@@ -193,6 +194,28 @@ function normalizeTarget(value: string): "mock" | "device" {
     return "device";
   }
   return "mock";
+}
+
+function listRepoTestFiles(testRoot: string): string[] {
+  const files: string[] = [];
+
+  function walk(dir: string): void {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(fullPath);
+        continue;
+      }
+      if (entry.isFile() && /\.test\.(mjs|ts)$/i.test(entry.name)) {
+        files.push(path.relative(repoRoot, fullPath));
+      }
+    }
+  }
+
+  walk(testRoot);
+  files.sort((a, b) => a.localeCompare(b));
+  return files;
 }
 
 function resolveBaseUrlFromConfig(): string | null {

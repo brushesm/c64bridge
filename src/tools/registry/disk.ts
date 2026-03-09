@@ -363,6 +363,11 @@ export const diskModuleGroup = defineToolModule({
       }),
       tags: ["storage", "drive", "grouped"],
       operationPlatforms: { file_info: ["c64u"], create_image: ["c64u"], find_and_run: ["c64u"] },
+      operationToolNames: {
+        file_info: "file_info",
+        create_image: "create_image",
+        find_and_run: "find_and_run_program_by_name",
+      },
       examples: [
         {
           name: "Mount image with verification",

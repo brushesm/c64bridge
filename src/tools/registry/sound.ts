@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import {
   createOperationDispatcher,
   defineToolModule,
@@ -5,6 +6,13 @@ import {
 } from "../types.js";
 import { audioModule } from "../audio.js";
 import { metaModule } from "../meta/index.js";
+import {
+  literalSchema,
+  numberSchema,
+  objectSchema,
+  optionalSchema,
+  stringSchema,
+} from "../schema.js";
 import {
   buildDescriptorIndex,
   ensureDescriptor,
@@ -14,11 +22,86 @@ import {
   type GroupedOperationConfig,
   type GenericOperationMap,
 } from "./utils.js";
+import {
+  ToolError,
+  toolErrorResult,
+  unknownErrorResult,
+} from "../errors.js";
+import { jsonResult } from "../responses.js";
 
 const audioDescriptorIndex = buildDescriptorIndex(audioModule);
 const metaDescriptorIndex = buildDescriptorIndex(metaModule);
 
+const captureSamplesArgsSchema = objectSchema({
+  description: "Capture raw stereo PCM samples from the C64 Ultimate audio UDP stream.",
+  properties: {
+    op: literalSchema("capture_samples"),
+    count: optionalSchema(numberSchema({
+      description: "Number of stereo sample pairs to capture.",
+      integer: true,
+      minimum: 1,
+      maximum: 65536,
+      default: 256,
+    }), 256),
+    encoding: optionalSchema(stringSchema({
+      description: "Encoding used for the PCM sample payload.",
+      enum: ["base64", "hex"],
+      default: "base64",
+    }), "base64"),
+  },
+  required: ["op"],
+  additionalProperties: false,
+});
+
 const soundOperations: GroupedOperationConfig[] = [
+  {
+    op: "capture_samples",
+    schema: captureSamplesArgsSchema.jsonSchema,
+    handler: async (rawArgs, ctx) => {
+      try {
+        const parsed = captureSamplesArgsSchema.parse(rawArgs);
+        ctx.logger.info("Capturing audio samples", {
+          count: parsed.count,
+          encoding: parsed.encoding,
+        });
+
+        const capture = await ctx.client.captureSamples({ count: parsed.count });
+        const samplesBuffer = Buffer.from(
+          capture.samples.buffer,
+          capture.samples.byteOffset,
+          capture.samples.byteLength,
+        );
+
+        return jsonResult(
+          {
+            backend: capture.backend,
+            channels: capture.channels,
+            sampleRateHz: capture.sampleRateHz,
+            samplePairs: capture.samplePairs,
+            byteLength: samplesBuffer.length,
+            samples: {
+              encoding: parsed.encoding,
+              data: parsed.encoding === "hex"
+                ? samplesBuffer.toString("hex")
+                : samplesBuffer.toString("base64"),
+            },
+          },
+          {
+            success: true,
+            backend: capture.backend,
+            samplePairs: capture.samplePairs,
+            sampleRateHz: capture.sampleRateHz,
+            channels: capture.channels,
+          },
+        );
+      } catch (error) {
+        if (error instanceof ToolError) {
+          return toolErrorResult(error);
+        }
+        return unknownErrorResult(error);
+      }
+    },
+  },
   {
     op: "set_volume",
     schema: extendSchemaWithOp(
@@ -153,13 +236,26 @@ export const soundModuleGroup = defineToolModule({
       }),
       tags: ["sid", "audio", "grouped"],
       operationPlatforms: {
+        capture_samples: ["c64u"],
         play_sid_file: ["c64u"],
         play_mod_file: ["c64u"],
         pipeline: ["c64u"],
         analyze: ["c64u"],
         record_analyze: ["c64u"],
       },
+      operationToolNames: {
+        play_sid_file: "sidplay_file",
+        play_mod_file: "modplay_file",
+        pipeline: "music_compile_play_analyze",
+        analyze: "analyze_audio",
+        record_analyze: "record_and_analyze_audio",
+      },
       examples: [
+        {
+          name: "Capture samples",
+          description: "Grab 256 stereo sample pairs from the Ultimate audio stream",
+          arguments: { op: "capture_samples" },
+        },
         {
           name: "Trigger SID voice",
           description: "Start voice 1 on C4 with a triangle waveform",

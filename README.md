@@ -124,6 +124,9 @@ Use this for VICE:
 }
 ```
 
+> [!NOTE]
+> VICE supports only the operations marked with a VICE checkmark in the [MCP API Reference](#mcp-api-reference). All others return `unsupported_platform`.
+
 ## VS Code MCP Setup
 
 If this repository is checked out locally, simply open the prepared [.vscode/mcp.json](./.vscode/mcp.json). Otherwise, put the following text in your `.vscode/mcp.json`:
@@ -224,7 +227,8 @@ curl -s -X POST -H 'Content-Type: application/json' \
 - `npm run build` — type‑check and build
 - `npm test` — integration tests (mock)
 - `npm test -- --real` — target real hardware (reuses your config)
-- `npm run coverage` — coverage via Bun harness (minimum 90%)
+- `npm run coverage` — merged coverage across `c64u/mock`, `vice/mock`, and `vice/device` (emits `coverage/lcov.info`)
+- `npm run coverage:single -- --platform=c64u --target=mock` — one-leg Bun coverage when you only want a focused local report
 
 ## Documentation
 
@@ -330,6 +334,7 @@ Grouped entry point for PETSCII art, sprite previews, and future bitmap generati
 
 | Operation | Description | Required Inputs | Notes | C64U | VICE |
 | --- | --- | --- | --- | --- | --- |
+| `capture_frame` | Capture one or more complete video frames from the active backend. | — | — | ✅ | ✅ |
 | `create_petscii` | Generate PETSCII art from prompts, text, or explicit bitmap data. | — | — | ✅ | ✅ |
 | `generate_bitmap` | Reserved high-resolution bitmap generator (coming soon). | — | — | ✅ | ✅ |
 | `generate_sprite` | Build and run a sprite PRG from raw 63-byte sprite data. | `sprite` | — | ✅ | ✅ |
@@ -386,6 +391,7 @@ Grouped entry point for SID control, playback, composition, and analysis workflo
 | Operation | Description | Required Inputs | Notes | C64U | VICE |
 | --- | --- | --- | --- | --- | --- |
 | `analyze` | Automatically analyze SID playback when verification is requested. | `request` | — | ✅ |  |
+| `capture_samples` | Capture raw stereo PCM samples from the C64 Ultimate audio UDP stream. | — | — | ✅ |  |
 | `compile_play` | Compile SIDWAVE or CPG source and optionally play it immediately. | — | — | ✅ | ✅ |
 | `generate` | Generate a lightweight SID arpeggio playback sequence. | — | — | ✅ | ✅ |
 | `note_off` | Release a SID voice by clearing its gate bit. | `voice` | — | ✅ | ✅ |
@@ -426,11 +432,10 @@ Grouped entry point for power, reset, menu, and background task control.
 
 #### c64_vice
 
-Grouped entry point for VICE emulator display capture and resource access.
+Grouped entry point for reading and updating selected VICE resources.
 
 | Operation | Description | Required Inputs | Notes | C64U | VICE |
 | --- | --- | --- | --- | --- | --- |
-| `display_get` | Capture the emulator display buffer and metadata. | — | — |  | ✅ |
 | `resource_get` | Read a VICE configuration resource (safe prefixes only). | `name` | — |  | ✅ |
 | `resource_set` | Write a VICE configuration resource (safe prefixes only). | `name`, `value` | — |  | ✅ |
 

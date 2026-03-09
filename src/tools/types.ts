@@ -214,6 +214,7 @@ export interface ToolDefinition {
   readonly prerequisites?: readonly string[];
   readonly supportedPlatforms?: readonly PlatformId[];
   readonly operationPlatforms?: Record<string, readonly PlatformId[]>;
+  readonly operationToolNames?: Record<string, string>;
   readonly execute: (args: unknown, ctx: ToolExecutionContext) => Promise<ToolRunResult>;
 }
 
@@ -310,11 +311,11 @@ export function defineToolModule(config: ToolModuleConfig): ToolModule {
         throw new Error(`Unknown tool: ${name}`);
       }
 
-      const platforms = mergePlatforms(defaultPlatforms, tool.supportedPlatforms) ?? defaultPlatforms;
+      const platforms = resolveSupportedPlatforms(tool, args, defaultPlatforms);
       const status = ctx.platform ?? getPlatformStatus();
       const setter = ctx.setPlatform ?? setPlatform;
       if (!isPlatformSupported(status.id, platforms)) {
-        throw new ToolUnsupportedPlatformError(name, status.id, platforms);
+        throw new ToolUnsupportedPlatformError(resolveUnsupportedToolName(name, tool, args), status.id, platforms);
       }
 
       const enrichedCtx: ToolExecutionContext = {
@@ -326,6 +327,48 @@ export function defineToolModule(config: ToolModuleConfig): ToolModule {
       return tool.execute(args, enrichedCtx);
     },
   };
+}
+
+function resolveSupportedPlatforms(
+  tool: ToolDefinition,
+  args: unknown,
+  defaultPlatforms: readonly PlatformId[],
+): readonly PlatformId[] {
+  const basePlatforms = mergePlatforms(defaultPlatforms, tool.supportedPlatforms) ?? defaultPlatforms;
+  const operation = getSelectedOperation(args);
+  if (!operation) {
+    return basePlatforms;
+  }
+
+  const operationPlatforms = tool.operationPlatforms?.[operation];
+  return operationPlatforms && operationPlatforms.length > 0 ? operationPlatforms : basePlatforms;
+}
+
+function resolveUnsupportedToolName(
+  toolName: string,
+  tool: ToolDefinition,
+  args: unknown,
+): string {
+  const operation = getSelectedOperation(args);
+  if (!operation) {
+    return toolName;
+  }
+
+  const mappedName = tool.operationToolNames?.[operation];
+  if (mappedName) {
+    return mappedName;
+  }
+
+  return tool.operationPlatforms?.[operation] ? operation : toolName;
+}
+
+function getSelectedOperation(args: unknown): string | undefined {
+  if (typeof args !== "object" || args === null) {
+    return undefined;
+  }
+
+  const op = (args as Record<string, unknown>)[OPERATION_DISCRIMINATOR];
+  return typeof op === "string" && op.length > 0 ? op : undefined;
 }
 
 function mergeUnique(

@@ -574,6 +574,41 @@
         "oneOf": [
           {
             "type": "object",
+            "description": "Capture raw stereo PCM samples from the C64 Ultimate audio UDP stream.",
+            "properties": {
+              "op": {
+                "const": "capture_samples"
+              },
+              "count": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Number of stereo sample pairs to capture.",
+                "minimum": 1,
+                "maximum": 65536,
+                "default": 256
+              },
+              "encoding": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Encoding used for the PCM sample payload.",
+                "enum": [
+                  "base64",
+                  "hex"
+                ],
+                "default": "base64"
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
             "description": "Set the SID master volume register at $D418 (0-15).",
             "properties": {
               "volume": {
@@ -1118,6 +1153,13 @@
         ],
         "examples": [
           {
+            "name": "Capture samples",
+            "description": "Grab 256 stereo sample pairs from the Ultimate audio stream",
+            "arguments": {
+              "op": "capture_samples"
+            }
+          },
+          {
             "name": "Trigger SID voice",
             "description": "Start voice 1 on C4 with a triangle waveform",
             "arguments": {
@@ -1150,6 +1192,9 @@
           "vice"
         ],
         "operationPlatforms": {
+          "capture_samples": [
+            "c64u"
+          ],
           "play_sid_file": [
             "c64u"
           ],
@@ -1419,6 +1464,49 @@
         "oneOf": [
           {
             "type": "object",
+            "description": "Capture one or more complete video frames from the active backend.",
+            "properties": {
+              "op": {
+                "const": "capture_frame"
+              },
+              "count": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Number of frames to capture.",
+                "minimum": 1,
+                "maximum": 32,
+                "default": 1
+              },
+              "includePixels": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "Include pixel payload bytes in the response.",
+                "default": true
+              },
+              "encoding": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Encoding used for the pixel payload when included.",
+                "enum": [
+                  "base64",
+                  "hex"
+                ],
+                "default": "base64"
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
             "description": "Generate PETSCII art from prompts, text, or explicit bitmap data.",
             "properties": {
               "prompt": {
@@ -1660,6 +1748,13 @@
           "assembly-program"
         ],
         "examples": [
+          {
+            "name": "Capture one frame",
+            "description": "Grab the current framebuffer from the active backend",
+            "arguments": {
+              "op": "capture_frame"
+            }
+          },
           {
             "name": "Create PETSCII art (dry run)",
             "description": "Synthesize art without uploading to the C64",
@@ -3925,61 +4020,11 @@
     },
     {
       "name": "c64_vice",
-      "description": "Grouped entry point for VICE emulator display capture and resource access.",
+      "description": "Grouped entry point for reading and updating selected VICE resources.",
       "inputSchema": {
         "type": "object",
         "description": "VICE emulator operations available via the c64_vice tool.",
         "oneOf": [
-          {
-            "type": "object",
-            "description": "Capture the emulator display buffer and metadata.",
-            "properties": {
-              "op": {
-                "const": "display_get"
-              },
-              "alternateCanvas": {
-                "type": [
-                  "boolean",
-                  "null"
-                ],
-                "description": "When true, request the alternate canvas buffer instead of the primary.",
-                "default": false
-              },
-              "format": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "VICE display format byte (advanced usage, default 0).",
-                "minimum": 0,
-                "maximum": 255
-              },
-              "includePixels": {
-                "type": [
-                  "boolean",
-                  "null"
-                ],
-                "description": "Include raw pixel data in the response (default true).",
-                "default": true
-              },
-              "encoding": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "Encoding to use for pixel payload when included.",
-                "enum": [
-                  "base64",
-                  "hex"
-                ],
-                "default": "base64"
-              }
-            },
-            "required": [
-              "op"
-            ],
-            "additionalProperties": false
-          },
           {
             "type": "object",
             "description": "Read a VICE configuration resource (safe prefixes only).",
@@ -4041,10 +4086,9 @@
       },
       "metadata": {
         "domain": "vice",
-        "summary": "Captures the emulator framebuffer or reads/updates selected VICE resources.",
+        "summary": "Reads or updates selected VICE resources that are safe to expose through MCP.",
         "lifecycle": "request-response",
         "resources": [
-          "c64://specs/vic",
           "c64://specs/memory-map"
         ],
         "prompts": [
@@ -4052,13 +4096,6 @@
           "memory-debug"
         ],
         "examples": [
-          {
-            "name": "Capture display",
-            "description": "Grab the primary canvas and return raw pixels in base64.",
-            "arguments": {
-              "op": "display_get"
-            }
-          },
           {
             "name": "Read SID engine",
             "description": "Inspect the active SID emulation mode.",
@@ -4080,12 +4117,11 @@
         "tags": [
           "vice",
           "emulator",
-          "display",
           "resource",
           "grouped"
         ],
         "workflowHints": [
-          "Use emulator helpers when running on VICE to expose display buffers or tweak Sid/VIC settings.",
+          "Use emulator helpers when running on VICE to inspect or tweak safe runtime resources.",
           "Explain that resource changes only persist for the current emulator session unless saved in VICE manually."
         ],
         "platforms": [

@@ -369,8 +369,9 @@ export class ViceMockServer {
 
   private encodeDisplay(): Buffer {
     const pixels = Buffer.alloc(64, 0);
-    const header = Buffer.alloc(21);
-    header.writeUInt32LE(17, 0);
+    const header = Buffer.alloc(17);
+    const pixelLength = Buffer.alloc(4);
+    header.writeUInt32LE(13, 0);
     header.writeUInt16LE(320, 4);
     header.writeUInt16LE(200, 6);
     header.writeUInt16LE(0, 8);
@@ -378,8 +379,8 @@ export class ViceMockServer {
     header.writeUInt16LE(320, 12);
     header.writeUInt16LE(200, 14);
     header[16] = 8;
-    header.writeUInt32LE(pixels.length, 17);
-    return Buffer.concat([header, pixels]);
+    pixelLength.writeUInt32LE(pixels.length, 0);
+    return Buffer.concat([header, pixelLength, pixels]);
   }
 
   private applyRegisterWrites(body: Buffer): void {

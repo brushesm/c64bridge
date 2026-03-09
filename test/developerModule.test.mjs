@@ -297,7 +297,7 @@ if (isVice) {
   test("developer tools are unavailable on vice", async () => {
     const ctx = {
       client: {
-        async configsList() {
+        async configSaveToFlash() {
           throw new Error("should not run");
         },
       },
@@ -306,7 +306,7 @@ if (isVice) {
     };
 
     await assert.rejects(
-      () => developerModule.invoke("config_list", {}, ctx),
+      () => developerModule.invoke("config_save_to_flash", {}, ctx),
       (error) => error?.name === "ToolUnsupportedPlatformError",
     );
   });

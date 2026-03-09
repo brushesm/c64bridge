@@ -27,8 +27,10 @@ const PLATFORM_FEATURES: Record<PlatformId, { features: readonly string[]; limit
       "memory-io",
       "screen-capture",
       "system-control",
+      "drive-management",
+      "runtime-config",
     ],
-    limited: ["no-rest-api", "no-drive-management", "limited-sid"],
+    limited: ["no-rest-api", "no-firmware-filesystem", "no-flash-config", "limited-sid"],
   },
 };
 

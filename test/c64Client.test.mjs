@@ -25,11 +25,16 @@ async function writeMessageAt(client, baseAddress, message) {
 }
 
 const target = (process.env.C64_TEST_TARGET ?? "mock").toLowerCase();
+const platform = (process.env.C64_MODE ?? "c64u").toLowerCase();
 const injectedBaseUrl = process.env.C64_TEST_BASE_URL;
 
 test("C64Client against mock server", async (t) => {
   if (target !== "mock") {
     t.skip("mock target disabled");
+    return;
+  }
+  if (platform !== "c64u") {
+    t.skip("C64Client mock integration is only exercised on c64u");
     return;
   }
 
@@ -55,6 +60,32 @@ test("C64Client against mock server", async (t) => {
     assert.equal(prg[6], 0x99);
     const finalMarker = prg.subarray(-2);
     assert.deepEqual(Array.from(finalMarker), [0x00, 0x00]);
+  });
+
+  await t.test("captureFrames reconstructs a complete streamed video frame", async () => {
+    const result = await client.captureFrames({ count: 1 });
+
+    assert.equal(result.backend, "c64u");
+    assert.equal(result.frames.length, 1);
+    assert.equal(result.frames[0].width, 384);
+    assert.equal(result.frames[0].height, 272);
+    assert.equal(result.frames[0].bitsPerPixel, 4);
+    assert.equal(result.frames[0].complete, true);
+    assert.equal(result.frames[0].pixels.length, 384 * 272);
+    assert.equal(mock.state.streams.video.active, false);
+    assert.ok(mock.state.streams.video.packetsSent >= 68);
+  });
+
+  await t.test("captureSamples collects stereo PCM pairs from streamed audio", async () => {
+    const result = await client.captureSamples({ count: 256 });
+
+    assert.equal(result.backend, "c64u");
+    assert.equal(result.channels, 2);
+    assert.equal(result.samplePairs, 256);
+    assert.equal(result.samples.length, 512);
+    assert.equal(result.sampleRateHz, 47982.8869047619);
+    assert.equal(mock.state.streams.audio.active, false);
+    assert.ok(mock.state.streams.audio.packetsSent >= 2);
   });
 
   await t.test("printTextOnPrinterAndRun generates Commodore BASIC and runs it", async () => {
@@ -326,6 +357,10 @@ test("C64Client against mock server", async (t) => {
 test("C64Client against real C64", async (t) => {
   if (target !== "real") {
     t.skip("real target disabled");
+    return;
+  }
+  if (platform !== "c64u") {
+    t.skip("C64Client real-hardware integration is only exercised on c64u");
     return;
   }
 

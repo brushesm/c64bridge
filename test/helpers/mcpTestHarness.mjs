@@ -17,6 +17,15 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "../..");
 const PLATFORM_RESOURCE_URI = "c64://platform/status";
 
+function parsePlatformStatusText(text) {
+  const match = String(text ?? "").match(/Current platform:\s*`([^`]+)`/i);
+  if (!match) {
+    return null;
+  }
+  const candidate = match[1].trim().toLowerCase();
+  return candidate === "vice" || candidate === "c64u" ? candidate : null;
+}
+
 function resolveNodeExecutable() {
   const candidates = [
     process.env.C64BRIDGE_TEST_NODE_BIN,
@@ -168,7 +177,8 @@ async function setupSharedServer() {
     await client.connect(transport);
 
     const toolSupport = new Map();
-    let activePlatform = (process.env.C64_MODE ?? "").toLowerCase() === "vice" ? "vice" : "c64u";
+    const configuredPlatform = (process.env.C64_MODE ?? "").toLowerCase() === "vice" ? "vice" : "c64u";
+    let activePlatform = configuredPlatform;
 
     try {
       const toolList = await client.request({ method: "tools/list", params: {} }, ListToolsResultSchema);
@@ -188,16 +198,21 @@ async function setupSharedServer() {
         { method: "resources/read", params: { uri: PLATFORM_RESOURCE_URI } },
         ReadResourceResultSchema,
       );
-      const text = resource.contents?.[0]?.text ?? "";
-      const match = text.match(/Current platform:\s*`([^`]+)`/i);
-      if (match) {
-        const candidate = match[1].trim().toLowerCase();
-        if (candidate === "vice" || candidate === "c64u") {
-          activePlatform = candidate;
-        }
-      }
+      activePlatform = parsePlatformStatusText(resource.contents?.[0]?.text ?? "") ?? configuredPlatform;
     } catch {
       // Resource fetch is best-effort; fall back to environment when unavailable.
+    }
+
+    async function getPlatform() {
+      try {
+        const resource = await client.request(
+          { method: "resources/read", params: { uri: PLATFORM_RESOURCE_URI } },
+          ReadResourceResultSchema,
+        );
+        return parsePlatformStatusText(resource.contents?.[0]?.text ?? "") ?? activePlatform;
+      } catch {
+        return activePlatform;
+      }
     }
 
     let shutdownStarted = false;
@@ -242,6 +257,7 @@ async function setupSharedServer() {
       stderrOutput,
       shutdown,
       platform: activePlatform,
+      getPlatform,
       toolSupport,
       isToolSupported(toolName, targetPlatform = activePlatform) {
         const normalizedPlatform = targetPlatform === "vice" ? "vice" : "c64u";
@@ -317,13 +333,18 @@ export function withSharedMcpClient(callback) {
   const current = executionQueue.then(async () => {
     const harness = await ensureHarness();
     harness.mockServer.reset?.();
+    const platform = typeof harness.getPlatform === "function"
+      ? await harness.getPlatform()
+      : harness.platform;
     try {
       return await callback({
         client: harness.client,
         mockServer: harness.mockServer,
         stderrOutput: harness.stderrOutput,
-        platform: harness.platform,
-        isToolSupported: harness.isToolSupported,
+        platform,
+        isToolSupported(toolName) {
+          return harness.isToolSupported(toolName, platform);
+        },
       });
     } finally {
       const logs = harness.stderrOutput();

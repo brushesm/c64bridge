@@ -21,11 +21,11 @@ export interface ViceProcessHandle {
 
 const DEFAULT_DISPLAY = ":99";
 
-function delay(ms: number): Promise<void> {
+export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function shouldUseXvfb(visible: boolean | undefined): { useXvfb: boolean; display: string } {
+export function shouldUseXvfb(visible: boolean | undefined): { useXvfb: boolean; display: string } {
   if (visible) return { useXvfb: false, display: process.env.DISPLAY ?? DEFAULT_DISPLAY };
   if (process.env.DISABLE_XVFB === "1") {
     return { useXvfb: false, display: process.env.DISPLAY ?? DEFAULT_DISPLAY };
@@ -43,7 +43,7 @@ function shouldUseXvfb(visible: boolean | undefined): { useXvfb: boolean; displa
   return { useXvfb: false, display: process.env.DISPLAY };
 }
 
-async function waitForPort(host: string, port: number, timeoutMs = 4000): Promise<void> {
+export async function waitForPort(host: string, port: number, timeoutMs = 4000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
@@ -65,7 +65,7 @@ async function waitForPort(host: string, port: number, timeoutMs = 4000): Promis
   throw new Error(`Timeout waiting for VICE monitor at ${host}:${port}`);
 }
 
-function waitForExit(child: ChildProcess, timeoutMs: number): Promise<void> {
+export function waitForExit(child: ChildProcess, timeoutMs: number): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
@@ -80,7 +80,7 @@ function waitForExit(child: ChildProcess, timeoutMs: number): Promise<void> {
   });
 }
 
-async function terminateProcess(child: ChildProcess | null, signal: NodeJS.Signals = "SIGTERM", timeoutMs = 1000): Promise<void> {
+export async function terminateProcess(child: ChildProcess | null, signal: NodeJS.Signals = "SIGTERM", timeoutMs = 1000): Promise<void> {
   if (!child) return;
   if (child.exitCode !== null || child.signalCode !== null) return;
   try { child.kill(signal); } catch {}
@@ -199,7 +199,7 @@ export async function startViceProcess(options: ViceProcessOptions): Promise<Vic
   return { host: options.host, port: options.port, process: child, stop };
 }
 
-function ensureXvfbSocketDir(debugEnabled: boolean): void {
+export function ensureXvfbSocketDir(debugEnabled: boolean): void {
   const socketDir = "/tmp/.X11-unix";
   try {
     if (!fs.existsSync(socketDir)) {

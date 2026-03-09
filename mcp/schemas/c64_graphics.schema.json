@@ -4,6 +4,49 @@
   "oneOf": [
     {
       "type": "object",
+      "description": "Capture one or more complete video frames from the active backend.",
+      "properties": {
+        "op": {
+          "const": "capture_frame"
+        },
+        "count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Number of frames to capture.",
+          "minimum": 1,
+          "maximum": 32,
+          "default": 1
+        },
+        "includePixels": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Include pixel payload bytes in the response.",
+          "default": true
+        },
+        "encoding": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Encoding used for the pixel payload when included.",
+          "enum": [
+            "base64",
+            "hex"
+          ],
+          "default": "base64"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
       "description": "Generate PETSCII art from prompts, text, or explicit bitmap data.",
       "properties": {
         "prompt": {

@@ -7,8 +7,9 @@ import {
   operationSchema,
   discriminatedUnionSchema,
   createOperationDispatcher,
+  defineToolModule,
 } from "../src/tools/types.ts";
-import { ToolValidationError } from "../src/tools/errors.ts";
+import { ToolUnsupportedPlatformError, ToolValidationError } from "../src/tools/errors.ts";
 
 const stubStatus = Object.freeze({ id: "c64u", features: [], limitedFeatures: [] });
 
@@ -165,5 +166,85 @@ test("createOperationDispatcher rejects unknown ops", async () => {
       assert.deepEqual(error.details?.allowed, ["read", "write"]);
       return true;
     },
+  );
+});
+
+test("defineToolModule enforces operation-specific platforms before grouped execution", async () => {
+  let executed = false;
+
+  const module = defineToolModule({
+    domain: "test",
+    summary: "test module",
+    supportedPlatforms: ["c64u", "vice"],
+    tools: [
+      {
+        name: "c64_test",
+        description: "test grouped tool",
+        operationPlatforms: {
+          restricted: ["c64u"],
+        },
+        operationToolNames: {
+          restricted: "legacy_restricted_tool",
+        },
+        execute: async () => {
+          executed = true;
+          return { content: [{ type: "text", text: "ok" }] };
+        },
+      },
+    ],
+  });
+
+  await assert.rejects(
+    () => module.invoke("c64_test", { op: "restricted" }, {
+      ...stubCtx,
+      platform: { id: "vice", features: [], limitedFeatures: [] },
+      setPlatform() {
+        return { id: "vice", features: [], limitedFeatures: [] };
+      },
+    }),
+    (error) => {
+      assert.ok(error instanceof ToolUnsupportedPlatformError);
+      assert.equal(error.tool, "legacy_restricted_tool");
+      assert.equal(error.platform, "vice");
+      assert.deepEqual(error.supported, ["c64u"]);
+      return true;
+    },
+  );
+
+  assert.equal(executed, false);
+});
+
+test("defineToolModule falls back to tool-level platforms when no op override exists", async () => {
+  const calls = [];
+
+  const module = defineToolModule({
+    domain: "test",
+    summary: "test module",
+    supportedPlatforms: ["c64u"],
+    tools: [
+      {
+        name: "c64_test",
+        description: "test grouped tool",
+        execute: async (args) => {
+          calls.push(args);
+          return { content: [{ type: "text", text: "ok" }] };
+        },
+      },
+    ],
+  });
+
+  const result = await module.invoke("c64_test", { op: "allowed" }, stubCtx);
+  assert.equal(result.content[0].text, "ok");
+  assert.equal(calls.length, 1);
+
+  await assert.rejects(
+    () => module.invoke("c64_test", { op: "allowed" }, {
+      ...stubCtx,
+      platform: { id: "vice", features: [], limitedFeatures: [] },
+      setPlatform() {
+        return { id: "vice", features: [], limitedFeatures: [] };
+      },
+    }),
+    ToolUnsupportedPlatformError,
   );
 });

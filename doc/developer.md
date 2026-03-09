@@ -25,7 +25,7 @@ bun install          # faster workflow (respects package-lock)
 | Build + refresh generated docs | `npm run build` |
 | Tests (mock backend) | `npm test` |
 | Tests against hardware | `npm test -- --real [--base-url=http://host]` |
-| Coverage report | `npm run coverage` (emits `coverage/lcov.info`, minimum 90%) |
+| Coverage report | `npm run coverage` (merged matrix LCOV in `coverage/lcov.info`) |
 | End-to-end smoke (local/npm) | `npm run check:run-local` · `npm run check:run-npm` |
 | Node-only sanity | `npm run check:node-compat` |
 | VICE smoke (readiness + HELLO) | `npm run vice:smoke` |
@@ -43,6 +43,8 @@ bun install          # faster workflow (respects package-lock)
 | mixed | aggregate (no real c64u) | `npm run test:matrix` | see individual rows |
 
 The runner still accepts legacy flags (`--mock`, `--real`) for c64u workflows, but the explicit matrix keeps cross-platform runs symmetrical.
+
+`npm run coverage` executes the same three matrix legs, then merges the resulting LCOV reports while filtering to the same source scope configured in `.c8rc.json`. Use `npm run coverage:single -- --platform=... --target=...` for a one-leg Bun report when debugging a local coverage regression.
 
 > **Note**: Only suites that explicitly opt-in touch real hardware. Today that is `test/device.test.mjs` (real VICE via `target=device`) and the "C64Client against real C64" block in `test/c64Client.test.mjs` when `C64_TEST_TARGET=real`; all other tests continue to run against mocks even under a hardware matrix leg.
 
@@ -71,7 +73,9 @@ Subsequent `npm run build` invocations reuse the incremental cache stored in `di
 
 ## 5. Configuration & Backends
 
-Resolution order: `C64BRIDGE_CONFIG` → `./.c64bridge.json` → `~/.c64bridge.json` → defaults (`host=c64u`, `port=80`). Supports hardware (`c64u`) and experimental VICE. For secured Ultimate firmware, set `c64u.networkPassword` in the config file to send `X-Password` on every REST request.
+Resolution order: `C64BRIDGE_CONFIG` → `./.c64bridge.json` → `~/.c64bridge.json` → defaults (`host=c64u`, `port=80`). Supports hardware (`c64u`) and phase-one VICE. For secured Ultimate firmware, set `c64u.networkPassword` in the config file to send `X-Password` on every REST request.
+
+The authoritative VICE contract lives in [doc/vice/support-matrix.md](vice/support-matrix.md). Treat that file plus the generated README compatibility tables as release-blocking artifacts: if runtime, tests, and docs disagree, the contract is broken.
 
 Key env flags:
 
@@ -81,6 +85,8 @@ Key env flags:
 - `VICE_TEST_TARGET=mock|vice` — test selection for VICE (default: auto-detect real VICE; set `mock` to run against the BM stub during tests)
 
 Managed VICE launch is currently Linux/X11-oriented. The launcher and smoke workflow assume Unix facilities such as `Xvfb`, `/tmp/.X11-unix`, and `/dev/null`; on other hosts, connect to an already running Binary Monitor endpoint or use the mock backend instead of assuming supervised startup will work.
+
+Public VICE support excludes mock-only behaviors. If a capability only works in the BM stub or an internal backend experiment, keep it out of grouped tool support tables until it is explicitly promoted in [doc/vice/support-matrix.md](vice/support-matrix.md).
 
 ## 6. RAG Maintenance
 

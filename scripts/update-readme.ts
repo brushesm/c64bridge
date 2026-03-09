@@ -19,7 +19,7 @@ function escapeCell(value: string): string {
   return value.replace(/\|/g, "\\|").replace(/\r?\n|\r/g, " ").trim();
 }
 
-function renderTable(headers: readonly string[], rows: readonly (readonly string[])[]): string {
+export function renderTable(headers: readonly string[], rows: readonly (readonly string[])[]): string {
   const headerLine = `| ${headers.join(" | ")} |`;
   const separator = `| ${headers.map(() => "---").join(" | ")} |`;
   const body = rows.map((row) => `| ${row.join(" | ")} |`).join("\n");

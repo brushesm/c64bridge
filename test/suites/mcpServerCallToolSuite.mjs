@@ -236,8 +236,12 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
         path: "/roms/custom.rom",
       });
 
-      assert.equal(romResult.metadata?.success, true, "load_rom operation should succeed");
-      assert.equal(mockServer.state.drives.drive8.lastRom, "/roms/custom.rom");
+      if (ctx.platform === "vice") {
+        assertUnsupportedOperation(romResult, ctx.platform, "drive_load_rom");
+      } else {
+        assert.equal(romResult.metadata?.success, true, "load_rom operation should succeed");
+        assert.equal(mockServer.state.drives.drive8.lastRom, "/roms/custom.rom");
+      }
 
       const { result: removeResult } = await callTool(ctx, "c64_disk", {
         op: "unmount",
@@ -252,8 +256,12 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
         path: "/tmp/demo.d64",
       });
 
-      assert.equal(infoResult.metadata?.success, true, "file_info operation should succeed");
-      assert.equal(mockServer.state.lastFileInfo, "/tmp/demo.d64");
+      if (ctx.platform === "vice") {
+        assertUnsupportedOperation(infoResult, ctx.platform, "file_info");
+      } else {
+        assert.equal(infoResult.metadata?.success, true, "file_info operation should succeed");
+        assert.equal(mockServer.state.lastFileInfo, "/tmp/demo.d64");
+      }
 
       const { result: createD64Result } = await callTool(ctx, "c64_disk", {
         op: "create_image",
@@ -262,6 +270,11 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
         tracks: 35,
         diskname: "DISK1",
       });
+
+      if (ctx.platform === "vice") {
+        assertUnsupportedOperation(createD64Result, ctx.platform, "create_image");
+        return;
+      }
 
       assert.equal(createD64Result.metadata?.success, true, "create_image (d64) should succeed");
 
@@ -295,6 +308,113 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
       assert.equal(mockServer.state.createdImages.length, 4, "All disk creations should be tracked");
       const createdTypes = mockServer.state.createdImages.map((entry) => entry.type).sort();
       assert.deepEqual(createdTypes, ["d64", "d71", "d81", "dnp"], "Disk creation types should match requests");
+    });
+  });
+
+  test("c64_program grouped platform restrictions are enforced via MCP", async () => {
+    await withSharedMcpClient(async (ctx) => {
+      const { result: loadResult, supported } = await callTool(ctx, "c64_program", {
+        op: "load_prg",
+        path: "//USB0/demo.prg",
+      });
+
+      if (!supported) {
+        return;
+      }
+
+      const { result: crtResult } = await callTool(ctx, "c64_program", {
+        op: "run_crt",
+        path: "//USB0/demo.crt",
+      });
+
+      if (ctx.platform !== "vice") {
+        return;
+      }
+
+      assertUnsupportedOperation(loadResult, ctx.platform, "load_prg");
+      assertUnsupportedOperation(crtResult, ctx.platform, "run_crt");
+    });
+  });
+
+  test("c64_sound grouped platform restrictions are enforced via MCP", async () => {
+    await withSharedMcpClient(async (ctx) => {
+      const { result: sidResult, supported } = await callTool(ctx, "c64_sound", {
+        op: "play_sid_file",
+        path: "//USB0/demo.sid",
+      });
+
+      if (!supported) {
+        return;
+      }
+
+      const { result: modResult } = await callTool(ctx, "c64_sound", {
+        op: "play_mod_file",
+        path: "//USB0/demo.mod",
+      });
+
+      if (ctx.platform !== "vice") {
+        return;
+      }
+
+      assertUnsupportedOperation(sidResult, ctx.platform, "sidplay_file");
+      assertUnsupportedOperation(modResult, ctx.platform, "modplay_file");
+    });
+  });
+
+  test("c64_graphics capture_frame returns normalized frame data via MCP", async () => {
+    await withSharedMcpClient(async (ctx) => {
+      const { result, supported } = await callTool(ctx, "c64_graphics", {
+        op: "capture_frame",
+      });
+
+      if (!supported) {
+        return;
+      }
+
+      assert.equal(result.metadata?.success, true, "capture_frame should succeed");
+      assert.equal(result.structuredContent?.type, "json");
+      const frame = result.structuredContent?.data?.frames?.[0];
+      assert.ok(frame, "capture_frame should return at least one frame");
+      assert.ok(frame.complete, "captured frame should be complete");
+      assert.ok(frame.byteLength > 0, "captured frame should include bytes");
+
+      if (ctx.platform === "vice") {
+        assert.equal(result.structuredContent?.data?.backend, "vice");
+        assert.equal(frame.width, 320);
+        assert.equal(frame.height, 200);
+      } else {
+        assert.equal(result.structuredContent?.data?.backend, "c64u");
+        assert.equal(frame.width, 384);
+        assert.equal(frame.height, 272);
+        assert.equal(ctx.mockServer.state.streams.video.active, false);
+        assert.ok(ctx.mockServer.state.streams.video.packetsSent >= 68);
+      }
+    });
+  });
+
+  test("c64_sound capture_samples returns streamed PCM data via MCP", async () => {
+    await withSharedMcpClient(async (ctx) => {
+      const { result, supported } = await callTool(ctx, "c64_sound", {
+        op: "capture_samples",
+      });
+
+      if (!supported) {
+        return;
+      }
+
+      if (ctx.platform === "vice") {
+        assertUnsupportedOperation(result, ctx.platform, "capture_samples");
+        return;
+      }
+
+      assert.equal(result.metadata?.success, true, "capture_samples should succeed");
+      assert.equal(result.structuredContent?.type, "json");
+      assert.equal(result.structuredContent?.data?.backend, "c64u");
+      assert.equal(result.structuredContent?.data?.samplePairs, 256);
+      assert.equal(result.structuredContent?.data?.channels, 2);
+      assert.equal(result.structuredContent?.data?.samples?.encoding, "base64");
+      assert.equal(ctx.mockServer.state.streams.audio.active, false);
+      assert.ok(ctx.mockServer.state.streams.audio.packetsSent >= 2);
     });
   });
 
@@ -429,4 +549,3 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
   });
 
 }
-

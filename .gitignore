@@ -19,3 +19,5 @@ node_modules/
 publish/
 test/tmp/
 tmp/
+c64commander
+c64commander/

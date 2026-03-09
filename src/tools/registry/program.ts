@@ -3,7 +3,7 @@ import {
   defineToolModule,
   discriminatedUnionSchema,
 } from "../types.js";
-import { programRunnersModule, programOperationHandlers as groupedProgramHandlers } from "../programRunners.js";
+import { programRunnersModule } from "../programRunners.js";
 import { metaModule } from "../meta/index.js";
 import {
   buildDescriptorIndex,
@@ -26,7 +26,7 @@ const programOperations: GroupedOperationConfig[] = [
       ensureDescriptor(programDescriptorIndex, "load_prg").inputSchema,
       { description: "Load a PRG from Ultimate storage without executing it." },
     ),
-    handler: groupedProgramHandlers.load_prg,
+    handler: async (rawArgs, ctx) => invokeModuleTool(programRunnersModule, "load_prg", rawArgs, ctx),
   },
   {
     op: "run_prg",
@@ -35,7 +35,7 @@ const programOperations: GroupedOperationConfig[] = [
       ensureDescriptor(programDescriptorIndex, "run_prg").inputSchema,
       { description: "Load and execute a PRG from Ultimate-visible storage on c64u or a host-local path on VICE." },
     ),
-    handler: groupedProgramHandlers.run_prg,
+    handler: async (rawArgs, ctx) => invokeModuleTool(programRunnersModule, "run_prg", rawArgs, ctx),
   },
   {
     op: "run_crt",
@@ -44,7 +44,7 @@ const programOperations: GroupedOperationConfig[] = [
       ensureDescriptor(programDescriptorIndex, "run_crt").inputSchema,
       { description: "Mount and run a CRT cartridge image." },
     ),
-    handler: groupedProgramHandlers.run_crt,
+    handler: async (rawArgs, ctx) => invokeModuleTool(programRunnersModule, "run_crt", rawArgs, ctx),
   },
   {
     op: "upload_run_basic",
@@ -53,7 +53,7 @@ const programOperations: GroupedOperationConfig[] = [
       ensureDescriptor(programDescriptorIndex, "upload_run_basic").inputSchema,
       { description: "Upload Commodore BASIC v2 source and execute it immediately." },
     ),
-    handler: groupedProgramHandlers.upload_run_basic,
+    handler: async (rawArgs, ctx) => invokeModuleTool(programRunnersModule, "upload_run_basic", rawArgs, ctx),
   },
   {
     op: "upload_run_asm",
@@ -62,7 +62,7 @@ const programOperations: GroupedOperationConfig[] = [
       ensureDescriptor(programDescriptorIndex, "upload_run_asm").inputSchema,
       { description: "Assemble 6502/6510 source, upload the PRG, and execute it." },
     ),
-    handler: groupedProgramHandlers.upload_run_asm,
+    handler: async (rawArgs, ctx) => invokeModuleTool(programRunnersModule, "upload_run_asm", rawArgs, ctx),
   },
   {
     op: "batch_run",
@@ -108,6 +108,11 @@ export const programModule = defineToolModule({
       }),
       tags: ["programs", "execution", "grouped"],
       operationPlatforms: { load_prg: ["c64u"], run_crt: ["c64u"], bundle_run: ["c64u"] },
+      operationToolNames: {
+        load_prg: "load_prg",
+        run_crt: "run_crt",
+        bundle_run: "bundle_run_artifacts",
+      },
       examples: [
         {
           name: "Run PRG from storage",

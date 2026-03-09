@@ -4,6 +4,41 @@
   "oneOf": [
     {
       "type": "object",
+      "description": "Capture raw stereo PCM samples from the C64 Ultimate audio UDP stream.",
+      "properties": {
+        "op": {
+          "const": "capture_samples"
+        },
+        "count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Number of stereo sample pairs to capture.",
+          "minimum": 1,
+          "maximum": 65536,
+          "default": 256
+        },
+        "encoding": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Encoding used for the PCM sample payload.",
+          "enum": [
+            "base64",
+            "hex"
+          ],
+          "default": "base64"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
       "description": "Set the SID master volume register at $D418 (0-15).",
       "properties": {
         "volume": {

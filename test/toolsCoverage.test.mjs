@@ -57,6 +57,15 @@ const stubFacade = {
   async modplayFile() { return { success: true }; },
 };
 
+function createViceFacade(monitor) {
+  return {
+    type: "vice",
+    async withMonitor(fn) {
+      return fn(monitor);
+    },
+  };
+}
+
 function expectSuccess(result, message) {
   assert.ok(result && typeof result === "object", message ?? "expected object result");
   assert.equal(result.success, true, message ?? "expected success true");
@@ -164,5 +173,145 @@ test("C64Client MCP tool coverage", async (t) => {
     expectSuccess(await client.filesCreateD71("/tmp/disk.d71", { diskname: "DEMO" }), "create_d71");
     expectSuccess(await client.filesCreateD81("/tmp/disk.d81", { diskname: "DEMO" }), "create_d81");
     expectSuccess(await client.filesCreateDnp("/tmp/disk.dnp", 10, { diskname: "DEMO" }), "create_dnp");
+  });
+
+  await t.test("vice monitor wrappers", async () => {
+    const monitorCalls = [];
+    const monitor = {
+      async checkpointList() { monitorCalls.push("list"); return [{ id: 1 }]; },
+      async checkpointGet(id) { monitorCalls.push(["get", id]); return { id }; },
+      async checkpointCreate(payload) { monitorCalls.push(["create", payload]); return { id: 7, ...payload }; },
+      async checkpointDelete(id) { monitorCalls.push(["delete", id]); },
+      async checkpointToggle(id, enabled) { monitorCalls.push(["toggle", id, enabled]); },
+      async checkpointSetCondition(id, expression) { monitorCalls.push(["condition", id, expression]); },
+      async registersAvailable(memspace) { monitorCalls.push(["registersAvailable", memspace]); return [{ id: 0, name: "PC", bits: 16, size: 2 }]; },
+      async registersGet(memspace) { monitorCalls.push(["registersGet", memspace]); return [{ id: 0, size: 2, value: 0x0801 }]; },
+      async registersSet(writesArg, optionsArg) { monitorCalls.push(["registersSet", writesArg, optionsArg]); return [{ id: 0, size: 2, value: 0x0802 }]; },
+      async stepInstructions(count, optionsArg) { monitorCalls.push(["stepInstructions", count, optionsArg]); },
+      async stepReturn() { monitorCalls.push("stepReturn"); },
+      async displayGet(optionsArg) {
+        monitorCalls.push(["displayGet", optionsArg]);
+        const debugWidth = 6;
+        const debugHeight = 4;
+        const pixels = Uint8Array.from([
+          0, 1, 2, 3, 4, 5,
+          10, 11, 12, 13, 14, 15,
+          20, 21, 22, 23, 24, 25,
+          30, 31, 32, 33, 34, 35,
+        ]);
+        return {
+          debugWidth,
+          debugHeight,
+          offsetX: 1,
+          offsetY: 1,
+          innerWidth: 3,
+          innerHeight: 2,
+          bitsPerPixel: 8,
+          pixels,
+        };
+      },
+      async resourceGet(name) { monitorCalls.push(["resourceGet", name]); return { type: "string", value: "demo" }; },
+      async resourceSet(name, value) { monitorCalls.push(["resourceSet", name, value]); },
+    };
+
+    const viceClient = new C64Client("http://stub.local");
+    Reflect.set(viceClient, "facadePromise", Promise.resolve(createViceFacade(monitor)));
+
+    assert.deepEqual(await viceClient.viceCheckpointList(), [{ id: 1 }]);
+    assert.deepEqual(await viceClient.viceCheckpointGet(3), { id: 3 });
+    assert.equal((await viceClient.viceCheckpointCreate({ start: 0x1000, end: 0x1001, memspace: 9 })).id, 7);
+    await viceClient.viceCheckpointDelete(7);
+    await viceClient.viceCheckpointToggle(7, false);
+    await viceClient.viceCheckpointSetCondition(7, "A == 1");
+    assert.equal((await viceClient.viceRegistersAvailable(9))[0].name, "PC");
+    assert.equal((await viceClient.viceRegistersGet(4))[0].value, 0x0801);
+    assert.equal((await viceClient.viceRegistersSet([{ id: 0, value: 0x0802 }], { memspace: 9, metadata: [{ id: 0, name: "PC", bits: 16, size: 2 }] }))[0].value, 0x0802);
+    await viceClient.viceStepInstructions(2, { stepOver: true });
+    await viceClient.viceStepReturn();
+    const capture = await viceClient.captureFrames({ count: 2 });
+    assert.equal(capture.frames.length, 2);
+    assert.equal(capture.frames[0].width, 3);
+    assert.equal(capture.frames[0].height, 2);
+    assert.deepEqual(Array.from(capture.frames[0].pixels), [11, 12, 13, 21, 22, 23]);
+    assert.deepEqual(await viceClient.viceResourceGet("Drive8Image"), { type: "string", value: "demo" });
+    await viceClient.viceResourceSet("Drive8Image", "demo.d64");
+
+    assert.ok(monitorCalls.some((entry) => Array.isArray(entry) && entry[0] === "registersAvailable" && entry[1] === 0));
+    assert.ok(monitorCalls.some((entry) => Array.isArray(entry) && entry[0] === "registersSet" && entry[2].memspace === 0));
+  });
+
+  await t.test("vice wrappers reject on c64u facade", async () => {
+    await assert.rejects(() => client.viceCheckpointList(), /VICE-specific operation requested/);
+  });
+
+  await t.test("mock REST fallback helpers and metadata endpoints", async () => {
+    const previousTarget = process.env.C64_TEST_TARGET;
+    process.env.C64_TEST_TARGET = "mock";
+    try {
+      const mockClient = new C64Client("http://stub.local");
+      Reflect.set(mockClient, "facadePromise", Promise.resolve({
+        ...stubFacade,
+        async readMemory() {
+          const error = new Error("unsupported");
+          error.code = "UNSUPPORTED";
+          throw error;
+        },
+        async writeMemory() {
+          const error = new Error("unsupported");
+          error.code = "UNSUPPORTED";
+          throw error;
+        },
+      }));
+      Reflect.set(mockClient, "api", {
+        v1: {
+          machineReadmemList: async (_op, _query, options) => {
+            if (String(options.headers.Accept).includes("application/json")) {
+              return {
+                headers: { "content-type": "application/json" },
+                data: Buffer.from(JSON.stringify({ data: Buffer.from([0xaa, 0xbb]).toString("base64") })),
+              };
+            }
+            return { headers: { "content-type": "application/octet-stream" }, data: Uint8Array.from([1, 2, 3, 4]).buffer };
+          },
+          machineWritememUpdate: async () => ({ data: { updated: true } }),
+          machineWritememCreate: async () => ({ data: { created: true } }),
+          versionList: async () => ({ data: { version: "1.2.3" } }),
+          infoList: async () => ({ data: { product: "ultimate" } }),
+          machinePauseUpdate: async () => ({ data: { paused: true } }),
+          machineResumeUpdate: async () => ({ data: { resumed: true } }),
+          machineMenuButtonUpdate: async () => ({ data: { toggled: true } }),
+          machineDebugregList: async () => ({ data: { value: "EF" } }),
+          machineDebugregUpdate: async () => ({ data: { value: "CD" } }),
+          runnersRunPrgCreate: async () => ({ data: { uploaded: true } }),
+        },
+      });
+
+      const raw = await mockClient.readMemoryRaw(0x0400, 2);
+      assert.deepEqual(Array.from(raw), [170, 187]);
+
+      const smallWrite = await mockClient.writeMemory("$0400", "$AABB");
+      expectSuccess(smallWrite, "mock write small");
+      const largeWrite = await mockClient.writeMemory("$0400", `$${"AA".repeat(129)}`);
+      expectSuccess(largeWrite, "mock write large");
+
+      assert.deepEqual(await mockClient.version(), { version: "1.2.3" });
+      assert.deepEqual(await mockClient.info(), { product: "ultimate" });
+      assert.equal((await mockClient.pause()).success, true);
+      assert.equal((await mockClient.resume()).success, true);
+      assert.equal((await mockClient.menuButton()).success, true);
+      assert.equal((await mockClient.debugregRead()).value, "EF");
+      assert.equal((await mockClient.debugregWrite("CD")).value, "CD");
+      assert.equal((await mockClient.runPrg(Uint8Array.from([1, 2, 3]))).success, true);
+    } finally {
+      process.env.C64_TEST_TARGET = previousTarget;
+    }
+  });
+
+  await t.test("client helper validation and error normalization", async () => {
+    assert.equal((await client.modplayFile("//music/song.mod")).success, true);
+    assert.equal((await client.sidNoteOn({ voice: 4, frequencyHz: 440 })).success, false);
+    assert.equal((await client.sidNoteOff(4)).success, false);
+    assert.equal((await client.readMemory("$0400", "0")).success, false);
+    assert.equal((await client.writeMemory("$0400", "   ")).success, false);
   });
 });

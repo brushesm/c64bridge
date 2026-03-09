@@ -1,5 +1,24 @@
-import { describe, expect, it } from "bun:test";
-import { renderToolsSection } from "../scripts/update-readme.ts";
+import { afterEach, describe, expect, it } from "bun:test";
+import { readFile, writeFile } from "node:fs/promises";
+import {
+  buildDocumentation,
+  renderTable,
+  renderPromptsSection,
+  renderResourcesSection,
+  renderSummarySection,
+  renderToolsSection,
+  updateReadme,
+} from "../scripts/update-readme.ts";
+
+const readmePath = new URL("../README.md", import.meta.url);
+let readmeBackup;
+
+afterEach(async () => {
+  if (typeof readmeBackup === "string") {
+    await writeFile(readmePath, readmeBackup, "utf8");
+    readmeBackup = undefined;
+  }
+});
 
 function renderToolsAsString() {
   return renderToolsSection().join("\n");
@@ -14,5 +33,108 @@ describe("update-readme grouped operations", () => {
     expect(output).toContain("#### c64_memory");
     expect(output).toContain("| `wait_for_text`");
     expect(output).not.toContain("#####");
+  });
+
+  it("renders summary, resources, and prompts sections", () => {
+    const summary = renderSummarySection().join("\n");
+    const resources = renderResourcesSection().join("\n");
+    const prompts = renderPromptsSection().join("\n");
+
+    expect(summary).toContain("This MCP server exposes");
+    expect(resources).toContain("### Resources");
+    expect(resources).toContain("c64://specs/basic");
+    expect(prompts).toContain("### Prompts");
+    expect(prompts).toContain("basic-program");
+  });
+
+  it("builds complete MCP documentation with all major sections", () => {
+    const output = buildDocumentation();
+    expect(output).toContain("### Tools");
+    expect(output).toContain("#### c64_program");
+    expect(output).toContain("### Resources");
+    expect(output).toContain("### Prompts");
+    expect(output).toContain("| Operation | Description | Required Inputs | Notes | C64U | VICE |");
+  });
+
+  it("renders custom grouped tools with platform overrides, verify notes, and empty tools", () => {
+    const output = renderToolsSection([
+      {
+        tools: [
+          {
+            name: "c64_custom",
+            description: "Custom grouped tool.",
+            inputSchema: {
+              discriminator: { propertyName: "op" },
+              oneOf: [
+                {
+                  description: "Uploads and verifies memory.",
+                  type: "object",
+                  properties: {
+                    op: { const: "upload" },
+                    payload: { type: "string", description: "Payload" },
+                    verifyWrite: { type: "boolean", description: "Verify write" },
+                  },
+                  required: ["op", "payload"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    op: { enum: ["probe"] },
+                  },
+                  required: ["op"],
+                },
+                null,
+              ],
+            },
+            metadata: {
+              platforms: ["c64u"],
+              operationPlatforms: { probe: ["vice"] },
+            },
+          },
+          {
+            name: "c64_empty",
+            description: "Ungrouped placeholder.",
+            inputSchema: { type: "object", properties: {} },
+            metadata: { platforms: ["c64u"] },
+          },
+        ],
+      },
+    ]).join("\n");
+
+    expect(output).toContain("#### c64_custom");
+    expect(output).toContain("| `upload` | Uploads and verifies memory. | `payload` | supports verify | ✅ |  |");
+    expect(output).toContain("| `probe` | Operation probe | — | — |  | ✅ |");
+    expect(output).toContain("#### c64_empty");
+    expect(output).toContain("_No operations defined._");
+  });
+
+  it("escapes tables and updates the generated README section", async () => {
+    expect(renderTable(["A", "B"], [["left|side", "line1\nline2"]])).toContain("left|side");
+
+    readmeBackup = await readFile(readmePath, "utf8");
+    const minimalReadme = [
+      "# Test README",
+      "",
+      "<!-- AUTO-GENERATED:MCP-DOCS-START -->",
+      "stale",
+      "<!-- AUTO-GENERATED:MCP-DOCS-END -->",
+      "",
+    ].join("\n");
+    await writeFile(readmePath, minimalReadme, "utf8");
+
+    const updated = await updateReadme();
+    const nextReadme = await readFile(readmePath, "utf8");
+    const unchanged = await updateReadme();
+
+    expect(updated).toBe(true);
+    expect(nextReadme).toContain("### Tools");
+    expect(nextReadme).not.toContain("stale");
+    expect(unchanged).toBe(false);
+  });
+
+  it("throws when the README markers are missing", async () => {
+    readmeBackup = await readFile(readmePath, "utf8");
+    await writeFile(readmePath, "# Missing markers\n", "utf8");
+    await expect(updateReadme()).rejects.toThrow("Could not find auto-generated section markers");
   });
 });
