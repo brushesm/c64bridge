@@ -1,6 +1,7 @@
 import test from "#test/runner";
 import assert from "#test/assert";
 import fs from "node:fs/promises";
+import { Jimp } from "jimp";
 import { toolRegistry } from "../src/tools/registry/index.js";
 import { metaModule } from "../src/tools/meta/index.js";
 import { ToolUnsupportedPlatformError, ToolValidationError } from "../src/tools/errors.js";
@@ -1487,9 +1488,36 @@ test("c64_graphics generate_sprite proxies to sprite helper", async () => {
   assert.equal(calls[0].color, 5);
 });
 
-test("c64_graphics generate_bitmap reports placeholder error", async () => {
+test("c64_graphics generate_bitmap imports images and delegates to displayBitmap", async () => {
+  const { dir, file } = tmpPath("graphics", "grouped-bitmap.png");
+  await fs.mkdir(dir, { recursive: true });
+  const image = new Jimp({ width: 8, height: 8, color: 0x813338FF });
+  await image.write(file);
+
+  const calls = [];
   const ctx = {
-    client: {},
+    client: {
+      async displayBitmap(prepared, options) {
+        calls.push({ prepared, options });
+        return {
+          success: true,
+          details: {
+            bitmapAddress: 0x2000,
+            screenAddress: 0x0400,
+            colorRamAddress: 0xD800,
+            bank: 0,
+            registerValues: {
+              dd00: 0xFF,
+              d011: 0x3B,
+              d016: 0x08,
+              d018: 0x18,
+              d020: 2,
+              d021: 0,
+            },
+          },
+        };
+      },
+    },
     rag: {},
     logger: {
       debug() {},
@@ -1501,11 +1529,19 @@ test("c64_graphics generate_bitmap reports placeholder error", async () => {
     setPlatform,
   };
 
-  const result = await toolRegistry.invoke("c64_graphics", { op: "generate_bitmap" }, ctx);
+  const result = await toolRegistry.invoke(
+    "c64_graphics",
+    { op: "generate_bitmap", imagePath: file, format: "hires", borderColor: 2 },
+    ctx,
+  );
 
-  assert.equal(result.isError, true);
-  assert.equal(result.metadata?.error?.kind, "execution");
-  assert.equal(result.metadata?.error?.details?.available, false);
+  assert.equal(result.isError, undefined);
+  assert.equal(result.metadata?.success, true);
+  assert.equal(result.metadata?.mode, "hires");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].prepared.mode, "hires");
+  assert.equal(calls[0].prepared.sourceWidth, 8);
+  assert.equal(calls[0].prepared.sourceHeight, 8);
 });
 
 test("c64_rag basic retrieval delegates to RAG layer", async () => {

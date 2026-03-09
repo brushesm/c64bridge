@@ -34,6 +34,11 @@ import {
   parseVideoPacket,
   type CapturedFrame,
 } from "./streamCapture.js";
+import {
+  buildVicBitmapRegisters,
+  resolveVicBitmapMemoryLayout,
+  type PreparedVicBitmap,
+} from "./vicBitmap.js";
 
 export interface RunBasicResult {
   success: boolean;
@@ -62,6 +67,25 @@ export interface SampleCaptureResult {
   readonly sampleRateHz: number;
   readonly samplePairs: number;
   readonly samples: Int16Array;
+}
+
+export interface BitmapDisplayResult {
+  readonly mode: "hires" | "multicolor";
+  readonly bank: number;
+  readonly bitmapAddress: string;
+  readonly screenAddress: string;
+  readonly colorRamAddress: string;
+  readonly registers: {
+    readonly dd00: number;
+    readonly d011: number;
+    readonly d016: number;
+    readonly d018: number;
+    readonly d020: number;
+    readonly d021: number;
+  };
+  readonly bitmapBytes: number;
+  readonly screenBytes: number;
+  readonly colorRamBytes: number;
 }
 
 export class C64Client {
@@ -188,6 +212,64 @@ export class C64Client {
   }): Promise<RunBasicResult> {
     const program = buildPetsciiScreenBasic(options);
     return this.uploadAndRunBasic(program);
+  }
+
+  async displayBitmap(bitmap: PreparedVicBitmap, options?: {
+    readonly bitmapAddress?: number;
+    readonly screenAddress?: number;
+  }): Promise<RunBasicResult & { details?: BitmapDisplayResult | unknown }> {
+    try {
+      const layout = resolveVicBitmapMemoryLayout(
+        options?.bitmapAddress ?? 0x2000,
+        options?.screenAddress ?? 0x0400,
+      );
+      const facade = await this.facadePromise;
+      await facade.writeMemory(layout.bitmapAddress, bitmap.bitmapData);
+      await facade.writeMemory(layout.screenAddress, bitmap.screenRam);
+      await facade.writeMemory(layout.colorRamAddress, bitmap.colorRam);
+
+      let currentDd00 = 0;
+      try {
+        const dd00 = await facade.readMemory(0xDD00, 1);
+        currentDd00 = dd00[0] ?? 0;
+      } catch {
+        currentDd00 = 0;
+      }
+
+      const registers = buildVicBitmapRegisters(layout, {
+        mode: bitmap.mode,
+        backgroundColor: bitmap.backgroundColor,
+        borderColor: bitmap.borderColor,
+        currentDd00,
+      });
+
+      await facade.writeMemory(0xDD00, Uint8Array.of(registers.dd00));
+      await facade.writeMemory(0xD011, Uint8Array.of(registers.d011));
+      await facade.writeMemory(0xD016, Uint8Array.of(registers.d016));
+      await facade.writeMemory(0xD018, Uint8Array.of(registers.d018));
+      await facade.writeMemory(0xD020, Uint8Array.of(registers.d020));
+      await facade.writeMemory(0xD021, Uint8Array.of(registers.d021));
+
+      return {
+        success: true,
+        details: {
+          mode: bitmap.mode,
+          bank: layout.bank,
+          bitmapAddress: this.formatAddress(layout.bitmapAddress),
+          screenAddress: this.formatAddress(layout.screenAddress),
+          colorRamAddress: this.formatAddress(layout.colorRamAddress),
+          registers,
+          bitmapBytes: bitmap.bitmapData.length,
+          screenBytes: bitmap.screenRam.length,
+          colorRamBytes: bitmap.colorRam.length,
+        } satisfies BitmapDisplayResult,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        details: this.normaliseError(error),
+      };
+    }
   }
 
   async uploadAndRunAsm(program: string): Promise<RunBasicResult> {

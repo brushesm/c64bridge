@@ -98,9 +98,74 @@ test("C64Client MCP tool coverage", async (t) => {
   });
 
   await t.test("graphics helpers", async () => {
+    const writeStart = writes.length;
     const spriteBytes = new Uint8Array(63).fill(0x11);
-  expectSuccess(await client.generateAndRunSpritePrg({ spriteBytes, spriteIndex: 0, x: 100, y: 50, color: 2, multicolour: false }), "generate_sprite");
+    expectSuccess(await client.generateAndRunSpritePrg({ spriteBytes, spriteIndex: 0, x: 100, y: 50, color: 2, multicolour: false }), "generate_sprite");
     expectSuccess(await client.renderPetsciiScreenAndRun({ text: "PETSCII" }), "render_petscii");
+
+    const display = await client.displayBitmap({
+      mode: "hires",
+      bitmapData: new Uint8Array(8000).fill(0xAA),
+      screenRam: new Uint8Array(1000).fill(0x62),
+      colorRam: new Uint8Array(1000).fill(0),
+      sourceWidth: 320,
+      sourceHeight: 200,
+      logicalWidth: 320,
+      logicalHeight: 200,
+      displayWidth: 320,
+      displayHeight: 200,
+      backgroundColor: 0,
+      borderColor: 6,
+    }, {
+      bitmapAddress: 0x2000,
+      screenAddress: 0x0400,
+    });
+    expectSuccess(display, "generate_bitmap");
+    assert.equal(display.details.bank, 0);
+
+    const displayWrites = writes.slice(writeStart);
+    assert.ok(displayWrites.some((entry) => entry.address === 0x2000 && entry.bytes.length === 8000));
+    assert.ok(displayWrites.some((entry) => entry.address === 0x0400 && entry.bytes.length === 1000));
+    assert.ok(displayWrites.some((entry) => entry.address === 0xD800 && entry.bytes.length === 1000));
+    assert.ok(displayWrites.some((entry) => entry.address === 0xDD00 && entry.bytes.length === 1));
+    assert.ok(displayWrites.some((entry) => entry.address === 0xD011 && entry.bytes.length === 1));
+    assert.ok(displayWrites.some((entry) => entry.address === 0xD016 && entry.bytes.length === 1));
+    assert.ok(displayWrites.some((entry) => entry.address === 0xD018 && entry.bytes.length === 1));
+    assert.ok(displayWrites.some((entry) => entry.address === 0xD020 && entry.bytes.length === 1));
+    assert.ok(displayWrites.some((entry) => entry.address === 0xD021 && entry.bytes.length === 1));
+
+    const viceWrites = [];
+    const viceBitmapClient = new C64Client("http://stub.local");
+    Reflect.set(viceBitmapClient, "facadePromise", Promise.resolve({
+      type: "vice",
+      async readMemory() {
+        return new Uint8Array([0xFF]);
+      },
+      async writeMemory(address, bytes) {
+        viceWrites.push({ address, bytes: Uint8Array.from(bytes) });
+      },
+    }));
+
+    const viceDisplay = await viceBitmapClient.displayBitmap({
+      mode: "multicolor",
+      bitmapData: new Uint8Array(8000).fill(0x55),
+      screenRam: new Uint8Array(1000).fill(0x12),
+      colorRam: new Uint8Array(1000).fill(0x06),
+      sourceWidth: 160,
+      sourceHeight: 200,
+      logicalWidth: 160,
+      logicalHeight: 200,
+      displayWidth: 320,
+      displayHeight: 200,
+      backgroundColor: 0,
+      borderColor: 3,
+    }, {
+      bitmapAddress: 0x2000,
+      screenAddress: 0x0400,
+    });
+    expectSuccess(viceDisplay, "generate_bitmap_vice");
+    assert.equal(viceDisplay.details.registers.d016, 0x18);
+    assert.ok(viceWrites.some((entry) => entry.address === 0x2000 && entry.bytes.length === 8000));
   });
 
   await t.test("memory access", async () => {

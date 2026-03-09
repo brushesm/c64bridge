@@ -65,6 +65,27 @@ export async function waitForPort(host: string, port: number, timeoutMs = 4000):
   throw new Error(`Timeout waiting for VICE monitor at ${host}:${port}`);
 }
 
+async function waitForXvfb(display: string, timeoutMs = 5_000): Promise<void> {
+  const match = /^:([0-9]+)/.exec(display.trim());
+  if (!match) {
+    await delay(500);
+    return;
+  }
+  const socketPath = `/tmp/.X11-unix/X${match[1]}`;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      if (fs.existsSync(socketPath)) {
+        return;
+      }
+    } catch {
+      // Ignore transient fs errors while polling for the display socket.
+    }
+    await delay(50);
+  }
+  throw new Error(`Timeout waiting for Xvfb display socket ${socketPath}`);
+}
+
 export function waitForExit(child: ChildProcess, timeoutMs: number): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
   return new Promise((resolve) => {
@@ -105,8 +126,7 @@ export async function startViceProcess(options: ViceProcessOptions): Promise<Vic
       xvfb.stderr?.on("data", (chunk) => console.error("[vice-process][xvfb stderr]", chunk.toString().trim()));
     }
     viceEnv.DISPLAY = display;
-    // Give the server a moment to come up before launching VICE
-    await delay(200);
+    await waitForXvfb(display);
   }
 
   const args = [

@@ -330,13 +330,13 @@ Grouped entry point for sprite/charset extraction, memory dumps, filesystem stat
 
 #### c64_graphics
 
-Grouped entry point for PETSCII art, sprite previews, and future bitmap generation.
+Grouped entry point for PETSCII art, sprite previews, bitmap import, and frame capture.
 
 | Operation | Description | Required Inputs | Notes | C64U | VICE |
 | --- | --- | --- | --- | --- | --- |
 | `capture_frame` | Capture one or more complete video frames from the active backend. | — | — | ✅ | ✅ |
 | `create_petscii` | Generate PETSCII art from prompts, text, or explicit bitmap data. | — | — | ✅ | ✅ |
-| `generate_bitmap` | Reserved high-resolution bitmap generator (coming soon). | — | — | ✅ | ✅ |
+| `generate_bitmap` | Import an image file, convert it to VIC bitmap memory, and enable bitmap mode. | `imagePath`, `format` | — | ✅ | ✅ |
 | `generate_sprite` | Build and run a sprite PRG from raw 63-byte sprite data. | `sprite` | — | ✅ | ✅ |
 | `render_petscii` | Render PETSCII text with optional border/background colours. | `text` | — | ✅ | ✅ |
 

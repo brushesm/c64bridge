@@ -23,7 +23,6 @@ import {
 } from "./utils.js";
 import {
   ToolError,
-  ToolExecutionError,
   toolErrorResult,
   unknownErrorResult,
 } from "../errors.js";
@@ -147,19 +146,10 @@ const graphicsOperations: GroupedOperationConfig[] = [
     op: "generate_bitmap",
     schema: extendSchemaWithOp(
       "generate_bitmap",
-      {
-        description: "Reserved high-resolution bitmap generator (coming soon).",
-        type: "object",
-        properties: {},
-        additionalProperties: false,
-      },
-      { description: "Reserved high-resolution bitmap generator (coming soon)." },
+      ensureDescriptor(graphicsDescriptorIndex, "generate_bitmap").inputSchema,
+      { description: "Import an image file, convert it to VIC bitmap memory, and enable bitmap mode." },
     ),
-    handler: async () => toolErrorResult(
-      new ToolExecutionError("c64_graphics op generate_bitmap is not yet available", {
-        details: { available: false },
-      }),
-    ),
+    handler: groupedGraphicsHandlers.generate_bitmap,
   },
 ];
 
@@ -167,7 +157,7 @@ const graphicsOperationHandlers = createOperationHandlers(graphicsOperations);
 
 export const graphicsModuleGroup = defineToolModule({
   domain: "graphics",
-  summary: "Grouped PETSCII, sprite, frame capture, and upcoming bitmap helpers.",
+  summary: "Grouped PETSCII, sprite, bitmap, and frame capture helpers.",
   resources: ["c64://specs/vic", "c64://specs/basic", "c64://specs/assembly"],
   prompts: ["graphics-demo", "basic-program", "assembly-program"],
   defaultTags: ["graphics", "vic"],
@@ -179,8 +169,8 @@ export const graphicsModuleGroup = defineToolModule({
   tools: [
     {
       name: "c64_graphics",
-      description: "Grouped entry point for PETSCII art, sprite previews, and future bitmap generation.",
-      summary: "Generates PETSCII art, renders text screens, or runs sprite demos from one tool.",
+      description: "Grouped entry point for PETSCII art, sprite previews, bitmap import, and frame capture.",
+      summary: "Generates PETSCII art, renders text screens, imports bitmap images, or runs sprite demos from one tool.",
       inputSchema: discriminatedUnionSchema({
         description: "Graphics operations available via the c64_graphics tool.",
         variants: graphicsOperations.map((operation) => operation.schema),
@@ -206,6 +196,11 @@ export const graphicsModuleGroup = defineToolModule({
           name: "Display sprite",
           description: "Show sprite data at coordinates",
           arguments: { op: "generate_sprite", sprite: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" },
+        },
+        {
+          name: "Import bitmap image",
+          description: "Convert a PNG into VIC bitmap memory and display it",
+          arguments: { op: "generate_bitmap", imagePath: "./artifacts/sample.png", format: "hires" },
         },
       ],
       execute: createOperationDispatcher<GenericOperationMap>(

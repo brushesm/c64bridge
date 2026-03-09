@@ -62,6 +62,7 @@
     "axios": "^1.7.7",
     "date-fns": "^4.1.0",
     "fastify": "^5.6.1",
+    "jimp": "^1.6.0",
     "meyda": "^5.6.2",
     "octokit": "^5.0.4",
     "pitchfinder": "^2.2.0",

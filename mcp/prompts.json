@@ -18,7 +18,8 @@
         "tags": [
           "basic",
           "program"
-        ]
+        ],
+        "argumentOptions": {}
       }
     },
     {
@@ -28,13 +29,7 @@
       "arguments": [
         {
           "name": "hardware",
-          "description": "Optional focus area for the routine (sid, vic, cia, or multi for combined work).",
-          "options": [
-            "sid",
-            "vic",
-            "cia",
-            "multi"
-          ]
+          "description": "Optional focus area for the routine (sid, vic, cia, or multi for combined work)."
         }
       ],
       "_meta": {
@@ -54,7 +49,15 @@
         "tags": [
           "assembly",
           "program"
-        ]
+        ],
+        "argumentOptions": {
+          "hardware": [
+            "sid",
+            "vic",
+            "cia",
+            "multi"
+          ]
+        }
       }
     },
     {
@@ -75,7 +78,8 @@
         "tags": [
           "sid",
           "music"
-        ]
+        ],
+        "argumentOptions": {}
       }
     },
     {
@@ -85,13 +89,7 @@
       "arguments": [
         {
           "name": "mode",
-          "description": "Target VIC-II technique (text, multicolour, bitmap, or sprite).",
-          "options": [
-            "text",
-            "multicolour",
-            "bitmap",
-            "sprite"
-          ]
+          "description": "Target VIC-II technique (text, multicolour, bitmap, or sprite)."
         }
       ],
       "_meta": {
@@ -112,7 +110,15 @@
         "tags": [
           "graphics",
           "vic"
-        ]
+        ],
+        "argumentOptions": {
+          "mode": [
+            "text",
+            "multicolour",
+            "bitmap",
+            "sprite"
+          ]
+        }
       }
     },
     {
@@ -122,11 +128,7 @@
       "arguments": [
         {
           "name": "printerType",
-          "description": "Select Commodore (device 4) or Epson FX workflow helpers.",
-          "options": [
-            "commodore",
-            "epson"
-          ]
+          "description": "Select Commodore (device 4) or Epson FX workflow helpers."
         }
       ],
       "_meta": {
@@ -146,7 +148,13 @@
         ],
         "tags": [
           "printer"
-        ]
+        ],
+        "argumentOptions": {
+          "printerType": [
+            "commodore",
+            "epson"
+          ]
+        }
       }
     },
     {
@@ -167,7 +175,8 @@
         "tags": [
           "memory",
           "debug"
-        ]
+        ],
+        "argumentOptions": {}
       }
     },
     {
@@ -186,7 +195,8 @@
         "tags": [
           "drive",
           "storage"
-        ]
+        ],
+        "argumentOptions": {}
       }
     }
   ]

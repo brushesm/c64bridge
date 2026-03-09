@@ -42,6 +42,11 @@ test("string schema validation", async (t) => {
 
   const defaultSchema = stringSchema({ default: "HELLO" });
   assert.equal(defaultSchema.parse(undefined), "HELLO");
+
+  const enumSchema = stringSchema({ enum: ["PAL", "NTSC"] });
+  assert.equal(enumSchema.parse("PAL", "$.video.mode"), "PAL");
+  await assertThrowsValidation(() => enumSchema.parse("SECAM"), /allowed options/);
+  await assertThrowsValidation(() => schema.parse(42, "$.value"), /Expected a string/);
 });
 
 test("number schema validation", async () => {
@@ -57,12 +62,16 @@ test("number schema validation", async () => {
 
   const defaultSchema = numberSchema({ default: 7 });
   assert.equal(defaultSchema.parse(undefined), 7);
+  await assertThrowsValidation(() => schema.parse("3"), /Expected a number/);
 });
 
 test("boolean and literal schemas", async () => {
   const boolSchema = booleanSchema();
   assert.equal(boolSchema.parse(true), true);
   await assertThrowsValidation(() => boolSchema.parse("yes"), /boolean/);
+
+  const defaultBool = booleanSchema({ default: false });
+  assert.equal(defaultBool.parse(undefined), false);
 
   const literal = literalSchema("RUN");
   assert.equal(literal.parse("RUN"), "RUN");
@@ -73,6 +82,7 @@ test("array schema validation", async () => {
   const schema = arraySchema(integerSchema({ minimum: 0 }), { minItems: 1, maxItems: 3 });
   assert.deepEqual(schema.parse([1, 2]), [1, 2]);
 
+  await assertThrowsValidation(() => schema.parse("not-array"), /Expected an array/);
   await assertThrowsValidation(() => schema.parse([]), /few/);
   await assertThrowsValidation(() => schema.parse([1, 2, 3, 4]), /many/);
 });
@@ -100,8 +110,21 @@ test("object schema validation", async () => {
   const parsed = schema.parse({ name: "C64", retries: 3 });
   assert.deepEqual(parsed, { name: "C64", retries: 3 });
 
+  await assertThrowsValidation(() => schema.parse(null), /Expected an object/);
   await assertThrowsValidation(() => schema.parse({ retries: 1 }), /Missing required property/);
   await assertThrowsValidation(() => schema.parse({ name: "C64", extra: true }), /Unexpected property/);
+});
+
+test("object schema can preserve additional properties", () => {
+  const schema = objectSchema({
+    properties: {
+      name: stringSchema(),
+    },
+    additionalProperties: true,
+  });
+
+  const parsed = schema.parse({ name: "tool", extra: { ok: true }, count: 2 });
+  assert.deepEqual(parsed, { name: "tool", extra: { ok: true }, count: 2 });
 });
 
 test("object schema applies defaults when optional provided", () => {
@@ -133,6 +156,34 @@ test("merge schemas combines structures", () => {
 
   const merged = mergeSchemas(a, b);
   assert.deepEqual(merged.parse({ name: "tool", enabled: false }), { name: "tool", enabled: false });
+});
+
+test("merge schemas rejects unexpected keys when both are strict", async () => {
+  const a = objectSchema({
+    properties: { name: stringSchema() },
+    additionalProperties: false,
+  });
+  const b = objectSchema({
+    properties: { enabled: booleanSchema() },
+    additionalProperties: false,
+  });
+
+  const merged = mergeSchemas(a, b);
+  await assertThrowsValidation(() => merged.parse({ name: "tool", enabled: true, extra: 1 }), /Unexpected property/);
+});
+
+test("merge schemas respects permissive additional properties on one side", () => {
+  const a = objectSchema({
+    properties: { name: stringSchema() },
+    additionalProperties: false,
+  });
+  const b = objectSchema({
+    properties: { enabled: booleanSchema({ default: true }) },
+    additionalProperties: true,
+  });
+
+  const merged = mergeSchemas(a, b);
+  assert.deepEqual(merged.parse({ name: "tool", extra: "ok" }), { name: "tool", enabled: true, extra: "ok" });
 });
 
 test("tool error helpers produce consistent metadata", () => {

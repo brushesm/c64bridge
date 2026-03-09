@@ -40,6 +40,7 @@ export function registerMcpServerPromptsTests(withSharedMcpClient) {
         if (entry.arguments && entry.arguments.length > 0) {
           assert.ok(Array.isArray(listed.arguments), "arguments should be present");
           const listedArgs = new Map(listed.arguments.map((arg) => [arg.name, arg]));
+          const argumentOptions = listed._meta?.argumentOptions ?? {};
           for (const arg of entry.arguments) {
             const listedArg = listedArgs.get(arg.name);
             assert.ok(listedArg, `Argument ${arg.name} should be returned`);
@@ -48,7 +49,7 @@ export function registerMcpServerPromptsTests(withSharedMcpClient) {
               assert.equal(listedArg.required, arg.required);
             }
             if (arg.options) {
-              assert.deepEqual(listedArg.options, arg.options);
+              assert.deepEqual(argumentOptions[arg.name], arg.options);
             }
           }
         } else {

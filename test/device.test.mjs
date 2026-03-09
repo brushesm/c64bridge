@@ -26,6 +26,23 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitForTruthy(check, {
+  timeoutMs = 10_000,
+  intervalMs = 200,
+  description = "condition",
+} = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let lastValue = false;
+  while (Date.now() < deadline) {
+    lastValue = await check();
+    if (lastValue) {
+      return true;
+    }
+    await delay(intervalMs);
+  }
+  throw new Error(`Timed out waiting for ${description}; lastValue=${String(lastValue)}`);
+}
+
 async function waitForPattern(
   facade,
   address,
@@ -111,7 +128,14 @@ viceSuite("device: ViceBackend basic operations", async (t) => {
   debugLog(`facade selected=${facade.type}`);
 
   await t.test("ping succeeds", async () => {
-    assert.equal(await facade.ping(), true);
+    assert.equal(
+      await waitForTruthy(() => facade.ping(), {
+        timeoutMs: useViceMock ? 2_000 : 20_000,
+        intervalMs: useViceMock ? 50 : 250,
+        description: "VICE ping",
+      }),
+      true,
+    );
   });
 
   await t.test("version reports vice backend", async () => {
@@ -175,7 +199,14 @@ viceSuite("device: ViceBackend basic operations", async (t) => {
     assert.equal(result.success, true);
     // Give the supervisor a moment to respawn if needed.
     await new Promise((resolve) => setTimeout(resolve, 200));
-    assert.equal(await facade.ping(), true);
+    assert.equal(
+      await waitForTruthy(() => facade.ping(), {
+        timeoutMs: useViceMock ? 2_000 : 20_000,
+        intervalMs: useViceMock ? 50 : 250,
+        description: "VICE reconnect ping",
+      }),
+      true,
+    );
     if (!useViceMock) {
       await facade.poweroff();
       await new Promise((resolve) => setTimeout(resolve, 200));

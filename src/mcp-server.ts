@@ -99,7 +99,7 @@ async function main() {
         name: resource.name,
         description: resource.description,
         mimeType: resource.mimeType,
-        metadata: resource.metadata,
+        _meta: resource.metadata,
       }));
 
       const platformResource = createPlatformResourceDescriptor();
@@ -178,7 +178,13 @@ async function main() {
     const startedAt = Date.now();
     try {
       const response = {
-        tools: toolRegistry.list(),
+        tools: toolRegistry.list().map((tool) => ({
+          name: tool.name,
+          title: tool.metadata.summary,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+          _meta: tool.metadata,
+        })),
       };
       const latency = Date.now() - startedAt;
       const bytes = payloadByteLength(response);
@@ -221,6 +227,11 @@ async function main() {
             optionalResources: entry.descriptor.optionalResources ?? [],
             tools: entry.descriptor.tools,
             tags: entry.descriptor.tags ?? [],
+            argumentOptions: Object.fromEntries(
+              (entry.arguments ?? [])
+                .filter((argument) => Array.isArray(argument.options) && argument.options.length > 0)
+                .map((argument) => [argument.name, argument.options]),
+            ),
           },
         })),
       };
@@ -375,7 +386,7 @@ function createPlatformResourceDescriptor() {
     name: "Active Platform Status",
     description: "Reports the active MCP platform and tool compatibility snapshot.",
     mimeType: "text/markdown",
-    metadata: {
+    _meta: {
       domain: "platform",
       priority: "critical",
       summary: "Current platform (c64u or vice), feature flags, and tool support overview.",

@@ -256,17 +256,75 @@
       "additionalProperties": false
     },
     {
-      "description": "Reserved high-resolution bitmap generator (coming soon).",
       "type": "object",
+      "description": "Import an image file, convert it to VIC bitmap memory, and enable bitmap mode.",
       "properties": {
+        "imagePath": {
+          "type": "string",
+          "description": "Filesystem path of the source image (PNG, JPEG, BMP, GIF, TIFF, and other Jimp-supported formats).",
+          "minLength": 1
+        },
+        "format": {
+          "description": "Bitmap encoding mode to generate for the VIC-II display.",
+          "type": "string",
+          "enum": [
+            "hires",
+            "multicolor"
+          ]
+        },
+        "bitmapAddress": {
+          "description": "Absolute C64 memory address, provided as an integer or hex string such as $2000.",
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ],
+          "default": 8192
+        },
+        "screenAddress": {
+          "description": "Absolute C64 memory address, provided as an integer or hex string such as $2000.",
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ],
+          "default": 1024
+        },
+        "borderColor": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Border colour index (0-15).",
+          "minimum": 0,
+          "maximum": 15,
+          "default": 0
+        },
+        "backgroundColor": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Background colour index (0-15). Used for multicolor mode and aspect-ratio padding.",
+          "minimum": 0,
+          "maximum": 15,
+          "default": 0
+        },
+        "preserveAspect": {
+          "type": "boolean",
+          "description": "Preserve the source image aspect ratio and pad with the background colour.",
+          "default": true
+        },
         "op": {
           "const": "generate_bitmap"
         }
       },
-      "additionalProperties": false,
       "required": [
+        "imagePath",
+        "format",
         "op"
-      ]
+      ],
+      "additionalProperties": false
     }
   ],
   "discriminator": {

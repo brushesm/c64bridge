@@ -2,6 +2,7 @@
   "tools": [
     {
       "name": "c64_program",
+      "title": "Runs PRG/CRT files, uploads BASIC or ASM, and coordinates batch test flows.",
       "description": "Grouped entry point for program upload, execution, and batch workflows.",
       "inputSchema": {
         "type": "object",
@@ -301,7 +302,7 @@
           "propertyName": "op"
         }
       },
-      "metadata": {
+      "_meta": {
         "domain": "programs",
         "summary": "Runs PRG/CRT files, uploads BASIC or ASM, and coordinates batch test flows.",
         "lifecycle": "request-response",
@@ -360,6 +361,7 @@
     },
     {
       "name": "c64_memory",
+      "title": "Reads or writes RAM, captures the screen, or waits for text matches in one tool.",
       "description": "Grouped entry point for memory I/O, screen reads, and screen polling.",
       "inputSchema": {
         "type": "object",
@@ -516,7 +518,7 @@
           "propertyName": "op"
         }
       },
-      "metadata": {
+      "_meta": {
         "domain": "memory",
         "summary": "Reads or writes RAM, captures the screen, or waits for text matches in one tool.",
         "lifecycle": "request-response",
@@ -567,6 +569,7 @@
     },
     {
       "name": "c64_sound",
+      "title": "Adjusts SID registers, plays files, composes music, and runs verification captures.",
       "description": "Grouped entry point for SID control, playback, composition, and analysis workflows.",
       "inputSchema": {
         "type": "object",
@@ -1139,7 +1142,7 @@
           "propertyName": "op"
         }
       },
-      "metadata": {
+      "_meta": {
         "domain": "audio",
         "summary": "Adjusts SID registers, plays files, composes music, and runs verification captures.",
         "lifecycle": "request-response",
@@ -1215,6 +1218,7 @@
     },
     {
       "name": "c64_system",
+      "title": "Manages machine state (pause, reset, power) and schedules recurring background tasks.",
       "description": "Grouped entry point for power, reset, menu, and background task control.",
       "inputSchema": {
         "type": "object",
@@ -1400,7 +1404,7 @@
           "propertyName": "op"
         }
       },
-      "metadata": {
+      "_meta": {
         "domain": "system",
         "summary": "Manages machine state (pause, reset, power) and schedules recurring background tasks.",
         "lifecycle": "request-response",
@@ -1457,7 +1461,8 @@
     },
     {
       "name": "c64_graphics",
-      "description": "Grouped entry point for PETSCII art, sprite previews, and future bitmap generation.",
+      "title": "Generates PETSCII art, renders text screens, imports bitmap images, or runs sprite demos from one tool.",
+      "description": "Grouped entry point for PETSCII art, sprite previews, bitmap import, and frame capture.",
       "inputSchema": {
         "type": "object",
         "description": "Graphics operations available via the c64_graphics tool.",
@@ -1716,26 +1721,84 @@
             "additionalProperties": false
           },
           {
-            "description": "Reserved high-resolution bitmap generator (coming soon).",
             "type": "object",
+            "description": "Import an image file, convert it to VIC bitmap memory, and enable bitmap mode.",
             "properties": {
+              "imagePath": {
+                "type": "string",
+                "description": "Filesystem path of the source image (PNG, JPEG, BMP, GIF, TIFF, and other Jimp-supported formats).",
+                "minLength": 1
+              },
+              "format": {
+                "description": "Bitmap encoding mode to generate for the VIC-II display.",
+                "type": "string",
+                "enum": [
+                  "hires",
+                  "multicolor"
+                ]
+              },
+              "bitmapAddress": {
+                "description": "Absolute C64 memory address, provided as an integer or hex string such as $2000.",
+                "type": [
+                  "integer",
+                  "string",
+                  "null"
+                ],
+                "default": 8192
+              },
+              "screenAddress": {
+                "description": "Absolute C64 memory address, provided as an integer or hex string such as $2000.",
+                "type": [
+                  "integer",
+                  "string",
+                  "null"
+                ],
+                "default": 1024
+              },
+              "borderColor": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Border colour index (0-15).",
+                "minimum": 0,
+                "maximum": 15,
+                "default": 0
+              },
+              "backgroundColor": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Background colour index (0-15). Used for multicolor mode and aspect-ratio padding.",
+                "minimum": 0,
+                "maximum": 15,
+                "default": 0
+              },
+              "preserveAspect": {
+                "type": "boolean",
+                "description": "Preserve the source image aspect ratio and pad with the background colour.",
+                "default": true
+              },
               "op": {
                 "const": "generate_bitmap"
               }
             },
-            "additionalProperties": false,
             "required": [
+              "imagePath",
+              "format",
               "op"
-            ]
+            ],
+            "additionalProperties": false
           }
         ],
         "discriminator": {
           "propertyName": "op"
         }
       },
-      "metadata": {
+      "_meta": {
         "domain": "graphics",
-        "summary": "Generates PETSCII art, renders text screens, or runs sprite demos from one tool.",
+        "summary": "Generates PETSCII art, renders text screens, imports bitmap images, or runs sprite demos from one tool.",
         "lifecycle": "request-response",
         "resources": [
           "c64://specs/vic",
@@ -1780,6 +1843,15 @@
               "op": "generate_sprite",
               "sprite": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
             }
+          },
+          {
+            "name": "Import bitmap image",
+            "description": "Convert a PNG into VIC bitmap memory and display it",
+            "arguments": {
+              "op": "generate_bitmap",
+              "imagePath": "./artifacts/sample.png",
+              "format": "hires"
+            }
           }
         ],
         "tags": [
@@ -1799,6 +1871,7 @@
     },
     {
       "name": "c64_rag",
+      "title": "Returns curated knowledge references for BASIC or 6502/6510 assembly queries.",
       "description": "Grouped entry point for BASIC and assembly RAG lookups.",
       "inputSchema": {
         "type": "object",
@@ -1867,7 +1940,7 @@
           "propertyName": "op"
         }
       },
-      "metadata": {
+      "_meta": {
         "domain": "rag",
         "summary": "Returns curated knowledge references for BASIC or 6502/6510 assembly queries.",
         "lifecycle": "request-response",
@@ -1916,6 +1989,7 @@
     },
     {
       "name": "c64_disk",
+      "title": "Mount or unmount images, create new disks, list drives, and find programs from one tool.",
       "description": "Grouped entry point for disk mounts, listings, image creation, and program discovery.",
       "inputSchema": {
         "type": "object",
@@ -2195,7 +2269,7 @@
           "propertyName": "op"
         }
       },
-      "metadata": {
+      "_meta": {
         "domain": "storage",
         "summary": "Mount or unmount images, create new disks, list drives, and find programs from one tool.",
         "lifecycle": "request-response",
@@ -2261,6 +2335,7 @@
     },
     {
       "name": "c64_drive",
+      "title": "Power cycle drive slots, reset IEC state, switch emulation modes, or load custom ROMs.",
       "description": "Grouped entry point for drive power, mode, reset, and ROM operations.",
       "inputSchema": {
         "type": "object",
@@ -2382,7 +2457,7 @@
           "propertyName": "op"
         }
       },
-      "metadata": {
+      "_meta": {
         "domain": "drive",
         "summary": "Power cycle drive slots, reset IEC state, switch emulation modes, or load custom ROMs.",
         "lifecycle": "request-response",
@@ -2431,6 +2506,7 @@
     },
     {
       "name": "c64_printer",
+      "title": "Print text or bitmaps and define custom characters for Commodore or Epson printers.",
       "description": "Grouped entry point for Commodore and Epson printing helpers.",
       "inputSchema": {
         "type": "object",
@@ -2650,7 +2726,7 @@
           "propertyName": "op"
         }
       },
-      "metadata": {
+      "_meta": {
         "domain": "printer",
         "summary": "Print text or bitmaps and define custom characters for Commodore or Epson printers.",
         "lifecycle": "request-response",
@@ -2700,6 +2776,7 @@
     },
     {
       "name": "c64_config",
+      "title": "List or update settings, access firmware info, take snapshots, and run program shuffle workflows.",
       "description": "Grouped entry point for configuration reads/writes, diagnostics, and snapshots.",
       "inputSchema": {
         "type": "object",
@@ -3051,7 +3128,7 @@
           "propertyName": "op"
         }
       },
-      "metadata": {
+      "_meta": {
         "domain": "config",
         "summary": "List or update settings, access firmware info, take snapshots, and run program shuffle workflows.",
         "lifecycle": "request-response",
@@ -3127,6 +3204,7 @@
     },
     {
       "name": "c64_extract",
+      "title": "Export sprites or charsets, dump RAM, compute filesystem stats, or run firmware health checks.",
       "description": "Grouped entry point for sprite/charset extraction, memory dumps, filesystem stats, and firmware health checks.",
       "inputSchema": {
         "type": "object",
@@ -3430,7 +3508,7 @@
           "propertyName": "op"
         }
       },
-      "metadata": {
+      "_meta": {
         "domain": "extract",
         "summary": "Export sprites or charsets, dump RAM, compute filesystem stats, or run firmware health checks.",
         "lifecycle": "request-response",
@@ -3477,6 +3555,7 @@
     },
     {
       "name": "c64_stream",
+      "title": "Start or stop audio/video/debug streaming in a single tool.",
       "description": "Grouped entry point for starting and stopping Ultimate streaming sessions.",
       "inputSchema": {
         "type": "object",
@@ -3539,7 +3618,7 @@
           "propertyName": "op"
         }
       },
-      "metadata": {
+      "_meta": {
         "domain": "stream",
         "summary": "Start or stop audio/video/debug streaming in a single tool.",
         "lifecycle": "request-response",
@@ -3585,6 +3664,7 @@
     },
     {
       "name": "c64_debug",
+      "title": "Manage breakpoints, inspect registers, and step through code on the VICE backend.",
       "description": "Grouped entry point for VICE debugger operations (breakpoints, registers, stepping).",
       "inputSchema": {
         "type": "object",
@@ -3966,7 +4046,7 @@
           "propertyName": "op"
         }
       },
-      "metadata": {
+      "_meta": {
         "domain": "debug",
         "summary": "Manage breakpoints, inspect registers, and step through code on the VICE backend.",
         "lifecycle": "request-response",
@@ -4020,6 +4100,7 @@
     },
     {
       "name": "c64_vice",
+      "title": "Reads or updates selected VICE resources that are safe to expose through MCP.",
       "description": "Grouped entry point for reading and updating selected VICE resources.",
       "inputSchema": {
         "type": "object",
@@ -4084,7 +4165,7 @@
           "propertyName": "op"
         }
       },
-      "metadata": {
+      "_meta": {
         "domain": "vice",
         "summary": "Reads or updates selected VICE resources that are safe to expose through MCP.",
         "lifecycle": "request-response",

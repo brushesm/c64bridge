@@ -46,6 +46,7 @@ export function registerMcpServerToolsTests(withSharedMcpClient) {
 
       for (const descriptor of registryDescriptors) {
         const listed = listedByName.get(descriptor.name);
+        const metadata = listed?._meta;
         assert.ok(listed, `tool ${descriptor.name} should be returned`);
         assert.equal(listed.description, descriptor.description, "description should match registry");
         if (descriptor.inputSchema) {
@@ -57,38 +58,38 @@ export function registerMcpServerToolsTests(withSharedMcpClient) {
           );
         }
 
-        assertDescriptorMetadata(listed.metadata);
-        assert.equal(listed.metadata.domain, descriptor.metadata.domain);
-        assert.equal(listed.metadata.summary, descriptor.metadata.summary);
-        assert.equal(listed.metadata.lifecycle, descriptor.metadata.lifecycle);
-        assert.deepEqual(listed.metadata.resources, descriptor.metadata.resources);
-        assert.deepEqual(listed.metadata.prompts, descriptor.metadata.prompts);
-        assert.deepEqual(listed.metadata.tags, descriptor.metadata.tags);
-  assert.deepEqual(listed.metadata.platforms, descriptor.metadata.platforms);
+        assertDescriptorMetadata(metadata);
+        assert.equal(metadata.domain, descriptor.metadata.domain);
+        assert.equal(metadata.summary, descriptor.metadata.summary);
+        assert.equal(metadata.lifecycle, descriptor.metadata.lifecycle);
+        assert.deepEqual(metadata.resources, descriptor.metadata.resources);
+        assert.deepEqual(metadata.prompts, descriptor.metadata.prompts);
+        assert.deepEqual(metadata.tags, descriptor.metadata.tags);
+        assert.deepEqual(metadata.platforms, descriptor.metadata.platforms);
 
         if (descriptor.metadata.workflowHints) {
-          assert.deepEqual(listed.metadata.workflowHints, descriptor.metadata.workflowHints);
+          assert.deepEqual(metadata.workflowHints, descriptor.metadata.workflowHints);
         } else {
           assert.ok(
-            listed.metadata.workflowHints === undefined || listed.metadata.workflowHints === null,
+            metadata.workflowHints === undefined || metadata.workflowHints === null,
             "workflowHints should be absent when registry omits them",
           );
         }
 
         if (descriptor.metadata.prerequisites) {
-          assert.deepEqual(listed.metadata.prerequisites, descriptor.metadata.prerequisites);
+          assert.deepEqual(metadata.prerequisites, descriptor.metadata.prerequisites);
         } else {
           assert.ok(
-            listed.metadata.prerequisites === undefined || listed.metadata.prerequisites === null,
+            metadata.prerequisites === undefined || metadata.prerequisites === null,
             "prerequisites should be absent when registry omits them",
           );
         }
 
         if (descriptor.metadata.examples) {
-          assert.deepEqual(listed.metadata.examples, descriptor.metadata.examples);
+          assert.deepEqual(metadata.examples, descriptor.metadata.examples);
         } else {
           assert.ok(
-            listed.metadata.examples === undefined || listed.metadata.examples === null,
+            metadata.examples === undefined || metadata.examples === null,
             "examples should be absent when registry omits them",
           );
         }

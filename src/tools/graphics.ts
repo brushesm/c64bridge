@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { createPetsciiArt, type Bitmap } from "../petsciiArt.js";
+import { importImageAsVicBitmap, type VicBitmapMode } from "../vicBitmap.js";
 import {
   defineToolModule,
   OPERATION_DISCRIMINATOR,
@@ -44,6 +45,16 @@ interface PetsciiImageArgs extends Record<string, unknown> {
   foregroundColor?: number;
   dryRun: boolean;
   bitmap?: Bitmap;
+}
+
+interface GenerateBitmapArgs extends Record<string, unknown> {
+  imagePath: string;
+  format: VicBitmapMode;
+  bitmapAddress?: number;
+  screenAddress?: number;
+  borderColor?: number;
+  backgroundColor?: number;
+  preserveAspect: boolean;
 }
 
 function toRecord(details: unknown): Record<string, unknown> | undefined {
@@ -94,6 +105,39 @@ function decodeSpriteString(value: string, path: string): Uint8Array {
     throw new ToolValidationError("Unable to parse sprite hex string", { path, cause: error });
   }
 }
+
+function parseAddressValue(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const normalised = trimmed.startsWith("$") ? `0x${trimmed.slice(1)}` : trimmed;
+  const parsed = Number(normalised);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 0xFFFF) {
+    return null;
+  }
+  return parsed;
+}
+
+const addressSchema: Schema<number> = {
+  jsonSchema: {
+    description: "Absolute C64 memory address, provided as an integer or hex string such as $2000.",
+    type: ["integer", "string"],
+  },
+  parse(value: unknown, path?: string): number {
+    const resolvedPath = path ?? "$";
+    if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 0xFFFF) {
+      return value;
+    }
+    if (typeof value === "string") {
+      const parsed = parseAddressValue(value);
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+    throw new ToolValidationError("Address must be an integer or hex string within $0000-$FFFF", { path: resolvedPath });
+  },
+};
 
 const spriteBytesSchema: Schema<Uint8Array> = {
   jsonSchema: {
@@ -306,6 +350,51 @@ const renderPetsciiScreenArgsSchema = objectSchema<{
   additionalProperties: false,
 });
 
+const vicBitmapModeSchema: Schema<VicBitmapMode> = {
+  jsonSchema: {
+    description: "Bitmap encoding mode to generate for the VIC-II display.",
+    type: "string",
+    enum: ["hires", "multicolor"],
+  },
+  parse(value: unknown, path?: string): VicBitmapMode {
+    if (value === "hires" || value === "multicolor") {
+      return value;
+    }
+    throw new ToolValidationError("Bitmap format must be either hires or multicolor", { path: path ?? "$" });
+  },
+};
+
+const generateBitmapArgsSchema = objectSchema<GenerateBitmapArgs>({
+  description: "Import an image file, convert it to a VIC-II bitmap, write it into RAM, and enable bitmap mode.",
+  properties: {
+    imagePath: stringSchema({
+      description: "Filesystem path of the source image (PNG, JPEG, BMP, GIF, TIFF, and other Jimp-supported formats).",
+      minLength: 1,
+    }),
+    format: vicBitmapModeSchema,
+    bitmapAddress: optionalSchema(addressSchema, 0x2000),
+    screenAddress: optionalSchema(addressSchema, 0x0400),
+    borderColor: optionalSchema(numberSchema({
+      description: "Border colour index (0-15).",
+      integer: true,
+      minimum: 0,
+      maximum: 15,
+    }), 0),
+    backgroundColor: optionalSchema(numberSchema({
+      description: "Background colour index (0-15). Used for multicolor mode and aspect-ratio padding.",
+      integer: true,
+      minimum: 0,
+      maximum: 15,
+    }), 0),
+    preserveAspect: booleanSchema({
+      description: "Preserve the source image aspect ratio and pad with the background colour.",
+      default: true,
+    }),
+  },
+  required: ["imagePath", "format"],
+  additionalProperties: false,
+});
+
 type OperationlessArgs<T extends Record<string, unknown>> = Omit<T, typeof OPERATION_DISCRIMINATOR>;
 
 function stripOperationDiscriminator<T extends Record<string, unknown>>(
@@ -355,7 +444,9 @@ async function executeGenerateSprite(rawArgs: unknown, ctx: ToolExecutionContext
     if (error instanceof ToolError) {
       return toolErrorResult(error);
     }
-    return unknownErrorResult(error);
+    return toolErrorResult(new ToolExecutionError("Unable to generate sprite PRG", {
+      details: normaliseFailure(error instanceof Error ? { message: error.message } : error),
+    }));
   }
 }
 
@@ -386,7 +477,79 @@ async function executeRenderPetscii(rawArgs: unknown, ctx: ToolExecutionContext)
     if (error instanceof ToolError) {
       return toolErrorResult(error);
     }
-    return unknownErrorResult(error);
+    return toolErrorResult(new ToolExecutionError("Unable to render PETSCII screen", {
+      details: normaliseFailure(error instanceof Error ? { message: error.message } : error),
+    }));
+  }
+}
+
+async function executeGenerateBitmap(rawArgs: unknown, ctx: ToolExecutionContext): Promise<ToolRunResult> {
+  try {
+    const parsed = generateBitmapArgsSchema.parse(rawArgs ?? {});
+    ctx.logger.info("Generating VIC bitmap", {
+      imagePath: parsed.imagePath,
+      format: parsed.format,
+      bitmapAddress: parsed.bitmapAddress,
+      screenAddress: parsed.screenAddress,
+      preserveAspect: parsed.preserveAspect,
+    });
+
+    const prepared = await importImageAsVicBitmap({
+      imagePath: parsed.imagePath,
+      mode: parsed.format,
+      preserveAspect: parsed.preserveAspect,
+      backgroundColor: parsed.backgroundColor,
+      borderColor: parsed.borderColor,
+    });
+
+    const result = await ctx.client.displayBitmap(prepared, {
+      bitmapAddress: parsed.bitmapAddress,
+      screenAddress: parsed.screenAddress,
+    });
+    if (!result.success) {
+      throw new ToolExecutionError("C64 firmware reported failure while displaying bitmap image", {
+        details: normaliseFailure(result.details),
+      });
+    }
+
+    const details = toRecord(result.details) ?? {};
+    const data = {
+      mode: prepared.mode,
+      imagePath: parsed.imagePath,
+      sourceWidth: prepared.sourceWidth,
+      sourceHeight: prepared.sourceHeight,
+      logicalWidth: prepared.logicalWidth,
+      logicalHeight: prepared.logicalHeight,
+      displayWidth: prepared.displayWidth,
+      displayHeight: prepared.displayHeight,
+      backgroundColor: prepared.backgroundColor,
+      borderColor: prepared.borderColor,
+      bitmapAddress: details.bitmapAddress ?? null,
+      screenAddress: details.screenAddress ?? null,
+      colorRamAddress: details.colorRamAddress ?? null,
+      bank: details.bank ?? null,
+      registers: details.registers ?? null,
+      bitmapBytes: prepared.bitmapData.length,
+      screenBytes: prepared.screenRam.length,
+      colorRamBytes: prepared.colorRam.length,
+    };
+
+    return jsonResult(data, {
+      success: true,
+      mode: prepared.mode,
+      bank: details.bank ?? null,
+      bitmapAddress: details.bitmapAddress ?? null,
+      screenAddress: details.screenAddress ?? null,
+      sourceWidth: prepared.sourceWidth,
+      sourceHeight: prepared.sourceHeight,
+    });
+  } catch (error) {
+    if (error instanceof ToolError) {
+      return toolErrorResult(error);
+    }
+    return toolErrorResult(new ToolExecutionError("Unable to import or display bitmap image", {
+      details: normaliseFailure(error instanceof Error ? { message: error.message } : error),
+    }));
   }
 }
 
@@ -463,6 +626,7 @@ async function executeCreatePetscii(rawArgs: unknown, ctx: ToolExecutionContext)
 
 export interface GraphicsOperationMap extends OperationMap {
   readonly create_petscii: PetsciiImageArgs;
+  readonly generate_bitmap: GenerateBitmapArgs;
   readonly render_petscii: {
     readonly text: string;
     readonly borderColor?: number;
@@ -473,6 +637,7 @@ export interface GraphicsOperationMap extends OperationMap {
 
 export const graphicsOperationHandlers: OperationHandlerMap<GraphicsOperationMap> = {
   create_petscii: async (args, ctx) => executeCreatePetscii(stripOperationDiscriminator(args), ctx),
+  generate_bitmap: async (args, ctx) => executeGenerateBitmap(stripOperationDiscriminator(args), ctx),
   render_petscii: async (args, ctx) => executeRenderPetscii(stripOperationDiscriminator(args), ctx),
   generate_sprite: async (args, ctx) => executeGenerateSprite(stripOperationDiscriminator(args), ctx),
 };
@@ -515,6 +680,23 @@ export const graphicsModule = defineToolModule({
       supportedPlatforms: ["c64u", "vice"] as const,
       async execute(args, ctx) {
         return executeGenerateSprite(args, ctx);
+      },
+    },
+    {
+      name: "generate_bitmap",
+      description: "Import an image file, convert it to a VIC-II bitmap, write it into RAM, and enable the selected bitmap mode.",
+      summary: "Decodes a source image, quantizes it into C64 colours, writes bitmap/screen/color RAM, and switches the VIC-II into hires or multicolor bitmap mode.",
+      inputSchema: generateBitmapArgsSchema.jsonSchema,
+      relatedResources: ["c64://specs/vic", "c64://context/bootstrap"],
+      relatedPrompts: ["graphics-demo"],
+      tags: ["bitmap", "vic", "image"],
+      workflowHints: [
+        "Use when the user wants to display an external image on screen rather than generate PETSCII art.",
+        "Call out the selected bitmap and screen RAM addresses so follow-up memory inspection or raster work stays grounded.",
+      ],
+      supportedPlatforms: ["c64u", "vice"] as const,
+      async execute(args, ctx) {
+        return executeGenerateBitmap(args, ctx);
       },
     },
     {

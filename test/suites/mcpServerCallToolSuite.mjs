@@ -86,6 +86,25 @@ async function callTool(ctx, toolName, args) {
   return { result, supported };
 }
 
+async function callToolUntil(ctx, toolName, args, predicate, {
+  timeoutMs = 10_000,
+  intervalMs = 250,
+  description = toolName,
+} = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    last = await callTool(ctx, toolName, args);
+    if (!last.supported || predicate(last.result)) {
+      return last;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(
+    `Timed out waiting for ${description}; lastMetadata=${JSON.stringify(last?.result?.metadata ?? null)}`,
+  );
+}
+
 export function registerMcpServerCallToolTests(withSharedMcpClient) {
   test("CallTool returns structured error for unknown tools", async () => {
     await withSharedMcpClient(async ({ client }) => {
@@ -363,9 +382,21 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
 
   test("c64_graphics capture_frame returns normalized frame data via MCP", async () => {
     await withSharedMcpClient(async (ctx) => {
-      const { result, supported } = await callTool(ctx, "c64_graphics", {
-        op: "capture_frame",
-      });
+      const { result, supported } = ctx.platform === "vice"
+        ? await callToolUntil(
+            ctx,
+            "c64_graphics",
+            { op: "capture_frame" },
+            (candidate) => candidate.metadata?.success === true,
+            {
+              timeoutMs: 20_000,
+              intervalMs: 500,
+              description: "VICE capture_frame",
+            },
+          )
+        : await callTool(ctx, "c64_graphics", {
+            op: "capture_frame",
+          });
 
       if (!supported) {
         return;

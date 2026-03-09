@@ -183,8 +183,8 @@ async function setupSharedServer() {
     try {
       const toolList = await client.request({ method: "tools/list", params: {} }, ListToolsResultSchema);
       for (const descriptor of toolList.tools ?? []) {
-        const rawPlatforms = Array.isArray(descriptor.metadata?.platforms) && descriptor.metadata.platforms.length > 0
-          ? descriptor.metadata.platforms
+        const rawPlatforms = Array.isArray(descriptor._meta?.platforms) && descriptor._meta.platforms.length > 0
+          ? descriptor._meta.platforms
           : ["c64u"];
         const unique = Array.from(new Set(rawPlatforms.map((value) => String(value).toLowerCase())));
         toolSupport.set(descriptor.name, Object.freeze(unique));
