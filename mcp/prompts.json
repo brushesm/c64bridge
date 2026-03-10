@@ -29,7 +29,13 @@
       "arguments": [
         {
           "name": "hardware",
-          "description": "Optional focus area for the routine (sid, vic, cia, or multi for combined work)."
+          "description": "Optional focus area for the routine (sid, vic, cia, or multi for combined work).",
+          "options": [
+            "sid",
+            "vic",
+            "cia",
+            "multi"
+          ]
         }
       ],
       "_meta": {
@@ -89,7 +95,13 @@
       "arguments": [
         {
           "name": "mode",
-          "description": "Target VIC-II technique (text, multicolour, bitmap, or sprite)."
+          "description": "Target VIC-II technique (text, multicolour, bitmap, or sprite).",
+          "options": [
+            "text",
+            "multicolour",
+            "bitmap",
+            "sprite"
+          ]
         }
       ],
       "_meta": {
@@ -128,7 +140,11 @@
       "arguments": [
         {
           "name": "printerType",
-          "description": "Select Commodore (device 4) or Epson FX workflow helpers."
+          "description": "Select Commodore (device 4) or Epson FX workflow helpers.",
+          "options": [
+            "commodore",
+            "epson"
+          ]
         }
       ],
       "_meta": {
