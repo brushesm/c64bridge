@@ -67,12 +67,12 @@ async function waitForPort(port: number, timeoutMs = 4000): Promise<void> {
  */
 function buildHelloProgramBody(): Buffer {
   return Buffer.from([
-    0x0E,0x08,
-    0x0A,0x00,
-    0x99,
+    0x0E,0x08, // next line pointer -> $080E
+    0x0A,0x00, // BASIC line 10
+    0x99, // PRINT token
     0x22,0x48,0x45,0x4C,0x4C,0x4F,0x22,
     0x00,
-    0x00,0x00,
+    0x00,0x00, // end of line, end of program
   ]);
 }
 

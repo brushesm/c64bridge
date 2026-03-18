@@ -6,12 +6,41 @@ import process from "node:process";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+type BunChild = { exited: Promise<number | null | undefined> };
+type BunRuntime = {
+  spawn(options: {
+    cmd: string[];
+    cwd: string;
+    env: Record<string, string>;
+    stdout: "inherit";
+    stderr: "inherit";
+  }): BunChild;
+};
+
 const DEFAULT_TARGET = "mock";
 const DEFAULT_PLATFORM = "c64u";
 const DEFAULT_BUN_FILE_LIMIT = 4;
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaultEmbeddingsDir = path.join(repoRoot, "artifacts", "test-embeddings");
 const defaultTestFiles = listRepoTestFiles(path.join(repoRoot, "test"));
+
+function resolveNodeExecutable(): string {
+  const candidates = [
+    process.env.C64BRIDGE_TEST_NODE_BIN,
+    process.env.C64BRIDGE_NODE_BIN,
+    process.env.NODE_BINARY,
+    process.env.NODE_EXEC_PATH,
+    process.env.npm_node_execpath,
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return "node";
+}
 
 export type RunTestsArgs = {
   target: string;
@@ -96,6 +125,7 @@ async function runNodeFallback(target: string, explicitBaseUrl: string | null, p
   if (runCoverage) {
     console.warn("[run-tests] Coverage reporting is unavailable in Node fallback mode");
   }
+  const nodeExecutable = resolveNodeExecutable();
   const nodeScript = path.join(repoRoot, "scripts", "run-tests.mjs");
   const fallbackArgs = [] as string[];
   if (target !== DEFAULT_TARGET) {
@@ -106,11 +136,14 @@ async function runNodeFallback(target: string, explicitBaseUrl: string | null, p
   }
   fallbackArgs.push(...passthrough);
   return await new Promise<number>((resolve) => {
-    const childProcess = spawn(process.execPath, [nodeScript, ...fallbackArgs], {
+    const childProcess = spawn(nodeExecutable, [nodeScript, ...fallbackArgs], {
       cwd: repoRoot,
       env,
       stdio: "inherit",
-    });
+    }) as unknown as {
+      on(event: "error", listener: (error: Error) => void): void;
+      on(event: "exit", listener: (code: number | null) => void): void;
+    };
     childProcess.on("error", (error) => {
       console.error("[run-tests] Failed to launch Node fallback:", error);
       resolve(1);
@@ -144,7 +177,7 @@ async function main(): Promise<number> {
     env.C64_TEST_BASE_URL = explicitBaseUrl;
   }
   if (platform === "c64u" && normalizedTarget === "device" && !env.C64_TEST_BASE_URL) {
-    env.C64_TEST_BASE_URL = resolveBaseUrlFromConfig() ?? "http://c64u";
+    env.C64_TEST_BASE_URL = resolveBaseUrlFromConfig(env) ?? "http://c64u";
   }
 
   printMatrixHeading({
@@ -155,7 +188,7 @@ async function main(): Promise<number> {
     passthrough,
   });
 
-  const bunRuntime = (globalThis as { Bun?: { spawn?: typeof Bun.spawn } }).Bun;
+  const bunRuntime = (globalThis as { Bun?: BunRuntime }).Bun;
   if (!bunRuntime || typeof bunRuntime.spawn !== "function") {
     console.warn("[run-tests] Bun runtime not detected; falling back to Node runner");
     return await runNodeFallback(target, explicitBaseUrl, passthrough, env, runCoverage);
@@ -190,7 +223,9 @@ async function main(): Promise<number> {
   return typeof exitCode === "number" ? exitCode : 1;
 }
 
-process.exit(await main());
+if (import.meta.main) {
+  process.exit(await main());
+}
 
 type MatrixHeadingOptions = {
   platform: "c64u" | "vice";
@@ -272,7 +307,7 @@ function listRepoTestFiles(testRoot: string): string[] {
   return files;
 }
 
-function resolveBaseUrlFromConfig(): string | null {
+function resolveBaseUrlFromConfig(env: Record<string, string>): string | null {
   const configPathEnv = env.C64BRIDGE_CONFIG;
   const homeConfig = os.homedir() ? path.join(os.homedir(), ".c64bridge.json") : null;
   const repoConfig = path.join(repoRoot, ".c64bridge.json");
