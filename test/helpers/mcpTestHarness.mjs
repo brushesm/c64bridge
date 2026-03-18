@@ -16,6 +16,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "../..");
 const PLATFORM_RESOURCE_URI = "c64://platform/status";
+const MAX_STDERR_CHARS = 16_384;
 
 function parsePlatformStatusText(text) {
   const match = String(text ?? "").match(/Current platform:\s*`([^`]+)`/i);
@@ -93,6 +94,11 @@ let pendingUsers = 0;
 let activeSuites = 0;
 let shutdownInFlight;
 
+function appendTail(existing, chunk, maxChars = MAX_STDERR_CHARS) {
+  const next = `${existing}${chunk}`;
+  return next.length <= maxChars ? next : next.slice(next.length - maxChars);
+}
+
 async function setupSharedServer() {
   const mockServer = await startMockC64Server();
   const viceMockFlag = (process.env.C64_TEST_ENABLE_VICE_MOCK ?? "").toLowerCase();
@@ -156,11 +162,13 @@ async function setupSharedServer() {
   );
 
   try {
-    const stderrChunks = [];
+    let stderrTail = "";
     const stderr = transport.stderr;
     if (stderr) {
       stderr.setEncoding("utf8");
-      stderr.on("data", (chunk) => stderrChunks.push(chunk));
+      stderr.on("data", (chunk) => {
+        stderrTail = appendTail(stderrTail, chunk);
+      });
     }
 
     let resolveClose;
@@ -242,11 +250,11 @@ async function setupSharedServer() {
     }
 
     function stderrOutput() {
-      if (stderrChunks.length === 0) {
+      if (stderrTail.length === 0) {
         return "";
       }
-      const output = stderrChunks.join("");
-      stderrChunks.length = 0;
+      const output = stderrTail;
+      stderrTail = "";
       return output;
     }
 

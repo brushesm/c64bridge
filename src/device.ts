@@ -248,10 +248,12 @@ export class ViceBackend implements C64Facade {
   private readonly visible: boolean;
   private readonly extraArgs: string[];
   private static readonly supervisors = new Map<string, ViceProcessHandle>();
+  private static cleanupRegistered = false;
   private readonly debugEnabled = process.env.VICE_DEVICE_TEST_DEBUG === "1";
   private lastProcessStart = 0;
 
   constructor(config: ViceConfig) {
+    ViceBackend.ensureCleanupRegistration();
     const envBinary = configuredString(process.env.VICE_BINARY);
     const configBinary = config.exe !== undefined && config.exe !== null
       ? configuredString(config.exe) ?? (typeof config.exe === "string" ? config.exe : String(config.exe))
@@ -367,11 +369,21 @@ export class ViceBackend implements C64Facade {
     handle.process.once("exit", () => {
       ViceBackend.supervisors.delete(key);
     });
-    process.once("exit", () => {
-      handle.stop().catch(() => {});
-    });
     await this.waitForResponsiveMonitor(20_000);
     await this.waitForUsableMachine(20_000);
+  }
+
+  private static ensureCleanupRegistration(): void {
+    if (ViceBackend.cleanupRegistered) {
+      return;
+    }
+    ViceBackend.cleanupRegistered = true;
+    process.once("exit", () => {
+      for (const [, handle] of ViceBackend.supervisors) {
+        handle.stop().catch(() => {});
+      }
+      ViceBackend.supervisors.clear();
+    });
   }
 
   private async withClient<T>(fn: (client: ViceClient) => Promise<T>): Promise<T> {

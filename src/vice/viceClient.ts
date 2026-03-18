@@ -98,8 +98,16 @@ export class ViceClient {
     this.closing = false;
     this.socket.setNoDelay(true);
     await new Promise<void>((resolve, reject) => {
-      this.socket.once("connect", () => resolve());
-      this.socket.once("error", reject);
+      const onConnect = () => {
+        this.socket.off("error", onError);
+        resolve();
+      };
+      const onError = (error: Error) => {
+        this.socket.off("connect", onConnect);
+        reject(error);
+      };
+      this.socket.once("connect", onConnect);
+      this.socket.once("error", onError);
     });
     this.socket.on("data", (chunk: ViceDataChunk) => this.onData(chunk));
     this.socket.on("error", (err) => {
@@ -115,8 +123,12 @@ export class ViceClient {
   }
 
   close(): void {
+    const reason = new Error("VICE monitor connection closed");
     try {
       this.closing = true;
+      this.rejectAllPending(reason);
+      this.buffer = Buffer.alloc(0);
+      this.socket?.removeAllListeners();
       this.socket?.destroy();
     } catch {}
   }
@@ -188,6 +200,9 @@ export class ViceClient {
   }
 
   private send(cmd: number, body?: Buffer, options?: SendOptions): Promise<Buffer> {
+    if (!this.socket || this.socket.destroyed) {
+      return Promise.reject(new Error("VICE monitor socket is not connected"));
+    }
     const reqId = this.nextReqId++;
     const payload = body ?? Buffer.alloc(0);
     const header = Buffer.alloc(11);

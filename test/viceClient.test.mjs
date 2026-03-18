@@ -220,6 +220,20 @@ test("ViceClient rejects pending requests on socket errors and close is defensiv
   await assert.rejects(pending, /socket boom/);
   assert.equal(client.pending.size, 0);
 
+  let closeError = null;
+  client.pending.set(99, {
+    cmd: 0x85,
+    resolve: () => assert.fail("close should reject pending requests"),
+    reject: (error) => {
+      closeError = error;
+    },
+  });
+  client.buffer = Buffer.from([0x01, 0x02]);
+  client.close();
+  assert.match(closeError?.message ?? "", /connection closed/i);
+  assert.equal(client.pending.size, 0);
+  assert.equal(client.buffer.length, 0);
+
   const closingClient = new ViceClient();
   closingClient.socket = {
     destroy() {

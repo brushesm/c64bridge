@@ -67,6 +67,7 @@ export class ViceMockServer {
   private readonly registerMetadata = buildDefaultRegisterMetadata();
   private registerValues = new Map<number, number>();
   private resources = new Map<string, number | string>();
+  private readonly sockets = new Set<net.Socket>();
 
   constructor(options?: ViceMockServerOptions) {
     this.host = options?.host ?? "127.0.0.1";
@@ -78,7 +79,15 @@ export class ViceMockServer {
     if (this.server) throw new Error("ViceMockServer already started");
     await new Promise<void>((resolve, reject) => {
       this.server = net.createServer((socket) => this.handleSocket(socket));
-      this.server.on("error", reject);
+      const onError = (error: Error) => {
+        this.server?.off("listening", onListening);
+        reject(error);
+      };
+      const onListening = () => {
+        this.server?.off("error", onError);
+        resolve();
+      };
+      this.server.once("error", onError);
       this.server.listen(this.requestedPort ?? 0, this.host, () => resolve());
     });
     const address = this.server!.address();
@@ -88,12 +97,21 @@ export class ViceMockServer {
 
   async stop(): Promise<void> {
     if (!this.server) return;
+    for (const socket of this.sockets) {
+      socket.destroy();
+    }
+    this.sockets.clear();
     await new Promise<void>((resolve) => this.server!.close(() => resolve()));
     this.server = null;
   }
 
   private handleSocket(socket: net.Socket): void {
+    this.sockets.add(socket);
     let buffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+    socket.once("close", () => {
+      this.sockets.delete(socket);
+      buffer = Buffer.alloc(0);
+    });
     socket.on("data", (chunk: string | Uint8Array<ArrayBufferLike>) => {
       const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       buffer = Buffer.concat([buffer, data]);
