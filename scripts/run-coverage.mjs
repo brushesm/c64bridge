@@ -11,6 +11,8 @@ const repoRoot = path.resolve(__dirname, "..");
 const coverageDir = path.join(repoRoot, "coverage");
 const runner = path.join(repoRoot, "scripts", "invoke-bun.mjs");
 const configPath = path.join(repoRoot, ".c8rc.json");
+const testRoot = path.join(repoRoot, "test");
+const DEFAULT_COVERAGE_SHARD_SIZE = 12;
 
 const legs = [
   { name: "c64u-mock", args: ["--platform=c64u", "--target=mock"] },
@@ -29,33 +31,96 @@ const coverageConfig = JSON.parse(await fs.readFile(configPath, "utf8"));
 const includeMatchers = (coverageConfig.include ?? []).map(globToRegExp);
 const excludeMatchers = (coverageConfig.exclude ?? []).map(globToRegExp);
 
-await fs.mkdir(coverageDir, { recursive: true });
-await fs.rm(path.join(coverageDir, "matrix"), { recursive: true, force: true });
-await fs.mkdir(path.join(coverageDir, "matrix"), { recursive: true });
-
-const legOutputs = [];
-for (const leg of legs) {
-  const legDir = path.join(coverageDir, "matrix", leg.name);
-  await fs.mkdir(legDir, { recursive: true });
-
-  const reports = [];
-  reports.push(await runCoverageLeg(leg, legDir, "all", []));
-  for (const testFile of supplementalTests) {
-    reports.push(await runCoverageLeg(leg, legDir, path.basename(testFile, path.extname(testFile)), [testFile]));
-  }
-
-  const mergedLeg = mergeReports(await Promise.all(reports.map(readReport)));
-  const legPath = path.join(coverageDir, `${leg.name}.lcov.info`);
-  await fs.writeFile(legPath, serializeReport(mergedLeg), "utf8");
-  legOutputs.push(legPath);
+if (import.meta.main) {
+  await main();
 }
 
-const finalReport = mergeReports(await Promise.all(legOutputs.map(readReport)));
-const finalPath = path.join(coverageDir, "lcov.info");
-await fs.writeFile(finalPath, serializeReport(finalReport), "utf8");
+export async function main() {
+  await fs.mkdir(coverageDir, { recursive: true });
+  await fs.rm(path.join(coverageDir, "matrix"), { recursive: true, force: true });
+  await fs.mkdir(path.join(coverageDir, "matrix"), { recursive: true });
 
-const summary = summariseReport(finalReport);
-console.log(JSON.stringify({ lines: summary }, null, 2));
+  const legOutputs = [];
+  const defaultTestFiles = await listRepoTestFiles(testRoot);
+  const coverageBatches = buildCoverageBatches(defaultTestFiles, supplementalTests, process.env);
+  for (const leg of legs) {
+    const legDir = path.join(coverageDir, "matrix", leg.name);
+    await fs.mkdir(legDir, { recursive: true });
+
+    const reports = [];
+    for (const batch of coverageBatches) {
+      reports.push(await runCoverageLeg(leg, legDir, batch.label, batch.files));
+    }
+
+    const mergedLeg = mergeReports(await Promise.all(reports.map(readReport)));
+    const legPath = path.join(coverageDir, `${leg.name}.lcov.info`);
+    await fs.writeFile(legPath, serializeReport(mergedLeg), "utf8");
+    legOutputs.push(legPath);
+  }
+
+  const finalReport = mergeReports(await Promise.all(legOutputs.map(readReport)));
+  const finalPath = path.join(coverageDir, "lcov.info");
+  await fs.writeFile(finalPath, serializeReport(finalReport), "utf8");
+
+  const summary = summariseReport(finalReport);
+  console.log(JSON.stringify({ lines: summary }, null, 2));
+}
+
+export function buildCoverageBatches(testFiles, extraTests, env = process.env) {
+  const shardSize = resolveCoverageShardSize(env.C64BRIDGE_COVERAGE_SHARD_SIZE);
+  const batches = chunkFiles(testFiles, shardSize).map((files, index, all) => ({
+    label: all.length === 1 ? "all" : `all-${String(index + 1).padStart(2, "0")}`,
+    files,
+  }));
+
+  for (const testFile of extraTests) {
+    batches.push({
+      label: path.basename(testFile, path.extname(testFile)),
+      files: [testFile],
+    });
+  }
+
+  return batches;
+}
+
+export function resolveCoverageShardSize(raw) {
+  const parsed = Number(raw ?? "");
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_COVERAGE_SHARD_SIZE;
+}
+
+export function chunkFiles(files, chunkSize) {
+  if (files.length === 0) {
+    return [[]];
+  }
+
+  const chunks = [];
+  for (let index = 0; index < files.length; index += chunkSize) {
+    chunks.push(files.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+async function listRepoTestFiles(root) {
+  const files = [];
+
+  async function walk(dir) {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+        continue;
+      }
+      if (entry.isFile() && /\.test\.(mjs|ts)$/i.test(entry.name)) {
+        files.push(path.relative(repoRoot, fullPath));
+      }
+    }
+  }
+
+  await walk(root);
+  files.sort((a, b) => a.localeCompare(b));
+  return files;
+}
 
 function runCoverageLeg(leg, legDir, label, files) {
   return new Promise((resolve, reject) => {

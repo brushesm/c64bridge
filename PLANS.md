@@ -114,6 +114,7 @@ Authoritative execution plan for completing and stabilizing VICE support on bran
 - VICE support is concentrated in `src/device.ts`, `src/c64Client.ts`, and `src/vice/*`; grouped registries mainly route into existing modules.
 - The highest-risk areas for semantic drift are shared storage, config, and program operations whose grouped surface is BOTH but whose backend semantics differ substantially between C64U and VICE.
 - `c64_debug` and `c64_vice` already have dedicated unit and integration coverage, but they still need validation against the current full matrix and repeated runs.
+- TODO: Keep CI and automation on Node.js LTS majors only. Stay on Node 24 for now, ignore non-LTS Node 25 upgrade churn from Dependabot or similar automation, and plan the next runtime bump directly to Node 26 once it is the active LTS.
 
 ## Verification Results
 
