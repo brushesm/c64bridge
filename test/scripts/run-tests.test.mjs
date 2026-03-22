@@ -1,6 +1,6 @@
 import test from "#test/runner";
 import assert from "#test/assert";
-import { parseRunTestsArgs, shouldUseNodeFallback } from "../../scripts/run-tests.ts";
+import { buildBunTestBatches, parseRunTestsArgs, shouldUseNodeFallback } from "../../scripts/run-tests.ts";
 
 test("run-tests parses CLI args for matrix selection and passthrough", () => {
   const parsed = parseRunTestsArgs([
@@ -46,4 +46,31 @@ test("run-tests prefers Node when explicit Bun file set is too large unless over
   assert.equal(shouldUseNodeFallback(false, manyFiles, { C64BRIDGE_TEST_RUNNER: "bun" }), false);
   assert.equal(shouldUseNodeFallback(false, manyFiles, { C64BRIDGE_BUN_FILE_LIMIT: "8" }), false);
   assert.equal(shouldUseNodeFallback(false, manyFiles, { C64BRIDGE_TEST_RUNNER: "node" }), true);
+});
+
+test("run-tests shards default Bun suites instead of sending the full matrix through Node", () => {
+  const batches = buildBunTestBatches([], { C64BRIDGE_BUN_BATCH_SIZE: "20" });
+
+  assert.equal(Array.isArray(batches), true);
+  assert.equal(batches.length > 1, true);
+  assert.equal(batches[0]?.length <= 20, true);
+  assert.equal(batches.flat().includes("test/scripts/run-tests.test.mjs"), true);
+});
+
+test("run-tests shards explicit Bun file lists and preserves shared args", () => {
+  const batches = buildBunTestBatches(
+    [
+      "test/a.test.mjs",
+      "test/b.test.mjs",
+      "test/c.test.mjs",
+      "--timeout",
+      "5000",
+    ],
+    { C64BRIDGE_BUN_BATCH_SIZE: "2" },
+  );
+
+  assert.deepEqual(batches, [
+    ["test/a.test.mjs", "test/b.test.mjs", "--timeout", "5000"],
+    ["test/c.test.mjs", "--timeout", "5000"],
+  ]);
 });

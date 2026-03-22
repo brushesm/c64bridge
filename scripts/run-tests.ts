@@ -20,6 +20,7 @@ type BunRuntime = {
 const DEFAULT_TARGET = "mock";
 const DEFAULT_PLATFORM = "c64u";
 const DEFAULT_BUN_FILE_LIMIT = 4;
+const DEFAULT_BUN_BATCH_SIZE = 12;
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaultEmbeddingsDir = path.join(repoRoot, "artifacts", "test-embeddings");
 const defaultTestFiles = listRepoTestFiles(path.join(repoRoot, "test"));
@@ -120,6 +121,20 @@ export function shouldUseNodeFallback(runCoverage: boolean, passthrough: string[
   return explicitFiles.length > maxBunFiles;
 }
 
+export function buildBunTestBatches(passthrough: string[], env: NodeJS.ProcessEnv = process.env): string[][] {
+  const explicitFiles = passthrough.filter(looksLikeTestFileArg);
+  if (passthrough.length === 0) {
+    return chunkFiles(defaultTestFiles, resolveBunBatchSize(env.C64BRIDGE_BUN_BATCH_SIZE));
+  }
+  if (explicitFiles.length === 0) {
+    return [passthrough];
+  }
+
+  const batchSize = resolveBunBatchSize(env.C64BRIDGE_BUN_BATCH_SIZE);
+  const sharedArgs = passthrough.filter((arg) => !looksLikeTestFileArg(arg));
+  return chunkFiles(explicitFiles, batchSize).map((files) => [...files, ...sharedArgs]);
+}
+
 async function runNodeFallback(target: string, explicitBaseUrl: string | null, passthrough: string[], env: Record<string, string>, runCoverage: boolean): Promise<number> {
   console.warn("[run-tests] Using Node runner for this test set to avoid Bun memory growth on broad suites");
   if (runCoverage) {
@@ -194,7 +209,20 @@ async function main(): Promise<number> {
     return await runNodeFallback(target, explicitBaseUrl, passthrough, env, runCoverage);
   }
 
+  if (!runCoverage && passthrough.length === 0) {
+    return await runBunBatches(bunRuntime, env, buildBunTestBatches([], env), {
+      coverage: false,
+      labelPrefix: "default-suite",
+    });
+  }
+
   if (shouldUseNodeFallback(runCoverage, passthrough, env)) {
+    if (!runCoverage) {
+      return await runBunBatches(bunRuntime, env, buildBunTestBatches(passthrough, env), {
+        coverage: false,
+        labelPrefix: "sharded-suite",
+      });
+    }
     return await runNodeFallback(target, explicitBaseUrl, passthrough, env, runCoverage);
   }
 
@@ -281,8 +309,53 @@ function resolveBunFileLimit(raw: string | undefined): number {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_BUN_FILE_LIMIT;
 }
 
+function resolveBunBatchSize(raw: string | undefined): number {
+  const parsed = Number(raw ?? "");
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_BUN_BATCH_SIZE;
+}
+
 function looksLikeTestFileArg(arg: string): boolean {
   return /^test\/.*\.test\.(mjs|ts)$/i.test(arg) || /\.test\.(mjs|ts)$/i.test(arg);
+}
+
+function chunkFiles(files: string[], chunkSize: number): string[][] {
+  if (files.length === 0) {
+    return [];
+  }
+  const chunks: string[][] = [];
+  for (let index = 0; index < files.length; index += chunkSize) {
+    chunks.push(files.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+async function runBunBatches(
+  bunRuntime: BunRuntime,
+  env: Record<string, string>,
+  batches: string[][],
+  options: { coverage: boolean; labelPrefix: string },
+): Promise<number> {
+  const coverageArgs = options.coverage
+    ? ["--coverage", "--coverage-reporter=lcov", "--coverage-reporter=text"]
+    : [];
+
+  for (let index = 0; index < batches.length; index += 1) {
+    const batch = batches[index] ?? [];
+    console.log(`[run-tests] ${options.labelPrefix} batch ${index + 1}/${batches.length} (${batch.length} entries)`);
+    const child = bunRuntime.spawn({
+      cmd: [process.execPath, "test", ...coverageArgs, ...batch],
+      cwd: repoRoot,
+      env,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const exitCode = await child.exited;
+    if (typeof exitCode !== "number" || exitCode !== 0) {
+      return typeof exitCode === "number" ? exitCode : 1;
+    }
+  }
+
+  return 0;
 }
 
 function listRepoTestFiles(testRoot: string): string[] {
