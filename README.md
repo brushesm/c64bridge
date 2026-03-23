@@ -81,7 +81,7 @@ Verify: `node --version` → v24.x
   ```bash
   git clone https://github.com/chrisgleissner/c64bridge.git
   cd c64bridge
-  npm install
+  ./build install
   npm start
   ```
 
@@ -222,13 +222,25 @@ curl -s -X POST -H 'Content-Type: application/json' \
 
 ## Build & Test
 
-- `npm install` (or `bun install`) — install deps
-- `npm start` — dev server (ts-node)
-- `npm run build` — type‑check and build
-- `npm test` — integration tests (mock)
-- `npm test -- --real` — target real hardware (reuses your config)
-- `npm run coverage` — merged coverage across `c64u/mock`, `vice/mock`, and `vice/device` (emits `coverage/lcov.info`)
-- `npm run coverage:single -- --platform=c64u --target=mock` — one-leg Bun coverage when you only want a focused local report
+The [`./build`](./build) script at the project root wraps all development tasks behind a single, self-documented interface:
+
+```bash
+./build --help                                       # full command reference
+./build                                              # install + build + test matrix (full CI run)
+./build --skip-tests                                 # install + build only
+./build build                                        # TypeScript compile + doc generation
+./build test                                         # integration tests (mock backend)
+./build test --real                                  # test against real hardware
+./build test --platform vice --target mock           # single test leg
+./build test:matrix                                  # full matrix (c64u/mock · vice/mock · vice/device)
+./build coverage                                     # merged coverage report
+./build coverage:single --platform c64u --target mock
+./build check                                        # build + test matrix (no install)
+./build rag:rebuild                                  # rebuild RAG embeddings
+./build release --version 1.2.3                      # prepare a release
+```
+
+> **Starting the MCP server** is not managed by `./build`. Use `npm start` (from source) or `npx -y c64bridge@latest` (published package) as shown in the [Quick Start](#quick-start) section above.
 
 ## Documentation
 

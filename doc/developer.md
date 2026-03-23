@@ -11,24 +11,32 @@ Focused reference for maintainers and contributors. User-facing setup lives in [
 Install once:
 
 ```bash
+./build install      # install via the project build helper
+# or directly:
 npm install          # reliable everywhere
-# or
 bun install          # faster workflow (respects package-lock)
 ```
 
 ## 2. Core Workflows
 
+Most day-to-day tasks are run through the [`./build`](../build) helper at the project root. It wraps every `npm run` script behind a consistent, self-documented interface.
+
+```bash
+./build --help       # full command reference
+```
+
 | Task | Command |
 | --- | --- |
 | Launch MCP server (TS-aware) | `npm start` |
 | Run TypeScript entry directly | `npm run mcp` (Bun) · `npm run mcp:node` (dist only) |
-| Build + refresh generated docs | `npm run build` |
-| Tests (mock backend) | `npm test` |
-| Tests against hardware | `npm test -- --real [--base-url=http://host]` |
-| Coverage report | `npm run coverage` (merged matrix LCOV in `coverage/lcov.info`) |
-| End-to-end smoke (local/npm) | `npm run check:run-local` · `npm run check:run-npm` |
-| Node-only sanity | `npm run check:node-compat` |
-| VICE smoke (readiness + HELLO) | `npm run vice:smoke` |
+| Build + refresh generated docs | `./build build` |
+| Tests (mock backend) | `./build test` |
+| Tests against hardware | `./build test --real [--base-url http://host]` |
+| Full test matrix | `./build test:matrix` |
+| Coverage report | `./build coverage` (merged matrix LCOV in `coverage/lcov.info`) |
+| End-to-end smoke (local/npm) | `./build check:run-local` · `./build check:run-npm` |
+| Node-only sanity | `./build check:node-compat` |
+| VICE smoke (readiness + HELLO) | `./build vice:smoke` |
 
 `scripts/invoke-bun.mjs` automatically delegates npm scripts to Bun when available; stay on the npm variants if Bun is not installed.
 
@@ -36,19 +44,19 @@ bun install          # faster workflow (respects package-lock)
 
 | Platform | Target | Command | Environment |
 | --- | --- | --- | --- |
-| c64u | mock | `npm test -- --platform=c64u --target=mock` | `C64_MODE=c64u C64_TEST_TARGET=mock` |
-| c64u | device | `npm test -- --platform=c64u --target=device --base-url=http://c64u` | `C64_MODE=c64u C64_TEST_TARGET=real C64_TEST_BASE_URL=http://c64u` |
-| vice | mock | `npm test -- --platform=vice --target=mock` | `C64_MODE=vice VICE_TEST_TARGET=mock` |
-| vice | device | `npm test -- --platform=vice --target=device` | `C64_MODE=vice VICE_TEST_TARGET=vice` |
-| mixed | aggregate (no real c64u) | `npm run test:matrix` | see individual rows |
+| c64u | mock | `./build test --platform c64u --target mock` | `C64_MODE=c64u C64_TEST_TARGET=mock` |
+| c64u | device | `./build test --platform c64u --target device --base-url http://c64u` | `C64_MODE=c64u C64_TEST_TARGET=real C64_TEST_BASE_URL=http://c64u` |
+| vice | mock | `./build test --platform vice --target mock` | `C64_MODE=vice VICE_TEST_TARGET=mock` |
+| vice | device | `./build test --platform vice --target device` | `C64_MODE=vice VICE_TEST_TARGET=vice` |
+| mixed | aggregate (no real c64u) | `./build test:matrix` | see individual rows |
 
 The runner still accepts legacy flags (`--mock`, `--real`) for c64u workflows, but the explicit matrix keeps cross-platform runs symmetrical.
 
-`npm run coverage` executes the same three matrix legs, then merges the resulting LCOV reports while filtering to the same source scope configured in `.c8rc.json`. Use `npm run coverage:single -- --platform=... --target=...` for a one-leg Bun report when debugging a local coverage regression.
+`./build coverage` executes the same three matrix legs, then merges the resulting LCOV reports while filtering to the same source scope configured in `.c8rc.json`. Use `./build coverage:single --platform <p> --target <t>` for a one-leg Bun report when debugging a local coverage regression.
 
 > **Note**: Only suites that explicitly opt-in touch real hardware. Today that is `test/device.test.mjs` (real VICE via `target=device`) and the "C64Client against real C64" block in `test/c64Client.test.mjs` when `C64_TEST_TARGET=real`; all other tests continue to run against mocks even under a hardware matrix leg.
 
-Subsequent `npm run build` invocations reuse the incremental cache stored in `dist/.tsbuildinfo`; delete that file (or `dist/`) for a fully clean rebuild when needed.
+Subsequent `./build build` invocations reuse the incremental cache stored in `dist/.tsbuildinfo`; delete that file (or `dist/`) for a fully clean rebuild when needed.
 
 ## 3. Repository Layout (Essentials)
 
@@ -68,8 +76,8 @@ Subsequent `npm run build` invocations reuse the incremental cache stored in `di
 
 - **Tools**: Implement under `src/tools/<domain>/`, export from [`src/tools/registry/index.ts`](../src/tools/registry/index.ts). Share helpers via [`src/tools/registry/utils.ts`](../src/tools/registry/utils.ts). Add coverage in [`test/`](../test/).
 - **Prompts**: Author in [`src/prompts/`](../src/prompts/), register via [`src/prompts/registry.ts`](../src/prompts/registry.ts), mirror description updates in [AGENTS.md](../AGENTS.md) and `.github/prompts/`.
-- **REST surface**: Keep [`doc/c64u/c64-openapi.yaml`](c64u/c64-openapi.yaml) current. Regenerate the typed client with `npm run api:generate` when endpoints change.
-- **Docs**: `npm run build` calls [`scripts/update-readme.ts`](../scripts/update-readme.ts); never hand-edit the `<!-- AUTO-GENERATED:MCP-DOCS-* -->` block in the README.
+- **REST surface**: Keep [`doc/c64u/c64-openapi.yaml`](c64u/c64-openapi.yaml) current. Regenerate the typed client with `./build api:generate` when endpoints change.
+- **Docs**: `./build build` calls [`scripts/update-readme.ts`](../scripts/update-readme.ts); never hand-edit the `<!-- AUTO-GENERATED:MCP-DOCS-* -->` block in the README.
 
 ## 5. Configuration & Backends
 
@@ -95,31 +103,31 @@ Public VICE support excludes mock-only behaviors. If a capability only works in 
 ## 6. RAG Maintenance
 
 - Indices live under [`data/embeddings_*.json`](../data/)
-- Rebuild: `npm run rag:rebuild`
-- Fetch external sources: `npm run rag:fetch` (writes to [`external/`](../external/))
-- Discover sources (experimental): `npm run rag:discover` with `GITHUB_TOKEN`
+- Rebuild: `./build rag:rebuild`
+- Fetch external sources: `./build rag:fetch` (writes to [`external/`](../external/))
+- Discover sources (experimental): `./build rag:discover` with `GITHUB_TOKEN`
 
 Environment knobs: `RAG_EMBEDDINGS_DIR`, `RAG_BUILD_ON_START`, `RAG_REINDEX_INTERVAL_MS`, `RAG_DOC_FILES`.
 
 ## 7. Optional Services
 
-- **HTTP bridge**: Disabled by default; enable with `npm start -- --http [port]` for manual curl experiments. Details in [`doc/troubleshooting-mcp.md`](troubleshooting-mcp.md).
+- **HTTP bridge**: Disabled by default; enable with `npm start -- --http [port]` for manual curl experiments (the MCP server start is not managed by `./build`). Details in [`doc/troubleshooting-mcp.md`](troubleshooting-mcp.md).
 - **Docker image**: [`Dockerfile`](../Dockerfile) builds Ubuntu 24.04 + Node 24 + Bun for reproducible environments.
 - **Audio pipeline**: SID analysis uses [`naudiodon`](https://www.npmjs.com/package/naudiodon); see [`src/audio/`](../src/audio/) and tests like [`test/audioAnalysis.test.mjs`](../test/audioAnalysis.test.mjs).
 
 ## 8. Release & Packaging
 
-- `npm run check` — build + test in one pass (mock backend)
-- `npm run changelog:generate` — update CHANGELOG draft
-- `npm run release:prepare -- <version>` — pre-publish sanity checks
+- `./build check` — build + test matrix in one pass
+- `./build changelog` — update CHANGELOG draft
+- `./build release --version <version>` — bump version, regenerate manifest, prepend changelog notes
 - Published package ships [`dist/`](../dist/), [`doc/`](../doc/), [`data/`](../data/), [`scripts/`](../scripts/), [`generated/`](../generated/), and [`mcp.json`](../mcp.json)
 
 ## 9. Troubleshooting Cheatsheet
 
-- Missing entrypoint? Ensure dev deps are installed or run `npm run build` so [`dist/index.js`](../dist/index.js) exists.
+- Missing entrypoint? Ensure dev deps are installed or run `./build build` so [`dist/index.js`](../dist/index.js) exists.
 - Tool not exposed? Confirm registry wiring (`src/tools/registry/index.ts`) and rebuild.
 - Real-device tests flaky? Verify `C64_TEST_BASE_URL` reachability; replay curl probes while the HTTP bridge is active.
-- Empty RAG answers? Rebuild embeddings (`npm run rag:rebuild`) and confirm `RAG_EMBEDDINGS_DIR` points at committed data.
+- Empty RAG answers? Rebuild embeddings (`./build rag:rebuild`) and confirm `RAG_EMBEDDINGS_DIR` points at committed data.
 - Logs quiet? Remember all server logs emit to stderr to keep stdout dedicated to MCP.
 
 Stay in lockstep with the [README](../README.md) and [`AGENTS.md`](../AGENTS.md) when introducing features so external docs remain accurate.
@@ -129,7 +137,7 @@ Stay in lockstep with the [README](../README.md) and [`AGENTS.md`](../AGENTS.md)
 Quick sanity that VICE is reachable and BASIC readiness + simple run works end‑to‑end.
 
 ```bash
-npm run vice:smoke
+./build vice:smoke
 ```
 
 Env knobs:
