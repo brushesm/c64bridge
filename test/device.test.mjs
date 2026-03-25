@@ -8,9 +8,12 @@ import { startViceMockServer } from "../src/vice/mockServer.js";
 import { startMockC64Server } from "../scripts/mockC64Server.mjs";
 
 const platform = (process.env.C64_MODE ?? "").toLowerCase();
-const viceSuite = platform === "vice" ? test : test.skip;
 const viceTarget = (process.env.VICE_TEST_TARGET ?? "mock").toLowerCase();
 const useViceMock = viceTarget !== "vice";
+// Skip ViceBackend integration tests when running against real VICE but no device is available.
+// Set VICE_AVAILABLE=1 in the environment when a real VICE instance is reachable.
+const viceAvailable = process.env.VICE_AVAILABLE === "1";
+const viceSuite = platform === "vice" && (useViceMock || viceAvailable) ? test : test.skip;
 const debugEnabled = process.env.VICE_DEVICE_TEST_DEBUG === "1";
 function debugLog(...args) {
   if (debugEnabled) {
