@@ -966,3 +966,217 @@ test("device: ViceBackend defaults to visible launches and parses boolean overri
     assert.equal(backend.warp, false);
   });
 });
+
+test("device: C64u facade exercises runner, machine, config, drive, stream, and file endpoints", async (t) => {
+  const mock = await startMockC64Server({ networkPassword: "open-sesame" });
+  const mockUrl = new URL(mock.baseUrl);
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), "c64u-device-config-"));
+  const cfgPath = path.join(cfgDir, "c64bridge.json");
+  fs.writeFileSync(cfgPath, JSON.stringify({
+    c64u: {
+      host: mockUrl.hostname,
+      port: Number(mockUrl.port),
+      networkPassword: "open-sesame",
+    },
+  }), "utf8");
+
+  t.after(async () => {
+    fs.rmSync(cfgDir, { recursive: true, force: true });
+    await mock.close();
+  });
+
+  await withEnv({
+    C64BRIDGE_CONFIG: cfgPath,
+    C64_MODE: "c64u",
+  }, async () => {
+    const { facade, selected } = await createFacade();
+    assert.equal(selected, "c64u");
+    assert.equal(facade.type, "c64u");
+    assert.equal(await facade.ping(), true);
+
+    const readResponses = [
+      {
+        headers: { "content-type": "application/octet-stream" },
+        data: Uint8Array.from([0x10, 0x11, 0x12, 0x13]).buffer,
+      },
+      {
+        headers: { "content-type": "application/json" },
+        data: (() => {
+          const body = Buffer.from(JSON.stringify({ data: "AABB" }), "utf8");
+          return body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength);
+        })(),
+      },
+    ];
+    const writes = [];
+    const v1 = facade.api.v1;
+    v1.runnersRunPrgCreate = async (_route, payload) => ({ data: { result: "run_prg", bytes: Buffer.from(payload).length } });
+    v1.runnersLoadPrgUpdate = async (_route, payload) => ({ data: { result: "load_prg", file: payload.file } });
+    v1.runnersRunPrgUpdate = async (_route, payload) => ({ data: { result: "run_prg_file", file: payload.file } });
+    v1.runnersRunCrtUpdate = async (_route, payload) => ({ data: { result: "run_crt", file: payload.file } });
+    v1.runnersSidplayUpdate = async (_route, payload) => ({ data: { result: "sidplay", file: payload.file, songnr: payload.songnr } });
+    v1.runnersSidplayCreate = async (_route, form, options) => ({ data: { result: "sidplay_attachment", bytes: Buffer.from(form.sid).length, songnr: options?.songnr ?? null } });
+    v1.machineReadmemList = async () => readResponses.shift();
+    v1.machineWritememUpdate = async (_route, payload) => {
+      writes.push({ kind: "small", address: payload.address, data: payload.data });
+      return { data: { result: "wrote_small" } };
+    };
+    v1.machineWritememCreate = async (_route, payload, body) => {
+      writes.push({ kind: "large", address: payload.address, length: Buffer.from(body).length });
+      return { data: { result: "wrote_large" } };
+    };
+    v1.machineResetUpdate = async () => ({ data: { result: "reset" } });
+    v1.machineRebootUpdate = async () => ({ data: { result: "reboot" } });
+    v1.machinePauseUpdate = async () => ({ data: { result: "pause" } });
+    v1.machineResumeUpdate = async () => ({ data: { result: "resume" } });
+    v1.machinePoweroffUpdate = async () => ({ data: { result: "poweroff" } });
+    v1.machineMenuButtonUpdate = async () => ({ data: { result: "menu" } });
+    v1.machineDebugregList = async () => ({ data: { value: "AB" } });
+    v1.machineDebugregUpdate = async (_route, payload) => ({ data: { value: payload.value } });
+    v1.versionList = async () => ({ data: { version: "mock" } });
+    v1.infoList = async () => ({ data: { product: "mock" } });
+    v1.drivesList = async () => ({ data: { drives: { drive8: { power: "on" } } } });
+    v1.drivesMountUpdate = async (drive, _route, payload) => ({ data: { drive, ...payload } });
+    v1.drivesRemoveUpdate = async (drive) => ({ data: { drive, removed: true } });
+    v1.drivesResetUpdate = async (drive) => ({ data: { drive, reset: true } });
+    v1.drivesOnUpdate = async (drive) => ({ data: { drive, power: "on" } });
+    v1.drivesOffUpdate = async (drive) => ({ data: { drive, power: "off" } });
+    v1.drivesSetModeUpdate = async (drive, _route, payload) => ({ data: { drive, mode: payload.mode } });
+    v1.drivesLoadRomUpdate = async (drive, _route, payload) => ({ data: { drive, file: payload.file } });
+    v1.streamsStartUpdate = async (stream, _route, payload) => ({ data: { stream, target: payload.ip } });
+    v1.streamsStopUpdate = async (stream) => ({ data: { stream, stopped: true } });
+    v1.configsList = async () => ({ data: { categories: ["MACHINE"] } });
+    v1.configsDetail = async (category) => ({ data: { category, mode: "mock" } });
+    v1.configsDetail2 = async (category, item) => ({ data: { category, item, value: "mock" } });
+    v1.configsUpdate = async (category, item, payload) => ({ data: { category, item, value: payload.value } });
+    v1.configsCreate = async (payload) => ({ data: { categories: Object.keys(payload) } });
+    v1.configsLoadFromFlashUpdate = async () => ({ data: { result: "load" } });
+    v1.configsSaveToFlashUpdate = async () => ({ data: { result: "save" } });
+    v1.configsResetToDefaultUpdate = async () => ({ data: { result: "reset" } });
+    v1.filesInfoDetail = async (pathValue) => ({ data: { path: decodeURIComponent(pathValue) } });
+    v1.filesCreateD64Update = async (pathValue, _route, payload) => ({ data: { path: decodeURIComponent(pathValue), ...payload } });
+    v1.filesCreateD71Update = async (pathValue, _route, payload) => ({ data: { path: decodeURIComponent(pathValue), ...payload } });
+    v1.filesCreateD81Update = async (pathValue, _route, payload) => ({ data: { path: decodeURIComponent(pathValue), ...payload } });
+    v1.filesCreateDnpUpdate = async (pathValue, _route, payload) => ({ data: { path: decodeURIComponent(pathValue), ...payload } });
+    v1.runnersModplayUpdate = async (_route, payload) => ({ data: { result: "modplay", file: payload.file } });
+
+    const prgRun = await facade.runPrg(Buffer.from([0x01, 0x08, 0x00]));
+    const prgLoad = await facade.loadPrgFile("//USB0/demo.prg");
+    const prgFileRun = await facade.runPrgFile("//USB0/run.prg");
+    const crtRun = await facade.runCrtFile("//USB0/demo.crt");
+    const sidplay = await facade.sidplayFile("//USB0/theme.sid", 2);
+    const sidAttachment = await facade.sidplayAttachment(Buffer.from([1, 2, 3]), {
+      songnr: 1,
+      songlengths: Buffer.from([4, 5, 6]),
+    });
+    assert.equal(prgRun.success, true);
+    assert.equal(prgLoad.success, true);
+    assert.equal(prgFileRun.success, true);
+    assert.equal(crtRun.success, true);
+    assert.equal(sidplay.success, true);
+    assert.equal(sidAttachment.success, true);
+    const read = await facade.readMemory(0x2000, 4);
+    assert.deepEqual(Array.from(read), [0x10, 0x11, 0x12, 0x13]);
+    const readJson = await facade.readMemory(0x2000, 2);
+    assert.ok(readJson.length > 0);
+
+    await facade.writeMemory(0x2100, Uint8Array.of(0xAA, 0xBB));
+    const largeWrite = new Uint8Array(129).fill(0x5A);
+    await facade.writeMemory(0x2200, largeWrite);
+    assert.deepEqual(writes, [
+      { kind: "small", address: "2100", data: "AABB" },
+      { kind: "large", address: "2200", length: 129 },
+    ]);
+
+    assert.equal((await facade.reset()).success, true);
+    assert.equal((await facade.reboot()).success, true);
+    assert.equal((await facade.pause()).success, true);
+    assert.equal((await facade.resume()).success, true);
+    assert.equal((await facade.poweroff()).success, true);
+    assert.equal((await facade.menuButton()).success, true);
+
+    const debugWrite = await facade.debugregWrite("AB");
+    const debugRead = await facade.debugregRead();
+    assert.equal(debugWrite.success, true);
+    assert.equal(debugRead.value, "AB");
+    assert.ok((await facade.version()));
+    assert.ok((await facade.info()));
+
+    assert.ok(await facade.drivesList());
+    assert.equal((await facade.driveMount("drive8", "//USB0/disk.d64", { type: "d64", mode: "readwrite" })).success, true);
+    assert.equal((await facade.driveRemove("drive8")).success, true);
+    assert.equal((await facade.driveReset("drive8")).success, true);
+    assert.equal((await facade.driveOn("drive8")).success, true);
+    assert.equal((await facade.driveOff("drive8")).success, true);
+    assert.equal((await facade.driveSetMode("drive8", "1581")).success, true);
+    assert.equal((await facade.driveLoadRom("drive8", "//USB0/1541.rom")).success, true);
+
+    assert.equal((await facade.streamStart("video", "127.0.0.1:9999")).success, true);
+    assert.equal((await facade.streamStop("video")).success, true);
+    assert.ok(await facade.configsList());
+    assert.ok(await facade.configGet("MACHINE"));
+    assert.ok(await facade.configGet("MACHINE", "name"));
+    assert.equal((await facade.configSet("MACHINE", "name", "VICELESS")).success, true);
+    assert.equal((await facade.configBatchUpdate({ AUDIO: { volume: 5 } })).success, true);
+    assert.equal((await facade.configSaveToFlash()).success, true);
+    assert.equal((await facade.configLoadFromFlash()).success, true);
+    assert.equal((await facade.configResetToDefault()).success, true);
+
+    assert.ok(await facade.filesInfo("//USB0/demo.d64"));
+    assert.equal((await facade.filesCreateD64("//USB0/demo.d64", { tracks: 40, diskname: "DEMO" })).success, true);
+    assert.equal((await facade.filesCreateD71("//USB0/demo.d71", { diskname: "DUCKS" })).success, true);
+    assert.equal((await facade.filesCreateD81("//USB0/demo.d81", { diskname: "SEA" })).success, true);
+    assert.equal((await facade.filesCreateDnp("//USB0/demo.dnp", 160, { diskname: "POND" })).success, true);
+    assert.equal((await facade.modplayFile("//USB0/duck.mod")).success, true);
+
+    assert.equal(mock.state.lastRequest.headers["x-password"], "open-sesame");
+    assert.equal((await facade.configGet("MACHINE")).mode, "mock");
+    assert.equal((await facade.configGet("MACHINE", "name")).item, "name");
+  });
+});
+
+test("device: ViceBackend reports unsupported operations and emulator metadata", async () => {
+  await withEnv({
+    VICE_TEST_TARGET: "mock",
+    VICE_HOST: "127.0.0.1",
+    VICE_PORT: "6510",
+  }, async () => {
+    const backend = new ViceBackend({ host: "127.0.0.1", port: "6510" });
+    backend.withClient = async (fn) => fn({
+      async info() {},
+      close() {},
+      async resourceGet(name) {
+        return { type: "string", value: name };
+      },
+    });
+
+    const pause = await backend.pause();
+    const resume = await backend.resume();
+    assert.equal(pause.success, false);
+    assert.equal(resume.success, false);
+    assert.match(String(pause.details?.message ?? ""), /not implemented/i);
+    assert.match(String(resume.details?.message ?? ""), /unavailable/i);
+
+    await assert.rejects(() => backend.menuButton(), /not supported/);
+    await assert.rejects(() => backend.debugregRead(), /not supported/);
+    await assert.rejects(() => backend.debugregWrite("AA"), /not supported/);
+    await assert.rejects(() => backend.driveLoadRom(), /not supported/);
+    await assert.rejects(() => backend.streamStart("video", "127.0.0.1"), /not supported/);
+    await assert.rejects(() => backend.streamStop("video"), /not supported/);
+    await assert.rejects(() => backend.configLoadFromFlash(), /not supported/);
+    await assert.rejects(() => backend.configSaveToFlash(), /not supported/);
+    await assert.rejects(() => backend.configResetToDefault(), /not supported/);
+    await assert.rejects(() => backend.filesInfo("/tmp/file"), /not supported/);
+    await assert.rejects(() => backend.filesCreateD64("/tmp/file"), /not supported/);
+    await assert.rejects(() => backend.filesCreateD71("/tmp/file"), /not supported/);
+    await assert.rejects(() => backend.filesCreateD81("/tmp/file"), /not supported/);
+    await assert.rejects(() => backend.filesCreateDnp("/tmp/file", 40), /not supported/);
+
+    const version = await backend.version();
+    const info = await backend.info();
+    const configs = await backend.configsList();
+    assert.deepEqual(version, { emulator: "vice", host: "127.0.0.1", port: 6510 });
+    assert.deepEqual(info, { emulator: "vice", host: "127.0.0.1", port: 6510 });
+    assert.ok(Array.isArray(configs.categories));
+    assert.equal(configs.categories[0].name, "VICE");
+  });
+});

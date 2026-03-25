@@ -185,4 +185,104 @@ describe("meta/audio", () => {
     expect(result.metadata.error?.kind).toBe("execution");
     expect(result.metadata.error?.details?.metrics?.maxRms).toBeGreaterThan(0.02);
   });
+
+  test("music_compile_play_analyze uses SID playback path", async () => {
+    const responses = [
+      createAnalysis({ averageRms: 0.002, maxRms: 0.003 }),
+      createAnalysis({ averageRms: 0.03, maxRms: 0.05 }),
+      createAnalysis({ averageRms: 0.002, maxRms: 0.003 }),
+    ];
+    ctx.client.recordAndAnalyzeAudio = mock(async () => responses.shift() ?? createAnalysis({ averageRms: 0.002, maxRms: 0.003 }));
+
+    const result = await metaModule.invoke(
+      "music_compile_play_analyze",
+      {
+        sidwave: SAMPLE_SIDWAVE,
+        output: "sid",
+        waitBeforeCaptureMs: 0,
+        analysisDurationSeconds: 1,
+        silenceDurationSeconds: 0.5,
+        postSilenceWaitMs: 0,
+        silenceWaitMs: 0,
+      },
+      ctx,
+    );
+
+    expect(result.metadata.success).toBe(true);
+    expect(result.structuredContent?.data?.playback?.method).toBe("sidplay_attachment");
+    expect(ctx.client.sidplayAttachment).toHaveBeenCalledTimes(1);
+    expect(ctx.client.runPrg).not.toHaveBeenCalled();
+  });
+
+  test("music_compile_play_analyze fails pre-silence verification when the baseline is noisy", async () => {
+    ctx.client.recordAndAnalyzeAudio = mock(async () => createAnalysis({ averageRms: 0.03, maxRms: 0.05 }));
+
+    const result = await metaModule.invoke(
+      "music_compile_play_analyze",
+      {
+        sidwave: SAMPLE_SIDWAVE,
+        waitBeforeCaptureMs: 0,
+        silenceRmsThreshold: 0.02,
+        silenceWaitMs: 0,
+      },
+      ctx,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.metadata.error?.kind).toBe("execution");
+    expect(result.metadata.error?.details?.metrics?.maxRms).toBeGreaterThan(0.02);
+    expect(ctx.client.runPrg).not.toHaveBeenCalled();
+  });
+
+  test("music_compile_play_analyze requires RMS metrics from the main analysis capture", async () => {
+    const responses = [
+      createAnalysis({ averageRms: 0.002, maxRms: 0.003 }),
+      createAnalysis({ averageRms: null, maxRms: null }),
+      createAnalysis({ averageRms: 0.002, maxRms: 0.003 }),
+    ];
+    ctx.client.recordAndAnalyzeAudio = mock(async () => responses.shift() ?? createAnalysis({ averageRms: 0.002, maxRms: 0.003 }));
+
+    const result = await metaModule.invoke(
+      "music_compile_play_analyze",
+      {
+        sidwave: SAMPLE_SIDWAVE,
+        waitBeforeCaptureMs: 0,
+        analysisDurationSeconds: 1,
+        silenceDurationSeconds: 0.5,
+        postSilenceWaitMs: 0,
+        silenceWaitMs: 0,
+      },
+      ctx,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.metadata.error?.kind).toBe("execution");
+    expect(result.metadata.error?.details?.globalMetrics).toEqual({
+      average_pitch_deviation: null,
+      detected_bpm: null,
+      average_rms: null,
+      max_rms: null,
+    });
+  });
+
+  test("music_compile_play_analyze disables post verification by silencing directly", async () => {
+    ctx.client.recordAndAnalyzeAudio = mock(async () => createAnalysis({ averageRms: 0.01, maxRms: 0.02 }));
+
+    const result = await metaModule.invoke(
+      "music_compile_play_analyze",
+      {
+        sidwave: SAMPLE_SIDWAVE,
+        waitBeforeCaptureMs: 0,
+        verifySilenceBefore: false,
+        verifySilenceAfter: false,
+        silenceWaitMs: 0,
+      },
+      ctx,
+    );
+
+    expect(result.metadata.success).toBe(true);
+    expect(result.structuredContent?.data?.silenceChecks?.before).toBeNull();
+    expect(result.structuredContent?.data?.silenceChecks?.after).toBeNull();
+    expect(ctx.client.sidSilenceAll).toHaveBeenCalledTimes(1);
+  });
 });

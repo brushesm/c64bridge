@@ -577,6 +577,39 @@ test("upload_run_basic reports remaining errors after auto-fix retry", async () 
   assert.equal(uploads.length, 2);
 });
 
+test("upload_run_basic auto-fixes missing closing parenthesis while ignoring REM text", async () => {
+  const uploads = [];
+  const screens = [
+    "?SYNTAX ERROR IN 10\nREADY.\n",
+    "READY.\n",
+  ];
+  const ctx = {
+    client: {
+      async uploadAndRunBasic(program) {
+        uploads.push(program);
+        return { success: true };
+      },
+      async readScreen() {
+        return screens.shift() ?? "READY.\n";
+      },
+    },
+    logger: createLogger(),
+  };
+
+  const result = await programRunnersModule.invoke(
+    "upload_run_basic",
+    { program: '10 PRINT ("DUCKS":REM ")"\n20 END' },
+    ctx,
+  );
+
+  assert.equal(result.isError, undefined);
+  assert.equal(uploads.length, 2);
+  assert.ok(uploads[1] !== uploads[0]);
+  assert.ok(uploads[1].includes('REM ")"'));
+  assert.equal(result.metadata.autoFix.applied, true);
+  assert.ok(result.metadata.autoFix.changes[0].notes.some((note) => note.includes("closing parenthesis")));
+});
+
 test("upload_run_basic handles screen read failures without errors", async () => {
   const uploads = [];
   const ctx = {
