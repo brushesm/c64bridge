@@ -102,10 +102,12 @@ function appendTail(existing, chunk, maxChars = MAX_STDERR_CHARS) {
 async function setupSharedServer() {
   const mockServer = await startMockC64Server();
   const viceMockFlag = (process.env.C64_TEST_ENABLE_VICE_MOCK ?? "").toLowerCase();
-  const viceTarget = (process.env.VICE_TEST_TARGET ?? "mock").toLowerCase();
+  // Always start a vice mock server when the platform is vice.  The MCP
+  // integration tests exercise the protocol layer, not the VICE connection,
+  // so the child server must never try to manage a real emulator process.
   const shouldStartViceMock = viceMockFlag === "true"
     || viceMockFlag === "1"
-    || ((process.env.C64_MODE ?? "").toLowerCase() === "vice" && viceTarget !== "vice");
+    || (process.env.C64_MODE ?? "").toLowerCase() === "vice";
   const viceMockServer = shouldStartViceMock
     ? await startViceMockServer({ host: "127.0.0.1" })
     : null;
@@ -135,18 +137,25 @@ async function setupSharedServer() {
   }
   fs.writeFileSync(configPath, JSON.stringify(configPayload), "utf8");
 
+  const childEnv = {
+    ...process.env,
+    NODE_ENV: "test",
+    C64BRIDGE_CONFIG: configPath,
+    C64_TEST_TARGET: "mock",
+  };
+  // Force the child server to use the vice mock server rather than trying to
+  // manage a real emulator process (which would hang waiting for port/readiness).
+  if (viceMockServer) {
+    childEnv.VICE_TEST_TARGET = "mock";
+  }
+
   const transport = new StdioClientTransport({
     command: useBunRunner ? bunExecutable : nodeExecutable,
     args: useBunRunner
       ? [serverEntrypointTs]
       : [ensureDistEntrypoint(serverEntrypointDist)],
     cwd: repoRoot,
-    env: {
-      ...process.env,
-      NODE_ENV: "test",
-      C64BRIDGE_CONFIG: configPath,
-      C64_TEST_TARGET: "mock",
-    },
+    env: childEnv,
     stderr: "pipe",
   });
 
