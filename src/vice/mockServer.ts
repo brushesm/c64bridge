@@ -436,6 +436,16 @@ export class ViceMockServer {
     this.memory.fill(0x20, SCREEN_BASE, SCREEN_BASE + SCREEN_SIZE);
     const ready = asciiToScreenCodes("READY.");
     ready.copy(Buffer.from(this.memory.buffer, SCREEN_BASE, ready.length));
+    // Initialise BASIC zero-page pointers so waitForBasicReady() succeeds
+    // immediately instead of spinning for 20 s on all-zero memory.
+    //   $002B-$002C  TXTTAB  = $0801  (start of BASIC text)
+    //   $002D-$002E  VARTAB  = $0803  (start of variables)
+    //   $002F-$0030  ARYTAB  = $0803  (start of arrays)
+    //   $0031-$0032  STREND  = $0803  (end of BASIC storage)
+    this.memory[0x2B] = 0x01; this.memory[0x2C] = 0x08;
+    this.memory[0x2D] = 0x03; this.memory[0x2E] = 0x08;
+    this.memory[0x2F] = 0x03; this.memory[0x30] = 0x08;
+    this.memory[0x31] = 0x03; this.memory[0x32] = 0x08;
     this.helloReady = false;
     this.checkpoints.clear();
     this.nextCheckpointId = 1;
