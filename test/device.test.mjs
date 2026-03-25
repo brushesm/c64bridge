@@ -3,7 +3,7 @@ import assert from "#test/assert";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { createFacade } from "../src/device.js";
+import { createFacade, ViceBackend } from "../src/device.js";
 import { startViceMockServer } from "../src/vice/mockServer.js";
 import { startMockC64Server } from "../scripts/mockC64Server.mjs";
 
@@ -27,6 +27,28 @@ const WAIT_READY_SCAN_LENGTH = 1_000; // full text screen
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withEnv(overrides, fn) {
+  const previous = new Map(Object.keys(overrides).map((key) => [key, process.env[key]]));
+  try {
+    for (const [key, value] of Object.entries(overrides)) {
+      if (value === undefined || value === null) {
+        delete process.env[key];
+      } else {
+        process.env[key] = String(value);
+      }
+    }
+    return await fn();
+  } finally {
+    for (const [key, value] of previous.entries()) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
 }
 
 async function waitForTruthy(check, {
@@ -747,4 +769,168 @@ test("device: createFacade fallback behavior", async (t) => {
 test("device: URL helpers parse endpoints and ports", () => {
   // These helpers are not exported directly; we exercise indirectly via createFacade resolveBaseUrl
   // by constructing config objects through env file
+});
+
+test("device: ViceBackend unit branches", async () => {
+  await withEnv({
+    VICE_TEST_TARGET: "mock",
+    VICE_HOST: "127.0.0.1",
+    VICE_PORT: "6510",
+    VICE_ARGS: "--limit-cycles 42 --trace",
+  }, async () => {
+    const backend = new ViceBackend({ host: "localhost", port: "6502" });
+    assert.deepEqual(backend.getEndpoint(), { host: "127.0.0.1", port: 6510 });
+
+    const calls = [];
+    const readyPointers = Buffer.alloc(8);
+    readyPointers.writeUInt16LE(0x0801, 0);
+    readyPointers.writeUInt16LE(0x0810, 2);
+    readyPointers.writeUInt16LE(0x0810, 4);
+    readyPointers.writeUInt16LE(0x0810, 6);
+    const fakeClient = {
+      async info() {
+        calls.push(["info"]);
+      },
+      async memGet(start, end) {
+        calls.push(["memGet", start, end]);
+        if (start === 0x002B) {
+          return readyPointers;
+        }
+        return start === 0x0400 ? Buffer.from(READY_PATTERN) : Buffer.from([0xAA, 0xBB, 0xCC, 0xDD]);
+      },
+      async memSet(address, data) {
+        calls.push(["memSet", address, Array.from(data)]);
+      },
+      async reset() {
+        calls.push(["reset"]);
+      },
+      async keyboardFeed(text) {
+        calls.push(["keyboardFeed", text]);
+      },
+      async exitMonitor() {
+        calls.push(["exitMonitor"]);
+      },
+      async quit() {
+        calls.push(["quit"]);
+        throw new Error("transport closed");
+      },
+      async resourceGet(name) {
+        calls.push(["resourceGet", name]);
+        if (name === "Drive8CPUEnabled") return { type: "int", value: 1 };
+        if (name === "Drive8Image") return { type: "string", value: "disk8.d64" };
+        if (name === "Drive8Type") return { type: "int", value: 11 };
+        if (name === "Drive9CPUEnabled") throw new Error("missing");
+        if (name === "Drive10CPUEnabled") return { type: "int", value: 0 };
+        if (name === "Drive10Image") return { type: "string", value: "" };
+        if (name === "Drive10Type") return { type: "int", value: 8 };
+        if (name === "Drive11CPUEnabled") return { type: "int", value: 1 };
+        if (name === "Drive11Image") return { type: "string", value: "disk11.d64" };
+        if (name === "Drive11Type") return { type: "int", value: 2 };
+        if (name === "WarpMode") return { type: "int", value: 1 };
+        throw new Error(`unexpected resource ${name}`);
+      },
+      async resourceSet(name, value) {
+        calls.push(["resourceSet", name, value]);
+        if (name === "BadSetting") {
+          throw new Error("write failed");
+        }
+      },
+      close() {
+        calls.push(["close"]);
+      },
+    };
+
+    backend.withClient = async (fn) => fn(fakeClient);
+
+    const read = await backend.readMemory(0x2000, 2);
+    assert.deepEqual(Array.from(read), [0xAA, 0xBB]);
+
+    await assert.rejects(() => backend.readMemory(-1, 1), /Address must be within/);
+    await assert.rejects(() => backend.readMemory(0x1000, 0), /Length must be positive/);
+    await assert.rejects(() => backend.writeMemory(0x10000, Uint8Array.of(1)), /Address must be within/);
+    await assert.rejects(() => backend.writeMemory(0x1000, new Uint8Array()), /non-empty Uint8Array/);
+
+    await backend.writeMemory(0x3000, Uint8Array.of(0x10, 0x11));
+    const runResult = await backend.runPrg(Buffer.from([0x01, 0x08, 0x99, 0x00]));
+    const file = path.join(os.tmpdir(), "vice-backend-test.prg");
+    fs.writeFileSync(file, Buffer.from([0x01, 0x08, 0x44]));
+    try {
+      const fileResult = await backend.runPrgFile(file);
+      assert.equal(fileResult.success, true);
+    } finally {
+      fs.rmSync(file, { force: true });
+    }
+    assert.equal(runResult.success, true);
+    await assert.rejects(() => backend.runPrg(Buffer.from([0x01])), /PRG data too short/);
+
+    const resetResult = await backend.reset();
+    const rebootResult = await backend.reboot();
+    assert.equal(resetResult.success, true);
+    assert.equal(rebootResult.success, true);
+
+    const drives = await backend.drivesList();
+    assert.equal(drives[0].image, "disk8.d64");
+    assert.deepEqual(drives[1], { id: "drive9", power: "off", image: null, type: 0 });
+    assert.deepEqual(drives[2], { id: "drive10", power: "off", image: null, type: 8 });
+    assert.deepEqual(drives[3], { id: "drive11", power: "on", image: "disk11.d64", type: 2 });
+
+    assert.equal((await backend.driveMount("drive8", "/tmp/demo.d64")).success, true);
+    assert.equal((await backend.driveRemove("drive8")).success, true);
+    assert.equal((await backend.driveReset("drive8")).success, true);
+    assert.equal((await backend.driveOn("drive8")).details.power, "on");
+    assert.equal((await backend.driveOff("drive8")).details.power, "off");
+    assert.equal((await backend.driveSetMode("drive8", "1581")).details.mode, "1581");
+    await assert.rejects(() => backend.driveSetMode("drive8", "4041"), /Unknown drive mode/);
+
+    const configValue = await backend.configGet("VICE", "WarpMode");
+    assert.deepEqual(configValue, { category: "VICE", item: "WarpMode", value: 1, type: "int" });
+    await assert.rejects(() => backend.configGet("VICE"), /configGet without item name/);
+    assert.equal((await backend.configSet("VICE", "WarpMode", "0")).details.value, 0);
+    assert.equal((await backend.configSet("VICE", "MachineVideoStandard", "PAL")).details.value, "PAL");
+
+    const batch = await backend.configBatchUpdate({
+      VICE: { WarpMode: "1", BadSetting: "oops" },
+    });
+    assert.equal(batch.success, false);
+    assert.deepEqual(batch.details.results, [
+      { item: "VICE/WarpMode", success: true },
+      { item: "VICE/BadSetting", success: false, error: "write failed" },
+    ]);
+
+    await withEnv({ VICE_TEST_TARGET: undefined }, async () => {
+      const managedBackend = new ViceBackend({ host: "127.0.0.1", port: 6510 });
+      managedBackend.withClient = async (fn) => fn(fakeClient);
+      const key = "127.0.0.1:6510";
+      const supervisorStops = [];
+      ViceBackend.supervisors.set(key, {
+        process: { exitCode: null, signalCode: null },
+        async stop() {
+          supervisorStops.push("stop");
+          throw new Error("stop failed");
+        },
+      });
+      const poweroff = await managedBackend.poweroff();
+      assert.equal(poweroff.success, true);
+      assert.equal(ViceBackend.supervisors.has(key), false);
+      assert.deepEqual(supervisorStops, ["stop"]);
+    });
+
+    backend.withClient = async () => {
+      throw new Error("connect failed");
+    };
+    const failedPoweroff = await backend.poweroff();
+    assert.equal(failedPoweroff.success, false);
+    assert.deepEqual(failedPoweroff.details, { message: "connect failed" });
+
+    let pingAttempts = 0;
+    backend.withClient = async (fn) => {
+      pingAttempts += 1;
+      if (pingAttempts === 1) {
+        throw new Error("not yet");
+      }
+      return await fn(fakeClient);
+    };
+    assert.equal(await backend.ping(), true);
+    assert.equal(pingAttempts, 2);
+  });
 });
