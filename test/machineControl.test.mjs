@@ -195,7 +195,7 @@ testC64uOnly("resume handles exception", async () => {
 
 // --- poweroff ---
 
-testC64uOnly("poweroff succeeds with valid response", async () => {
+test("poweroff succeeds with valid response", async () => {
   const ctx = {
     client: createMockClient(),
     logger: createLogger(),
@@ -206,7 +206,7 @@ testC64uOnly("poweroff succeeds with valid response", async () => {
   assert.equal(res.metadata?.success, true);
 });
 
-testC64uOnly("poweroff handles failure response", async () => {
+test("poweroff handles failure response", async () => {
   const ctx = {
     client: createMockClient({
       async poweroff() { return { success: false, details: 123 }; },
@@ -218,7 +218,7 @@ testC64uOnly("poweroff handles failure response", async () => {
   assert.equal(res.metadata?.error?.kind, "execution");
 });
 
-testC64uOnly("poweroff handles exception", async () => {
+test("poweroff handles exception", async () => {
   const ctx = {
     client: createMockClient({
       async poweroff() { throw new Error("communication error"); },

@@ -15,7 +15,7 @@ const platform = (process.env.C64_MODE ?? "").toLowerCase() === "vice" ? "vice" 
 const isVice = platform === "vice";
 const testC64uOnly = isVice ? test.skip : test;
 
-testC64uOnly("config_list returns categories", async () => {
+test("config_list returns categories", async () => {
   const ctx = {
     client: {
       async configsList() {
@@ -39,7 +39,7 @@ testC64uOnly("config_list returns categories", async () => {
   assert.equal(result.metadata.categoryCount, 2);
 });
 
-testC64uOnly("config_get forwards category and item", async () => {
+test("config_get forwards category and item", async () => {
   const calls = [];
   const ctx = {
     client: {
@@ -68,7 +68,7 @@ testC64uOnly("config_get forwards category and item", async () => {
   assert.deepEqual(calls, [{ category: "Audio", item: "Volume" }]);
 });
 
-testC64uOnly("config_set reports firmware failure", async () => {
+test("config_set reports firmware failure", async () => {
   const ctx = {
     client: {
       async configSet() {
@@ -89,7 +89,7 @@ testC64uOnly("config_set reports firmware failure", async () => {
   assert.deepEqual(result.metadata.error.details, { reason: "denied" });
 });
 
-testC64uOnly("config_batch_update validates payload", async () => {
+test("config_batch_update validates payload", async () => {
   const ctx = {
     client: {
       async configBatchUpdate() {
@@ -104,7 +104,7 @@ testC64uOnly("config_batch_update validates payload", async () => {
   assert.equal(result.metadata.error.kind, "validation");
 });
 
-testC64uOnly("config_list normalizes non-object payloads", async () => {
+test("config_list normalizes non-object payloads", async () => {
   const ctx = {
     client: {
       async configsList() {
@@ -123,7 +123,7 @@ testC64uOnly("config_list normalizes non-object payloads", async () => {
   assert.equal(result.metadata.categoryCount, 2);
 });
 
-testC64uOnly("config_get reads category without item", async () => {
+test("config_get reads category without item", async () => {
   const calls = [];
   const ctx = {
     client: {
@@ -150,7 +150,7 @@ testC64uOnly("config_get reads category without item", async () => {
   assert.deepEqual(calls, [{ category: "Video", item: undefined }]);
 });
 
-testC64uOnly("config_set stringifies primitive values on success", async () => {
+test("config_set stringifies primitive values on success", async () => {
   const calls = [];
   const ctx = {
     client: {
@@ -175,7 +175,7 @@ testC64uOnly("config_set stringifies primitive values on success", async () => {
   assert.deepEqual(calls, [{ category: "Audio", item: "Muted", value: "false" }]);
 });
 
-testC64uOnly("config_batch_update stringifies nested primitive values on success", async () => {
+test("config_batch_update stringifies nested primitive values on success", async () => {
   const calls = [];
   const ctx = {
     client: {
@@ -200,7 +200,7 @@ testC64uOnly("config_batch_update stringifies nested primitive values on success
   assert.deepEqual(calls, [{ Audio: { Volume: "10", Muted: "false" } }]);
 });
 
-testC64uOnly("config_batch_update rejects non-primitive values", async () => {
+test("config_batch_update rejects non-primitive values", async () => {
   const ctx = {
     client: {
       async configBatchUpdate() {
@@ -237,7 +237,7 @@ testC64uOnly("config_reset_to_default succeeds", async () => {
   assert.deepEqual(result.metadata.details, { rebootRequired: true });
 });
 
-testC64uOnly("info returns diagnostics payload", async () => {
+test("info returns diagnostics payload", async () => {
   const ctx = {
     client: {
       async info() {
@@ -343,7 +343,7 @@ testC64uOnly("debugreg_write reports firmware failure", async () => {
   assert.deepEqual(result.metadata.error.details, { value: "write failed" });
 });
 
-testC64uOnly("version returns firmware payload", async () => {
+test("version returns firmware payload", async () => {
   const ctx = {
     client: {
       async version() {
@@ -361,7 +361,7 @@ testC64uOnly("version returns firmware payload", async () => {
   assert.deepEqual(result.structuredContent?.data, { version: "1.2.3" });
 });
 
-testC64uOnly("version wraps primitive payloads into objects", async () => {
+test("version wraps primitive payloads into objects", async () => {
   const ctx = {
     client: {
       async version() {
@@ -377,7 +377,7 @@ testC64uOnly("version wraps primitive payloads into objects", async () => {
   assert.deepEqual(result.metadata.details, { value: "1.2.4" });
 });
 
-testC64uOnly("config_set with firmware failure", async () => {
+test("config_set with firmware failure", async () => {
   const ctx = {
     client: {
       async configSet() {
@@ -397,7 +397,7 @@ testC64uOnly("config_set with firmware failure", async () => {
   assert.ok(result.content[0].text.includes("firmware reported failure"));
 });
 
-testC64uOnly("config_batch_update with firmware failure", async () => {
+test("config_batch_update with firmware failure", async () => {
   const ctx = {
     client: {
       async configBatchUpdate() {
