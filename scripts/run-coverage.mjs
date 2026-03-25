@@ -12,7 +12,7 @@ const coverageDir = path.join(repoRoot, "coverage");
 const runner = path.join(repoRoot, "scripts", "invoke-bun.mjs");
 const configPath = path.join(repoRoot, ".c8rc.json");
 const testRoot = path.join(repoRoot, "test");
-const DEFAULT_COVERAGE_SHARD_SIZE = 8;
+const DEFAULT_COVERAGE_SHARD_SIZE = 12;
 
 const legs = [
   { name: "c64u-mock", args: ["--platform=c64u", "--target=mock"] },
