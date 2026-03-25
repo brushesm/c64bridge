@@ -171,6 +171,7 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
     await withSharedMcpClient(async (ctx) => {
       const { mockServer } = ctx;
       const program = `10 PRINT "HELLO"\n20 GOTO 10`;
+      const runCountBefore = mockServer.state.runCount;
       const { result, supported } = await callTool(ctx, "c64_program", {
         op: "upload_run_basic",
         program,
@@ -187,7 +188,12 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
 
       assert.ok(result.metadata?.success, "metadata should flag success");
       assert.equal(result.metadata?.details?.result ?? "ok", "ok");
-      assert.equal(mockServer.state.runCount, 1, "mock server should execute program once");
+      if (ctx.platform === "vice") {
+        assert.equal(mockServer.state.runCount, runCountBefore, "vice mode must not run programs on the C64U mock");
+        return;
+      }
+
+      assert.equal(mockServer.state.runCount, runCountBefore + 1, "mock server should execute program once");
       assert.ok(mockServer.state.lastPrg, "mock server should receive PRG payload");
     });
   });
@@ -196,6 +202,7 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
     await withSharedMcpClient(async (ctx) => {
       const { mockServer } = ctx;
       const program = `\n      .org $0801\nstart:\n      lda #$01\n      sta $0400\n      rts\n    `;
+      const runCountBefore = mockServer.state.runCount;
 
       const { result, supported } = await callTool(ctx, "c64_program", {
         op: "upload_run_asm",
@@ -213,7 +220,14 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
 
       assert.ok(result.metadata?.success, "metadata should flag success");
       assert.equal(result.metadata?.details?.result ?? "ok", "ok");
-      assert.equal(mockServer.state.runCount, 1, "mock server should execute program once");
+      if (ctx.platform === "vice") {
+        assert.equal(mockServer.state.runCount, runCountBefore, "vice mode must not assemble-run via the C64U mock");
+        assert.equal(result.structuredContent?.data?.kind, "upload_run_asm");
+        assert.equal(result.structuredContent?.data?.format, "prg");
+        return;
+      }
+
+      assert.equal(mockServer.state.runCount, runCountBefore + 1, "mock server should execute program once");
       assert.ok(mockServer.state.lastPrg, "mock server should receive PRG payload");
     });
   });
@@ -240,12 +254,19 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
       });
 
       assert.equal(mountResult.metadata?.success, true, "mount operation should succeed");
+      if (ctx.platform === "vice") {
+        assert.equal(mountResult.metadata?.drive, "drive8");
+        assert.equal(mountResult.metadata?.image, "/tmp/demo.d64");
+        assert.equal(mountResult.metadata?.mode, "readwrite");
+        assert.equal(mountResult.metadata?.type, "d64");
+      } else {
       assert.equal(mockServer.state.lastDriveOperation?.action, "mount");
       assert.deepEqual(mockServer.state.drives.drive8.mountedImage, {
         image: "/tmp/demo.d64",
         type: "d64",
         mode: "readwrite",
       });
+      }
 
       const modeCall = await callTool(ctx, "c64_drive", {
         op: "set_mode",
@@ -258,7 +279,11 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
       const { result: modeResult } = modeCall;
 
       assert.equal(modeResult.metadata?.success, true, "set_mode operation should succeed");
-      assert.equal(mockServer.state.drives.drive8.mode, "1571");
+      if (ctx.platform === "vice") {
+        assert.equal(modeResult.metadata?.mode, "1571");
+      } else {
+        assert.equal(mockServer.state.drives.drive8.mode, "1571");
+      }
 
       const { result: onResult } = await callTool(ctx, "c64_drive", {
         op: "power_on",
@@ -266,7 +291,11 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
       });
 
       assert.equal(onResult.metadata?.success, true, "power_on operation should succeed");
-      assert.equal(mockServer.state.drives.drive8.power, "on");
+      if (ctx.platform === "vice") {
+        assert.equal(onResult.metadata?.power, "on");
+      } else {
+        assert.equal(mockServer.state.drives.drive8.power, "on");
+      }
 
       const { result: offResult } = await callTool(ctx, "c64_drive", {
         op: "power_off",
@@ -274,7 +303,11 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
       });
 
       assert.equal(offResult.metadata?.success, true, "power_off operation should succeed");
-      assert.equal(mockServer.state.drives.drive8.power, "off");
+      if (ctx.platform === "vice") {
+        assert.equal(offResult.metadata?.power, "off");
+      } else {
+        assert.equal(mockServer.state.drives.drive8.power, "off");
+      }
 
       const { result: resetResult } = await callTool(ctx, "c64_drive", {
         op: "reset",
@@ -282,7 +315,11 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
       });
 
       assert.equal(resetResult.metadata?.success, true, "reset operation should succeed");
-      assert.equal(mockServer.state.drives.drive8.resetCount, 1);
+      if (ctx.platform === "vice") {
+        assert.equal(resetResult.metadata?.drive, "drive8");
+      } else {
+        assert.equal(mockServer.state.drives.drive8.resetCount, 1);
+      }
 
       const { result: romResult } = await callTool(ctx, "c64_drive", {
         op: "load_rom",
@@ -303,7 +340,11 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
       });
 
       assert.equal(removeResult.metadata?.success, true, "unmount operation should succeed");
-      assert.equal(mockServer.state.drives.drive8.mountedImage, null);
+      if (ctx.platform === "vice") {
+        assert.equal(removeResult.metadata?.drive, "drive8");
+      } else {
+        assert.equal(mockServer.state.drives.drive8.mountedImage, null);
+      }
 
       const { result: infoResult } = await callTool(ctx, "c64_disk", {
         op: "file_info",
@@ -554,43 +595,83 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
       assert.ok(listContent, "config_list should return text content");
       const categories = JSON.parse(listContent.text)?.categories ?? [];
       assert.ok(Array.isArray(categories), "config_list should return categories array");
-      assert.ok(categories.includes("Audio"));
+      const categoryNames = categories.map((entry) => {
+        if (typeof entry === "string") {
+          return entry;
+        }
+        if (entry && typeof entry === "object" && typeof entry.name === "string") {
+          return entry.name;
+        }
+        return null;
+      }).filter(Boolean);
+      if (ctx.platform === "vice") {
+        assert.ok(categoryNames.includes("VICE"));
+      } else {
+        assert.ok(categoryNames.includes("Audio"));
+      }
       assert.equal(listResult.structuredContent?.type, "json");
       assert.deepEqual(listResult.structuredContent?.data?.categories, categories);
 
+      const category = ctx.platform === "vice" ? "VICE" : "Audio";
+      const item = ctx.platform === "vice" ? "SoundVolume" : "Volume";
+      const setValue = ctx.platform === "vice" ? 11 : 11;
+      const batchPayload = ctx.platform === "vice"
+        ? {
+            VICE: {
+              SoundVolume: 9,
+              Drive8Type: 8,
+            },
+          }
+        : {
+            Audio: {
+              Balance: "left",
+            },
+            Video: {
+              Mode: "NTSC",
+            },
+          };
+
       const { result: getItemResult } = await callTool(ctx, "c64_config", {
         op: "get",
-        category: "Audio",
-        item: "Volume",
+        category,
+        item,
       });
 
       assert.equal(getItemResult.metadata?.success, true, "get operation should succeed");
-      assert.equal(getItemResult.metadata?.category, "Audio");
-      assert.equal(getItemResult.metadata?.item, "Volume");
+      assert.equal(getItemResult.metadata?.category, category);
+      assert.equal(getItemResult.metadata?.item, item);
 
       const { result: setResult } = await callTool(ctx, "c64_config", {
         op: "set",
-        category: "Audio",
-        item: "Volume",
-        value: 11,
+        category,
+        item,
+        value: setValue,
       });
 
       assert.equal(setResult.metadata?.success, true, "set operation should succeed");
-      assert.equal(mockServer.state.configs.Audio.Volume, "11");
+      if (ctx.platform === "vice") {
+        assert.equal(setResult.metadata?.category, "VICE");
+        assert.equal(setResult.metadata?.item, "SoundVolume");
+        assert.equal(setResult.metadata?.value, 11);
+      } else {
+        assert.equal(mockServer.state.configs.Audio.Volume, "11");
+      }
 
       const { result: batchResult } = await callTool(ctx, "c64_config", {
         op: "batch_update",
-        Audio: {
-          Balance: "left",
-        },
-        Video: {
-          Mode: "NTSC",
-        },
+        ...batchPayload,
       });
 
       assert.equal(batchResult.metadata?.success, true, "batch_update operation should succeed");
-      assert.equal(mockServer.state.configs.Audio.Balance, "left");
-      assert.equal(mockServer.state.configs.Video.Mode, "NTSC");
+      if (ctx.platform === "vice") {
+        assert.equal(batchResult.metadata?.categoryCount, 1);
+        assert.ok(Array.isArray(batchResult.metadata?.details?.results));
+        assert.equal(batchResult.metadata?.details?.results.length, 2);
+        assert.ok(batchResult.metadata?.details?.results.every((entry) => entry.success === true));
+      } else {
+        assert.equal(mockServer.state.configs.Audio.Balance, "left");
+        assert.equal(mockServer.state.configs.Video.Mode, "NTSC");
+      }
 
       const { result: saveResult } = await callTool(ctx, "c64_config", { op: "save_flash" });
 

@@ -13,7 +13,7 @@ import { basicToPrg } from "./basicConverter.js";
 import { assemblyToPrg } from "./assemblyConverter.js";
 import { screenCodesToAscii } from "./petscii.js";
 import { resolveAddressSymbol } from "./knowledge.js";
-import { C64Facade, createFacade, ViceBackend } from "./device.js";
+import { C64Facade, createFacade, type DeviceType, ViceBackend } from "./device.js";
 import { Api, HttpClient } from "../generated/c64/index.js";
 import { createLoggingHttpClient } from "./loggingHttpClient.js";
 import type {
@@ -154,6 +154,14 @@ export class C64Client {
       throw new Error("VICE-specific operation requested while connected to Ultimate hardware");
     }
     return facade as ViceBackend;
+  }
+
+  async getBackendType(): Promise<DeviceType> {
+    return (await this.facadePromise).type;
+  }
+
+  private async shouldUseC64uMockBypass(): Promise<boolean> {
+    return process.env.C64_TEST_TARGET === "mock" && (await this.getBackendType()) === "c64u";
   }
 
   private async withViceMonitor<T>(fn: (client: ViceClient) => Promise<T>): Promise<T> {
@@ -408,7 +416,7 @@ export class C64Client {
 
   async runPrg(prg: Uint8Array | Buffer): Promise<RunBasicResult> {
     try {
-      if (process.env.C64_TEST_TARGET === "mock") {
+      if (await this.shouldUseC64uMockBypass()) {
         const payload = Buffer.isBuffer(prg) ? prg : Buffer.from(prg);
         const response = await this.api.v1.runnersRunPrgCreate(":run_prg", payload as any, {
           headers: { "Content-Type": "application/octet-stream" },
@@ -493,7 +501,7 @@ export class C64Client {
 
   async reset(): Promise<{ success: boolean; details?: unknown }> {
     try {
-      if (process.env.C64_TEST_TARGET === "mock") {
+      if (await this.shouldUseC64uMockBypass()) {
         const response = await this.api.v1.machineResetUpdate(":reset");
         return { success: true, details: response.data };
       }
@@ -507,7 +515,7 @@ export class C64Client {
 
   async reboot(): Promise<{ success: boolean; details?: unknown }> {
     try {
-      if (process.env.C64_TEST_TARGET === "mock") {
+      if (await this.shouldUseC64uMockBypass()) {
         const response = await this.api.v1.machineRebootUpdate(":reboot");
         return { success: true, details: response.data };
       }
@@ -720,7 +728,7 @@ export class C64Client {
 
   async pause(): Promise<RunBasicResult> {
     try {
-      if (process.env.C64_TEST_TARGET === "mock") {
+      if (await this.shouldUseC64uMockBypass()) {
         const res = await this.api.v1.machinePauseUpdate(":pause");
         return { success: true, details: res.data };
       }
@@ -731,7 +739,7 @@ export class C64Client {
 
   async resume(): Promise<RunBasicResult> {
     try {
-      if (process.env.C64_TEST_TARGET === "mock") {
+      if (await this.shouldUseC64uMockBypass()) {
         const res = await this.api.v1.machineResumeUpdate(":resume");
         return { success: true, details: res.data };
       }
@@ -745,7 +753,7 @@ export class C64Client {
 
   async menuButton(): Promise<RunBasicResult> {
     try {
-      if (process.env.C64_TEST_TARGET === "mock") {
+      if (await this.shouldUseC64uMockBypass()) {
         const res = await this.api.v1.machineMenuButtonUpdate(":menu_button");
         return { success: true, details: res.data };
       }
@@ -755,7 +763,7 @@ export class C64Client {
 
   async debugregRead(): Promise<{ success: boolean; value?: string; details?: unknown }> {
     try {
-      if (process.env.C64_TEST_TARGET === "mock") {
+      if (await this.shouldUseC64uMockBypass()) {
         const res = await this.api.v1.machineDebugregList(":debugreg");
         return { success: true, value: (res.data as any).value, details: res.data };
       }
@@ -765,7 +773,7 @@ export class C64Client {
 
   async debugregWrite(value: string): Promise<{ success: boolean; value?: string; details?: unknown }> {
     try {
-      if (process.env.C64_TEST_TARGET === "mock") {
+      if (await this.shouldUseC64uMockBypass()) {
         const res = await this.api.v1.machineDebugregUpdate(":debugreg", { value });
         return { success: true, value: (res.data as any).value, details: res.data };
       }
@@ -804,7 +812,7 @@ export class C64Client {
   async driveLoadRom(drive: string, path: string): Promise<RunBasicResult> {
     try {
       if (!drive || !path) throw new Error("Drive and path are required");
-      if (process.env.C64_TEST_TARGET === "mock") {
+      if (await this.shouldUseC64uMockBypass()) {
         const res = await this.api.v1.drivesLoadRomUpdate(drive, ":load_rom", { file: path });
         return { success: true, details: res.data };
       }

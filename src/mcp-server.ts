@@ -78,7 +78,10 @@ async function main() {
   });
   
   // Initialize C64 client (reuse existing)
-  const client = new C64Client(baseUrl, { networkPassword: config.networkPassword });
+  const client = new C64Client(baseUrl, {
+    networkPassword: config.networkPassword,
+    forceC64uFacade: false,
+  });
   const rag = await initRag();
 
   const toolLogger = loggerFor("tool");
@@ -518,6 +521,28 @@ function renderPlatformStatusMarkdown(): string {
 }
 
 async function logConnectivity(client: C64Client, baseUrl: string): Promise<void> {
+  const backendType = await client.getBackendType();
+  if (backendType !== "c64u") {
+    writeDiagnosticEvent("connectivity_probe_skipped", { baseUrl, reason: "vice_backend" });
+    console.error("Skipping direct REST connectivity probe because active backend is VICE");
+    try {
+      const memoryAddress = "$0000";
+      const memoryResult = await client.readMemory(memoryAddress, "1");
+      if (memoryResult.success && memoryResult.data) {
+        writeDiagnosticEvent("zero_page_probe_ok", { address: memoryAddress, data: memoryResult.data, backendType });
+        console.error(`VICE zero-page probe @ ${memoryAddress}: ${memoryResult.data}`);
+      } else if (memoryResult.details) {
+        writeDiagnosticEvent("zero_page_probe_failed", { address: memoryAddress, details: memoryResult.details, backendType });
+        console.error(`VICE zero-page probe failed: ${JSON.stringify(memoryResult.details)}`);
+      }
+    } catch (memoryError) {
+      const message = memoryError instanceof Error ? memoryError.message : String(memoryError);
+      writeDiagnosticEvent("zero_page_probe_failed", { address: "$0000", error: memoryError, backendType });
+      console.error(`VICE zero-page probe skipped or failed: ${message}`);
+    }
+    return;
+  }
+
   const c64Logger = loggerFor("c64u");
   const startedAt = Date.now();
   const infoUrl = new URL("/v1/info", baseUrl).toString();
