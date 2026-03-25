@@ -9,6 +9,8 @@ import { getPlatformStatus, setPlatform } from "../src/platform.js";
 import { createLogger, tmpPath } from "./meta/helpers.mjs";
 
 const originalPlatform = getPlatformStatus().id;
+const isVice = (process.env.C64_MODE ?? "").toLowerCase() === "vice";
+const testC64uOnly = isVice ? test.skip : test;
 
 test.after(() => {
   setPlatform(originalPlatform);
@@ -276,7 +278,7 @@ test("c64_memory wait_for_text polls screen", async () => {
   assert.ok(readCount >= 1, "readScreen should be called at least once");
 });
 
-test("c64_memory write with verify pauses, writes, and resumes", async () => {
+testC64uOnly("c64_memory write with verify pauses, writes, and resumes", async () => {
   const callLog = [];
   let readInvocation = 0;
 
@@ -417,7 +419,7 @@ test("c64_sound silence_all verify runs audio analyzer", async () => {
   assert.ok(result.metadata?.verification?.maxRms <= 0.02);
 });
 
-test("c64_sound capture_samples returns encoded PCM payload", async () => {
+testC64uOnly("c64_sound capture_samples returns encoded PCM payload", async () => {
   const stubClient = {
     async captureSamples({ count }) {
       assert.equal(count, 256);
@@ -650,7 +652,7 @@ test("c64_disk mount with verify delegates to meta workflow", async () => {
   }
 });
 
-test("c64_disk create_image validates D64 tracks", async () => {
+testC64uOnly("c64_disk create_image validates D64 tracks", async () => {
   const ctx = {
     client: {},
     rag: {},
@@ -781,7 +783,7 @@ test("c64_sound c64u-only grouped operations reject on vice", async () => {
   }
 });
 
-test("c64_printer print_text delegates to printer module", async () => {
+testC64uOnly("c64_printer print_text delegates to printer module", async () => {
   const calls = [];
   const stubClient = {
     async printTextOnPrinterAndRun(payload) {
@@ -815,7 +817,7 @@ test("c64_printer print_text delegates to printer module", async () => {
   assert.equal(calls[0].formFeed, true);
 });
 
-test("c64_printer print_bitmap routes to Commodore workflow", async () => {
+testC64uOnly("c64_printer print_bitmap routes to Commodore workflow", async () => {
   const calls = [];
   const stubClient = {
     async printBitmapOnCommodoreAndRun(payload) {
@@ -855,7 +857,7 @@ test("c64_printer print_bitmap routes to Commodore workflow", async () => {
   assert.equal(calls[0].ensureMsb, true);
 });
 
-test("c64_extract sprites delegates to sprite extractor", async () => {
+testC64uOnly("c64_extract sprites delegates to sprite extractor", async () => {
   const ctx = {
     client: {},
     rag: {},
@@ -897,7 +899,7 @@ test("c64_extract sprites delegates to sprite extractor", async () => {
   }
 });
 
-test("c64_extract memory_dump forwards to meta dump tool", async () => {
+testC64uOnly("c64_extract memory_dump forwards to meta dump tool", async () => {
   const ctx = {
     client: {},
     rag: {},
@@ -947,7 +949,7 @@ test("c64_extract memory_dump forwards to meta dump tool", async () => {
   }
 });
 
-test("c64_stream start delegates to streaming start handler", async () => {
+testC64uOnly("c64_stream start delegates to streaming start handler", async () => {
   const calls = [];
   const stubClient = {
     async streamStart(stream, target) {
@@ -986,7 +988,7 @@ test("c64_stream start delegates to streaming start handler", async () => {
   assert.equal(result.metadata?.target, "127.0.0.1:9000");
 });
 
-test("c64_stream stop delegates to streaming stop handler", async () => {
+testC64uOnly("c64_stream stop delegates to streaming stop handler", async () => {
   const calls = [];
   const stubClient = {
     async streamStart() {
@@ -1023,7 +1025,7 @@ test("c64_stream stop delegates to streaming stop handler", async () => {
   assert.equal(result.metadata?.stream, "audio");
 });
 
-test("c64_printer print_bitmap routes to Epson workflow", async () => {
+testC64uOnly("c64_printer print_bitmap routes to Epson workflow", async () => {
   const calls = [];
   const stubClient = {
     async printBitmapOnEpsonAndRun(payload) {
@@ -1066,7 +1068,7 @@ test("c64_printer print_bitmap routes to Epson workflow", async () => {
   assert.equal(calls[0].repeats, 2);
 });
 
-test("c64_printer print_bitmap rejects invalid secondary address", async () => {
+testC64uOnly("c64_printer print_bitmap rejects invalid secondary address", async () => {
   const ctx = {
     client: {},
     rag: {},
@@ -1158,7 +1160,7 @@ test("c64_config set delegates to configSet", async () => {
   assert.equal(calls[0].value, "70");
 });
 
-test("c64_config write_debugreg uppercases payload", async () => {
+testC64uOnly("c64_config write_debugreg uppercases payload", async () => {
   const calls = [];
   const stubClient = {
     async debugregWrite(value) {
@@ -1312,7 +1314,7 @@ test("c64_config diff delegates to config snapshot meta tool", async () => {
   }
 });
 
-test("c64_config shuffle delegates to program shuffle workflow", async () => {
+testC64uOnly("c64_config shuffle delegates to program shuffle workflow", async () => {
   const ctx = {
     client: {},
     rag: {},
