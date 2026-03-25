@@ -38,8 +38,8 @@ test("run-coverage keeps a single all batch when shard size covers the suite", (
 });
 
 test("run-coverage resolves shard size defaults and chunks files safely", () => {
-  assert.equal(resolveCoverageShardSize(undefined), 12);
-  assert.equal(resolveCoverageShardSize("0"), 12);
+  assert.equal(resolveCoverageShardSize(undefined), 8);
+  assert.equal(resolveCoverageShardSize("0"), 8);
   assert.equal(resolveCoverageShardSize("7"), 7);
 
   assert.deepEqual(chunkFiles([], 3), [[]]);
