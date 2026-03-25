@@ -2,6 +2,11 @@ import test from "#test/runner";
 import assert from "#test/assert";
 import fs from "node:fs/promises";
 import { metaModule } from "../../src/tools/meta/index.js";
+import {
+  captureConfigSnapshot,
+  normalizeConfigInventory,
+  validateSnapshotCategories,
+} from "../../src/tools/meta/configInventory.js";
 import { createLogger, tmpPath } from "./helpers.mjs";
 
 test("config_snapshot_and_restore snapshot and restore", async () => {
@@ -103,4 +108,54 @@ test("config_snapshot_and_restore validates snapshot input", async () => {
   const ctx = { client: {}, logger: createLogger() };
   const res = await metaModule.invoke("config_snapshot_and_restore", { action: "restore", path: file }, ctx);
   assert.equal(res.isError, true);
+});
+
+test("normalizeConfigInventory deduplicates string and object categories", () => {
+  const inventory = normalizeConfigInventory({
+    categories: [
+      "Audio",
+      " Audio ",
+      { name: "Video", items: ["Mode", " Mode ", "", null] },
+      { name: "Storage", items: [] },
+      { name: " ", items: ["Ignored"] },
+      null,
+    ],
+  });
+
+  assert.deepEqual(inventory, [
+    { category: "Audio" },
+    { category: "Video", item: "Mode" },
+    { category: "Storage" },
+  ]);
+});
+
+test("captureConfigSnapshot records config read failures inline", async () => {
+  const snapshot = await captureConfigSnapshot({
+    async configsList() {
+      return { categories: [{ name: "VICE", items: ["WarpMode", "Broken"] }] };
+    },
+    async configGet(category, item) {
+      if (category === "VICE" && item === "WarpMode") {
+        return { value: "1" };
+      }
+      throw new Error("boom");
+    },
+  });
+
+  assert.deepEqual(snapshot.inventory, [
+    { category: "VICE", item: "WarpMode" },
+    { category: "VICE", item: "Broken" },
+  ]);
+  assert.deepEqual(snapshot.categories, {
+    VICE: {
+      WarpMode: "1",
+      Broken: { _error: "boom" },
+    },
+  });
+});
+
+test("validateSnapshotCategories rejects non-object payloads", () => {
+  assert.throws(() => validateSnapshotCategories(null), /must be an object/);
+  assert.throws(() => validateSnapshotCategories([]), /must be an object/);
+  assert.deepEqual(validateSnapshotCategories({ Audio: { Volume: "10" } }), { Audio: { Volume: "10" } });
 });

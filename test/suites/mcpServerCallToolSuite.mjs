@@ -8,6 +8,41 @@ function getTextContent(result) {
   return result.content.find((entry) => entry.type === "text");
 }
 
+function buildTestSidwaveDoc() {
+  return {
+    song: {
+      title: "Duck Test",
+      tempo: 110,
+      mode: "PAL",
+      length_bars: 2,
+    },
+    voices: [
+      {
+        id: 1,
+        name: "Lead",
+        waveform: "triangle",
+        adsr: [2, 2, 10, 3],
+        pulse_width: 2048,
+        patterns: {
+          main: {
+            type: "arpeggio",
+            notes: ["C4", "E4", "G4"],
+          },
+        },
+      },
+    ],
+    timeline: [
+      {
+        section: "A",
+        bars: 2,
+        layers: {
+          v1: "main",
+        },
+      },
+    ],
+  };
+}
+
 const CHAR_TO_SCREEN = (() => {
   const map = new Map();
   for (const glyph of getChargenGlyphs()) {
@@ -446,6 +481,40 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
       assert.equal(result.structuredContent?.data?.samples?.encoding, "base64");
       assert.equal(ctx.mockServer.state.streams.audio.active, false);
       assert.ok(ctx.mockServer.state.streams.audio.packetsSent >= 2);
+    });
+  });
+
+  test("c64_sound compile_play and c64_graphics render_petscii_art run through MCP", async () => {
+    await withSharedMcpClient(async (ctx) => {
+      const { result: audioResult, supported: audioSupported } = await callTool(ctx, "c64_sound", {
+        op: "compile_play",
+        sidwave: buildTestSidwaveDoc(),
+        dryRun: true,
+      });
+
+      if (audioSupported) {
+        assert.equal(audioResult.metadata?.success, true);
+        assert.equal(audioResult.metadata?.dryRun, true);
+        assert.equal(audioResult.metadata?.ranOnC64, false);
+      }
+
+      const { result: graphicsResult, supported: graphicsSupported } = await callTool(ctx, "c64_graphics", {
+        op: "render_petscii_art",
+        text: "DUCKS",
+        dryRun: true,
+        backgroundColor: 6,
+        borderColor: 14,
+      });
+
+      if (!graphicsSupported) {
+        return;
+      }
+
+      assert.equal(graphicsResult.metadata?.dryRun, true);
+      assert.equal(graphicsResult.metadata?.ranOnC64, false);
+      assert.equal(graphicsResult.structuredContent?.type, "json");
+      assert.ok(Array.isArray(graphicsResult.structuredContent?.data?.rowHex));
+      assert.equal(graphicsResult.structuredContent?.data?.ranOnC64, false);
     });
   });
 

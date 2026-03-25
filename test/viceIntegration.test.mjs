@@ -2,13 +2,17 @@ import test from "#test/runner";
 import assert from "#test/assert";
 import { Buffer } from "node:buffer";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 import { debugModuleGroup } from "../src/tools/debug.js";
 import { ViceClient } from "../src/vice/viceClient.js";
 import { startViceMockServer } from "../src/vice/mockServer.js";
 import {
   delay,
   ensureXvfbSocketDir,
+  startViceProcess,
   shouldUseXvfb,
   terminateProcess,
   waitForExit,
@@ -70,6 +74,44 @@ class FakeChild extends EventEmitter {
     this.emit("exit", null, signal);
     return true;
   }
+}
+
+function createFakeViceBinary(t, mode = "listen") {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "c64bridge-vice-process-"));
+  t.after(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  const monitorScript = path.join(dir, "fake-vice.mjs");
+  const wrapperScript = path.join(dir, "fake-vice");
+  const source = mode === "listen"
+    ? `import net from "node:net";
+const args = process.argv.slice(2);
+let host = "127.0.0.1";
+let port = 6502;
+for (let index = 0; index < args.length; index += 1) {
+  if (args[index] === "-binarymonitoraddress" && typeof args[index + 1] === "string") {
+    const [nextHost, nextPort] = args[index + 1].split(":");
+    host = nextHost || host;
+    port = Number(nextPort || port);
+  }
+}
+const server = net.createServer((socket) => socket.end());
+server.listen(port, host);
+const shutdown = () => server.close(() => process.exit(0));
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+setInterval(() => {}, 1000);
+`
+    : `process.stderr.write("synthetic vice failure\\n");
+process.exit(1);
+`;
+  fs.writeFileSync(monitorScript, source, "utf8");
+  fs.writeFileSync(wrapperScript, `#!/usr/bin/env bash
+exec node "${monitorScript}" "$@"
+`, "utf8");
+  fs.chmodSync(wrapperScript, 0o755);
+  return wrapperScript;
 }
 
 test("ViceClient integrates with the VICE mock server for debugger and resource workflows", async (t) => {
@@ -467,5 +509,99 @@ test("VICE process helpers cover environment, sockets, and termination paths", a
     assert.ok(Date.now() - start >= 0);
   } finally {
     restoreEnv();
+  }
+});
+
+test("startViceProcess starts and stops a monitor process without Xvfb", async (t) => {
+  const fakeVice = createFakeViceBinary(t, "listen");
+  const previousDisplay = process.env.DISPLAY;
+  process.env.DISPLAY = ":1";
+
+  try {
+    const handle = await startViceProcess({
+      binary: fakeVice,
+      host: "127.0.0.1",
+      port: 6515,
+      visible: true,
+      warp: false,
+      extraArgs: ["-test-flag"],
+    });
+
+    t.after(async () => {
+      await handle.stop();
+    });
+
+    assert.equal(handle.host, "127.0.0.1");
+    assert.equal(handle.port, 6515);
+    await waitForPort(handle.host, handle.port, 500);
+    await handle.stop();
+    assert.ok(handle.process.signalCode !== null || handle.process.exitCode !== null);
+  } finally {
+    if (previousDisplay === undefined) {
+      delete process.env.DISPLAY;
+    } else {
+      process.env.DISPLAY = previousDisplay;
+    }
+  }
+});
+
+test("startViceProcess can supervise Xvfb-backed sessions", async (t) => {
+  const fakeVice = createFakeViceBinary(t, "listen");
+  const backup = {
+    DISPLAY: process.env.DISPLAY,
+    FORCE_XVFB: process.env.FORCE_XVFB,
+    VICE_XVFB_DISPLAY: process.env.VICE_XVFB_DISPLAY,
+  };
+  process.env.DISPLAY = "";
+  process.env.FORCE_XVFB = "1";
+  process.env.VICE_XVFB_DISPLAY = `:${200 + (process.pid % 200)}`;
+
+  try {
+    const handle = await startViceProcess({
+      binary: fakeVice,
+      host: "127.0.0.1",
+      port: 6516,
+      visible: false,
+    });
+
+    t.after(async () => {
+      await handle.stop();
+    });
+
+    await waitForPort(handle.host, handle.port, 500);
+    await handle.stop();
+    assert.ok(handle.process.signalCode !== null || handle.process.exitCode !== null);
+  } finally {
+    for (const [key, value] of Object.entries(backup)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+});
+
+test("startViceProcess surfaces startup failures with stderr context", async (t) => {
+  const fakeVice = createFakeViceBinary(t, "fail");
+  const previousDisplay = process.env.DISPLAY;
+  process.env.DISPLAY = ":1";
+
+  try {
+    await assert.rejects(
+      () => startViceProcess({
+        binary: fakeVice,
+        host: "127.0.0.1",
+        port: 6517,
+        visible: true,
+      }),
+      /synthetic vice failure/,
+    );
+  } finally {
+    if (previousDisplay === undefined) {
+      delete process.env.DISPLAY;
+    } else {
+      process.env.DISPLAY = previousDisplay;
+    }
   }
 });

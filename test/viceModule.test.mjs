@@ -154,3 +154,56 @@ test("c64_vice resource_set rejects non-integer numbers", async () => {
   assert.equal(result.metadata.error.kind, "validation");
   assert.equal(result.metadata.error.path, "$.value");
 });
+
+test("c64_vice resource_set writes integer resource values", async () => {
+  const calls = [];
+  const ctx = createCtx({
+    client: {
+      async viceResourceGet() {
+        return { type: "string", value: "demo" };
+      },
+      async viceResourceSet(name, value) {
+        calls.push({ name, value });
+      },
+    },
+  });
+
+  const result = await viceModuleGroup.invoke(
+    "c64_vice",
+    { op: "resource_set", name: "SidEngine", value: 2 },
+    ctx,
+  );
+
+  assert.equal(result.metadata.success, true);
+  assert.deepEqual(calls, [{ name: "SidEngine", value: 2 }]);
+});
+
+test("c64_vice resource_get rejects invalid resource name syntax", async () => {
+  const result = await viceModuleGroup.invoke(
+    "c64_vice",
+    { op: "resource_get", name: "sid engine" },
+    createCtx(),
+  );
+
+  assert.equal(result.isError, true);
+  assert.equal(result.metadata.error.kind, "validation");
+  assert.equal(result.metadata.error.path, "$.name");
+});
+
+test("c64_vice wraps unexpected client errors", async () => {
+  const result = await viceModuleGroup.invoke(
+    "c64_vice",
+    { op: "resource_get", name: "SidEngine" },
+    createCtx({
+      client: {
+        async viceResourceGet() {
+          throw new Error("socket gone");
+        },
+        async viceResourceSet() {},
+      },
+    }),
+  );
+
+  assert.equal(result.isError, true);
+  assert.equal(result.metadata.error.kind, "unknown");
+});

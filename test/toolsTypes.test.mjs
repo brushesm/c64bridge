@@ -270,6 +270,71 @@ test("defineToolModule enforces operation-specific platforms before grouped exec
   assert.equal(executed, false);
 });
 
+test("defineToolModule reports operation names when no legacy tool mapping exists", async () => {
+  const module = defineToolModule({
+    domain: "test",
+    summary: "test module",
+    supportedPlatforms: ["c64u", "vice"],
+    tools: [
+      {
+        name: "c64_test",
+        description: "test grouped tool",
+        operationPlatforms: {
+          device_only: ["c64u"],
+        },
+        execute: async () => ({ content: [{ type: "text", text: "ok" }] }),
+      },
+    ],
+  });
+
+  await assert.rejects(
+    () => module.invoke("c64_test", { op: "device_only" }, {
+      ...stubCtx,
+      platform: { id: "vice", features: [], limitedFeatures: [] },
+      setPlatform() {
+        return { id: "vice", features: [], limitedFeatures: [] };
+      },
+    }),
+    (error) => {
+      assert.ok(error instanceof ToolUnsupportedPlatformError);
+      assert.equal(error.tool, "device_only");
+      return true;
+    },
+  );
+});
+
+test("defineToolModule falls back to grouped tool names when op is missing or empty", async () => {
+  const module = defineToolModule({
+    domain: "test",
+    summary: "test module",
+    supportedPlatforms: ["c64u"],
+    tools: [
+      {
+        name: "c64_test",
+        description: "test grouped tool",
+        execute: async () => ({ content: [{ type: "text", text: "ok" }] }),
+      },
+    ],
+  });
+
+  for (const args of [{}, { op: "" }, null]) {
+    await assert.rejects(
+      () => module.invoke("c64_test", args, {
+        ...stubCtx,
+        platform: { id: "vice", features: [], limitedFeatures: [] },
+        setPlatform() {
+          return { id: "vice", features: [], limitedFeatures: [] };
+        },
+      }),
+      (error) => {
+        assert.ok(error instanceof ToolUnsupportedPlatformError);
+        assert.equal(error.tool, "c64_test");
+        return true;
+      },
+    );
+  }
+});
+
 test("defineToolModule falls back to tool-level platforms when no op override exists", async () => {
   const calls = [];
 

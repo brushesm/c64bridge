@@ -1,6 +1,7 @@
 import test from "#test/runner";
 import assert from "#test/assert";
 import { toolRegistry, describeToolModules } from "../src/tools/registry/index.js";
+import { getMcpProjectMetadata, getMcpServerImplementationInfo } from "../src/mcp/metadata.js";
 import { getPlatformStatus, setPlatform } from "../src/platform.js";
 
 function createStubLogger() {
@@ -78,4 +79,16 @@ test("describeToolModules returns module descriptors", () => {
     assert.ok(Array.isArray(module.tools), `module ${module.domain} should have tools array`);
     assert.ok(module.tools.length > 0, `module ${module.domain} should have at least one tool`);
   }
+});
+
+test("MCP metadata exposes implementation and project details", () => {
+  const implementation = getMcpServerImplementationInfo();
+  const project = getMcpProjectMetadata();
+
+  assert.equal(typeof implementation.name, "string");
+  assert.equal(typeof implementation.version, "string");
+  assert.equal(project.name, implementation.name);
+  assert.equal(project.version, implementation.version);
+  assert.ok(Array.isArray(project.transports));
+  assert.ok(project.transports.includes("stdio"));
 });
