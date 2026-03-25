@@ -934,3 +934,35 @@ test("device: ViceBackend unit branches", async () => {
     assert.equal(pingAttempts, 2);
   });
 });
+
+test("device: ViceBackend defaults to visible launches and parses boolean overrides", async () => {
+  await withEnv({
+    VICE_TEST_TARGET: "mock",
+    VICE_VISIBLE: undefined,
+    VICE_WARP: undefined,
+  }, async () => {
+    const backend = new ViceBackend({ host: "127.0.0.1", port: 6510 });
+    assert.equal(backend.visible, true);
+    assert.equal(backend.warp, false);
+  });
+
+  await withEnv({
+    VICE_TEST_TARGET: "mock",
+    VICE_VISIBLE: "false",
+    VICE_WARP: undefined,
+  }, async () => {
+    const backend = new ViceBackend({ host: "127.0.0.1", port: 6510 });
+    assert.equal(backend.visible, false);
+    assert.equal(backend.warp, true);
+  });
+
+  await withEnv({
+    VICE_TEST_TARGET: "mock",
+    VICE_VISIBLE: "off",
+    VICE_WARP: "off",
+  }, async () => {
+    const backend = new ViceBackend({ host: "127.0.0.1", port: 6510 });
+    assert.equal(backend.visible, false);
+    assert.equal(backend.warp, false);
+  });
+});

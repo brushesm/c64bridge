@@ -432,3 +432,107 @@ test("drive_mount_and_verify respects powerOnIfNeeded=false", async () => {
   assert.equal(res.metadata?.success, true);
   assert.equal(driveListCalled, false);
 });
+
+test("find_and_run_program_by_name rejects unsupported extensions after discovery", async () => {
+  const ctx = {
+    client: {
+      async filesInfo() {
+        return ["/games/demo.tap"];
+      },
+    },
+    logger: createLogger(),
+  };
+
+  const res = await metaModule.invoke("find_and_run_program_by_name", {
+    root: "/games",
+    nameContains: "demo",
+    extensions: ["tap"],
+  }, ctx);
+
+  assert.equal(res.isError, true);
+  assert.equal(res.metadata?.error?.kind, "execution");
+  assert.ok(String(res.content?.[0]?.text ?? "").length > 0);
+});
+
+test("find_and_run_program_by_name surfaces firmware failures", async () => {
+  const ctx = {
+    client: {
+      async filesInfo() {
+        return ["/games/demo.prg"];
+      },
+      async runPrgFile() {
+        return { success: false, details: { code: "DENIED" } };
+      },
+    },
+    logger: createLogger(),
+  };
+
+  const res = await metaModule.invoke("find_and_run_program_by_name", {
+    root: "/games",
+    nameContains: "demo",
+  }, ctx);
+
+  assert.equal(res.isError, true);
+  assert.equal(res.metadata?.error?.kind, "execution");
+  assert.deepEqual(res.metadata?.error?.details?.response, { code: "DENIED" });
+});
+
+test("drive_mount_and_verify can skip verification and tolerate reset failures", async () => {
+  let resetCalls = 0;
+  const ctx = {
+    client: {
+      async drivesList() {
+        return [{ id: "drive8", power: "on", image: null }];
+      },
+      async driveMount() {
+        return { success: true, details: { mounted: true } };
+      },
+      async driveReset() {
+        resetCalls += 1;
+        throw new Error("reset boom");
+      },
+    },
+    logger: createLogger(),
+  };
+
+  const res = await metaModule.invoke("drive_mount_and_verify", {
+    drive: "drive8",
+    imagePath: "/media/skipverify.d64",
+    verifyMount: false,
+    resetAfterMount: true,
+  }, ctx);
+
+  assert.equal(res.metadata?.success, true);
+  assert.equal(resetCalls, 1);
+  assert.equal(res.structuredContent?.data?.verification, null);
+  assert.ok(Array.isArray(res.structuredContent?.data?.log));
+});
+
+test("drive_mount_and_verify fails when post-mount verification lookup breaks", async () => {
+  let listCalls = 0;
+  const ctx = {
+    client: {
+      async drivesList() {
+        listCalls += 1;
+        if (listCalls === 1) {
+          return [{ id: "drive8", power: "on", image: null }];
+        }
+        throw new Error("drive list unavailable");
+      },
+      async driveMount() {
+        return { success: true, details: { mounted: true } };
+      },
+    },
+    logger: createLogger(),
+  };
+
+  const res = await metaModule.invoke("drive_mount_and_verify", {
+    drive: "drive8",
+    imagePath: "/media/broken.d64",
+    powerOnIfNeeded: true,
+  }, ctx);
+
+  assert.equal(res.isError, true);
+  assert.equal(res.metadata?.error?.kind, "execution");
+  assert.ok(String(res.content?.[0]?.text ?? "").length > 0);
+});

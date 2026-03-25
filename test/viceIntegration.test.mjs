@@ -436,7 +436,7 @@ test("debug module manages checkpoints, registers, and errors", async () => {
 });
 
 test("VICE process helpers cover environment, sockets, and termination paths", async () => {
-  const envKeys = ["DISPLAY", "DISABLE_XVFB", "FORCE_XVFB", "VICE_XVFB_DISPLAY", "CI"];
+  const envKeys = ["CI", "DISPLAY", "DISABLE_XVFB", "FORCE_XVFB", "VICE_XVFB_DISPLAY", "WAYLAND_DISPLAY"];
   const backup = new Map(envKeys.map((key) => [key, process.env[key]]));
   const restoreEnv = () => {
     for (const key of envKeys) {
@@ -451,7 +451,9 @@ test("VICE process helpers cover environment, sockets, and termination paths", a
 
   try {
     process.env.DISPLAY = ":1";
+    delete process.env.WAYLAND_DISPLAY;
     assert.deepEqual(shouldUseXvfb(true), { useXvfb: false, display: ":1" });
+    assert.deepEqual(shouldUseXvfb(undefined), { useXvfb: false, display: ":1" });
 
     process.env.DISABLE_XVFB = "1";
     assert.deepEqual(shouldUseXvfb(false), { useXvfb: false, display: ":1" });
@@ -459,19 +461,23 @@ test("VICE process helpers cover environment, sockets, and termination paths", a
     delete process.env.DISABLE_XVFB;
     process.env.FORCE_XVFB = "1";
     process.env.VICE_XVFB_DISPLAY = ":77";
-    assert.deepEqual(shouldUseXvfb(false), { useXvfb: true, display: ":77" });
+    assert.deepEqual(shouldUseXvfb(true), { useXvfb: true, display: ":77" });
 
     delete process.env.FORCE_XVFB;
     delete process.env.DISPLAY;
+    process.env.WAYLAND_DISPLAY = "wayland-0";
+    assert.deepEqual(shouldUseXvfb(true), { useXvfb: false, display: "wayland-0" });
+
+    delete process.env.WAYLAND_DISPLAY;
     process.env.CI = "yes";
-    assert.deepEqual(shouldUseXvfb(false), { useXvfb: true, display: ":77" });
+    assert.deepEqual(shouldUseXvfb(true), { useXvfb: true, display: ":77" });
 
     delete process.env.CI;
     delete process.env.VICE_XVFB_DISPLAY;
-    assert.deepEqual(shouldUseXvfb(false), { useXvfb: true, display: ":99" });
+    assert.deepEqual(shouldUseXvfb(undefined), { useXvfb: true, display: ":99" });
 
     process.env.DISPLAY = ":2";
-    assert.deepEqual(shouldUseXvfb(false), { useXvfb: false, display: ":2" });
+    assert.deepEqual(shouldUseXvfb(false), { useXvfb: true, display: ":99" });
 
     const server = net.createServer();
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));

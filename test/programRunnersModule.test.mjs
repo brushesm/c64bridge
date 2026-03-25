@@ -391,6 +391,83 @@ test("upload_run_basic verify true annotates metadata", async () => {
   }
 });
 
+test("upload_run_basic verify reports BASIC runtime error details", async () => {
+  const originalMax = process.env.C64BRIDGE_POLL_MAX_MS;
+  const originalInterval = process.env.C64BRIDGE_POLL_INTERVAL_MS;
+  process.env.C64BRIDGE_POLL_MAX_MS = "40";
+  process.env.C64BRIDGE_POLL_INTERVAL_MS = "1";
+
+  try {
+    let screenReads = 0;
+    const ctx = {
+      client: {
+        async uploadAndRunBasic() {
+          return { success: true, details: { ok: true } };
+        },
+        async readScreen() {
+          screenReads += 1;
+          if (screenReads === 1) {
+            return "RUN\n";
+          }
+          return "?TYPE MISMATCH ERROR IN 30\nREADY.\n";
+        },
+      },
+      logger: createLogger(),
+    };
+
+    const result = await programRunnersModule.invoke(
+      "upload_run_basic",
+      { program: '10 PRINT "HI"\n20 PRINT 2\n30 PRINT "A"+1', verify: true },
+      ctx,
+    );
+
+    assert.equal(result.isError, true);
+    assert.equal(result.metadata.error.kind, "execution");
+    assert.equal(result.metadata.error.details.message, "TYPE MISMATCH");
+    assert.equal(result.metadata.error.details.line, 30);
+  } finally {
+    if (originalMax === undefined) delete process.env.C64BRIDGE_POLL_MAX_MS;
+    else process.env.C64BRIDGE_POLL_MAX_MS = originalMax;
+    if (originalInterval === undefined) delete process.env.C64BRIDGE_POLL_INTERVAL_MS;
+    else process.env.C64BRIDGE_POLL_INTERVAL_MS = originalInterval;
+  }
+});
+
+test("upload_run_basic verify tolerates repeated screen read failures", async () => {
+  const originalMax = process.env.C64BRIDGE_POLL_MAX_MS;
+  const originalInterval = process.env.C64BRIDGE_POLL_INTERVAL_MS;
+  process.env.C64BRIDGE_POLL_MAX_MS = "20";
+  process.env.C64BRIDGE_POLL_INTERVAL_MS = "1";
+
+  try {
+    const ctx = {
+      client: {
+        async uploadAndRunBasic() {
+          return { success: true };
+        },
+        async readScreen() {
+          throw new Error("screen transport offline");
+        },
+      },
+      logger: createLogger(),
+    };
+
+    const result = await programRunnersModule.invoke(
+      "upload_run_basic",
+      { program: '10 PRINT "HI"\n20 END', verify: true },
+      ctx,
+    );
+
+    assert.equal(result.isError, undefined);
+    assert.equal(result.metadata.verified, true);
+  } finally {
+    if (originalMax === undefined) delete process.env.C64BRIDGE_POLL_MAX_MS;
+    else process.env.C64BRIDGE_POLL_MAX_MS = originalMax;
+    if (originalInterval === undefined) delete process.env.C64BRIDGE_POLL_INTERVAL_MS;
+    else process.env.C64BRIDGE_POLL_INTERVAL_MS = originalInterval;
+  }
+});
+
 test("upload_run_basic reports failure when auto-fix not possible", async () => {
   const ctx = {
     client: {
@@ -650,4 +727,103 @@ test("upload_run_asm verify true annotates metadata", async () => {
       process.env.C64BRIDGE_POLL_INTERVAL_MS = originalInterval;
     }
   }
+});
+
+test("upload_run_asm reports crashed programs when verification detects no progress", async () => {
+  const originalMax = process.env.C64BRIDGE_POLL_MAX_MS;
+  const originalInterval = process.env.C64BRIDGE_POLL_INTERVAL_MS;
+  process.env.C64BRIDGE_POLL_MAX_MS = "40";
+  process.env.C64BRIDGE_POLL_INTERVAL_MS = "1";
+
+  try {
+    const ctx = {
+      client: {
+        async uploadAndRunAsm() {
+          return { success: true };
+        },
+        async readScreen() {
+          return "RUN\n";
+        },
+        async readMemoryRaw(address, length) {
+          if (address === 0xD000 || address === 0x0000) {
+            return new Uint8Array(length);
+          }
+          throw new Error(`unexpected address ${address}`);
+        },
+      },
+      logger: createLogger(),
+    };
+
+    const result = await programRunnersModule.invoke(
+      "upload_run_asm",
+      { program: ".org $0801\nstart: rts", verify: true },
+      ctx,
+    );
+
+    assert.equal(result.isError, true);
+    assert.equal(result.metadata.error.kind, "execution");
+    assert.equal(result.metadata.error.details.reason, "no VIC/CIA/TI/screen progression within window");
+  } finally {
+    if (originalMax === undefined) delete process.env.C64BRIDGE_POLL_MAX_MS;
+    else process.env.C64BRIDGE_POLL_MAX_MS = originalMax;
+    if (originalInterval === undefined) delete process.env.C64BRIDGE_POLL_INTERVAL_MS;
+    else process.env.C64BRIDGE_POLL_INTERVAL_MS = originalInterval;
+  }
+});
+
+test("upload_run_asm verify treats repeated screen read failures as instant execution", async () => {
+  const originalMax = process.env.C64BRIDGE_POLL_MAX_MS;
+  const originalInterval = process.env.C64BRIDGE_POLL_INTERVAL_MS;
+  process.env.C64BRIDGE_POLL_MAX_MS = "20";
+  process.env.C64BRIDGE_POLL_INTERVAL_MS = "1";
+
+  try {
+    const ctx = {
+      client: {
+        async uploadAndRunAsm() {
+          return { success: true };
+        },
+        async readScreen() {
+          throw new Error("monitor unavailable");
+        },
+      },
+      logger: createLogger(),
+    };
+
+    const result = await programRunnersModule.invoke(
+      "upload_run_asm",
+      { program: ".org $0801\nstart: rts", verify: true },
+      ctx,
+    );
+
+    assert.equal(result.isError, undefined);
+    assert.equal(result.metadata.verified, true);
+  } finally {
+    if (originalMax === undefined) delete process.env.C64BRIDGE_POLL_MAX_MS;
+    else process.env.C64BRIDGE_POLL_MAX_MS = originalMax;
+    if (originalInterval === undefined) delete process.env.C64BRIDGE_POLL_INTERVAL_MS;
+    else process.env.C64BRIDGE_POLL_INTERVAL_MS = originalInterval;
+  }
+});
+
+test("upload_run_asm reports assembly diagnostics with file and line", async () => {
+  const ctx = {
+    client: {
+      async uploadAndRunAsm() {
+        throw new Error("should not run");
+      },
+    },
+    logger: createLogger(),
+  };
+
+  const result = await programRunnersModule.invoke(
+    "upload_run_asm",
+    { program: ".org $0801\nstart\n lda #$00" },
+    ctx,
+  );
+
+  assert.equal(result.isError, true);
+  assert.equal(result.metadata.error.kind, "validation");
+  assert.ok(typeof result.metadata.error.details.line === "number");
+  assert.ok(String(result.metadata.error.details.message ?? "").length > 0);
 });

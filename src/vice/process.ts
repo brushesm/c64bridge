@@ -26,22 +26,45 @@ export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function hasGraphicalSession(): boolean {
+  return configuredDisplay() !== undefined || configuredWaylandDisplay() !== undefined;
+}
+
+function configuredDisplay(): string | undefined {
+  const display = process.env.DISPLAY?.trim();
+  return display ? display : undefined;
+}
+
+function configuredWaylandDisplay(): string | undefined {
+  const display = process.env.WAYLAND_DISPLAY?.trim();
+  return display ? display : undefined;
+}
+
+function currentDisplayLabel(): string {
+  return configuredDisplay() ?? configuredWaylandDisplay() ?? DEFAULT_DISPLAY;
+}
+
 export function shouldUseXvfb(visible: boolean | undefined): { useXvfb: boolean; display: string } {
-  if (visible) return { useXvfb: false, display: process.env.DISPLAY ?? DEFAULT_DISPLAY };
-  if (process.env.DISABLE_XVFB === "1") {
-    return { useXvfb: false, display: process.env.DISPLAY ?? DEFAULT_DISPLAY };
-  }
   if (process.env.FORCE_XVFB === "1") {
     return { useXvfb: true, display: process.env.VICE_XVFB_DISPLAY ?? DEFAULT_DISPLAY };
+  }
+  if (visible === false) {
+    if (process.env.DISABLE_XVFB === "1") {
+      return { useXvfb: false, display: currentDisplayLabel() };
+    }
+    return { useXvfb: true, display: process.env.VICE_XVFB_DISPLAY ?? DEFAULT_DISPLAY };
+  }
+  if (hasGraphicalSession()) {
+    return { useXvfb: false, display: currentDisplayLabel() };
+  }
+  if (process.env.DISABLE_XVFB === "1") {
+    return { useXvfb: false, display: currentDisplayLabel() };
   }
   const ci = (process.env.CI || "").toLowerCase();
   if (ci === "true" || ci === "1" || ci === "yes") {
     return { useXvfb: true, display: process.env.VICE_XVFB_DISPLAY ?? DEFAULT_DISPLAY };
   }
-  if (!process.env.DISPLAY || process.env.DISPLAY.trim() === "") {
-    return { useXvfb: true, display: process.env.VICE_XVFB_DISPLAY ?? DEFAULT_DISPLAY };
-  }
-  return { useXvfb: false, display: process.env.DISPLAY };
+  return { useXvfb: true, display: process.env.VICE_XVFB_DISPLAY ?? DEFAULT_DISPLAY };
 }
 
 export async function waitForPort(host: string, port: number, timeoutMs = 4000): Promise<void> {

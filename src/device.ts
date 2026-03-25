@@ -270,12 +270,10 @@ export class ViceBackend implements C64Facade {
     const isLocal = hostLower === "127.0.0.1" || hostLower === "localhost";
     this.manageProcess = !this.mockMode && isLocal;
 
-    const warpEnv = process.env.VICE_WARP;
-    const visibleEnv = process.env.VICE_VISIBLE;
-    this.visible = visibleEnv === "1";
-    if (warpEnv === "0") this.warp = false;
-    else if (warpEnv === "1") this.warp = true;
-    else this.warp = !this.visible;
+    const warpEnv = configuredBoolean(process.env.VICE_WARP);
+    const visibleEnv = configuredBoolean(process.env.VICE_VISIBLE);
+    this.visible = visibleEnv ?? true;
+    this.warp = warpEnv ?? !this.visible;
 
     const argsEnv = configuredString(process.env.VICE_ARGS);
     this.extraArgs = argsEnv ? parseArgsList(argsEnv) : [];
@@ -843,6 +841,22 @@ function configuredString(value: unknown): string | undefined {
   if (typeof value === "string") {
     const trimmed = value.trim();
     return trimmed ? trimmed : undefined;
+  }
+  return undefined;
+}
+
+function configuredBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  const input = configuredString(value);
+  if (!input) return undefined;
+  const normalised = input.toLowerCase();
+  if (normalised === "1" || normalised === "true" || normalised === "yes" || normalised === "on") {
+    return true;
+  }
+  if (normalised === "0" || normalised === "false" || normalised === "no" || normalised === "off") {
+    return false;
   }
   return undefined;
 }

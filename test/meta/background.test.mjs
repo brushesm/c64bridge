@@ -56,3 +56,115 @@ test("background tasks handle unknown operation and stop all", async () => {
     else process.env.C64_TASK_STATE_FILE = previous;
   }
 });
+
+test("background tasks support write/read_screen/menu_button and stop missing task idempotently", async () => {
+  const { file, dir } = tmpPath("background3", "tasks.json");
+  await fs.mkdir(dir, { recursive: true });
+  const previous = process.env.C64_TASK_STATE_FILE;
+  process.env.C64_TASK_STATE_FILE = file;
+  try {
+    const calls = [];
+    const ctx = {
+      client: {
+        async writeMemory(address, bytes) {
+          calls.push(["write", address, bytes]);
+          return { success: true };
+        },
+        async readScreen() {
+          calls.push(["screen"]);
+          return "READY.";
+        },
+        async menuButton() {
+          calls.push(["menu"]);
+          return { success: true };
+        },
+      },
+      logger: createLogger(),
+    };
+
+    const writeTask = await metaModule.invoke("start_background_task", {
+      name: "writer",
+      operation: "write_memory",
+      arguments: { address: "$0400", bytes: "$41" },
+      intervalMs: 5,
+      maxIterations: 1,
+    }, ctx);
+    const screenTask = await metaModule.invoke("start_background_task", {
+      name: "screen",
+      operation: "read_screen",
+      intervalMs: 5,
+      maxIterations: 1,
+    }, ctx);
+    const menuTask = await metaModule.invoke("start_background_task", {
+      name: "menu",
+      operation: "menu_button",
+      intervalMs: 5,
+      maxIterations: 1,
+    }, ctx);
+
+    assert.equal(writeTask.metadata?.success, true);
+    assert.equal(screenTask.metadata?.success, true);
+    assert.equal(menuTask.metadata?.success, true);
+
+    await waitForTaskCompletion(metaModule, "writer", ctx);
+    await waitForTaskCompletion(metaModule, "screen", ctx);
+    await waitForTaskCompletion(metaModule, "menu", ctx);
+
+    const stopMissing = await metaModule.invoke("stop_background_task", { name: "missing" }, ctx);
+    assert.equal(stopMissing.metadata?.success, true);
+    assert.equal(stopMissing.structuredContent?.data?.notFound, true);
+    assert.ok(calls.some((entry) => entry[0] === "write"));
+    assert.ok(calls.some((entry) => entry[0] === "screen"));
+    assert.ok(calls.some((entry) => entry[0] === "menu"));
+  } finally {
+    if (previous === undefined) delete process.env.C64_TASK_STATE_FILE;
+    else process.env.C64_TASK_STATE_FILE = previous;
+  }
+});
+
+test("background tasks persist task errors and reuse ids when restarted", async () => {
+  const { file, dir } = tmpPath("background4", "tasks.json");
+  await fs.mkdir(dir, { recursive: true });
+  const previous = process.env.C64_TASK_STATE_FILE;
+  process.env.C64_TASK_STATE_FILE = file;
+  try {
+    let readCalls = 0;
+    const ctx = {
+      client: {
+        async readMemory() {
+          readCalls += 1;
+          if (readCalls === 1) {
+            throw new Error("simulated read failure");
+          }
+          return { success: true, data: "$00" };
+        },
+      },
+      logger: createLogger(),
+    };
+
+    const first = await metaModule.invoke("start_background_task", {
+      name: "flaky",
+      operation: "read",
+      intervalMs: 5,
+      maxIterations: 1,
+    }, ctx);
+    assert.equal(first.metadata?.success, true);
+    const firstTask = await waitForTaskCompletion(metaModule, "flaky", ctx);
+    assert.equal(firstTask?.status, "error");
+    assert.ok(String(firstTask?.lastError ?? "").includes("simulated read failure"));
+
+    const second = await metaModule.invoke("start_background_task", {
+      name: "flaky",
+      operation: "read",
+      intervalMs: 5,
+      maxIterations: 1,
+    }, ctx);
+    assert.equal(second.metadata?.success, true);
+    assert.equal(second.structuredContent?.data?.task?.id, firstTask?.id);
+    const secondTask = await waitForTaskCompletion(metaModule, "flaky", ctx);
+    assert.ok(secondTask?.status === "completed" || secondTask?.status === "stopped");
+  } finally {
+    if (previous === undefined) delete process.env.C64_TASK_STATE_FILE;
+    else process.env.C64_TASK_STATE_FILE = previous;
+  }
+});
