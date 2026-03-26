@@ -17,6 +17,8 @@ Do not assume the current backend is correct without checking
 
 ## Fast Paths
 
+- Grouped MCP tools are never called bare. For tools such as `c64_program`, `c64_memory`, `c64_graphics`, `c64_sound`, and `c64_system`, always send an object with `op` first.
+- Wrong: `c64_program {}`. Correct: `c64_program { op: "cross_platform_greeting" }`.
 - For simple visible confirmation on `vice`, `c64u`, or both, prefer `c64_program` with `op: "cross_platform_greeting"`.
 - For trivial hello-world and smoke-test requests, route to `.github/skills/hello-world/SKILL.md` and let that skill use the shortest greeting workflow.
 - That workflow switches backends internally, writes a platform-customized BASIC greeting, captures screenshots, and verifies the rendered text without extra tool composition.

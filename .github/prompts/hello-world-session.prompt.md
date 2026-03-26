@@ -12,4 +12,6 @@ This prompt only identifies the intent: a trivial greeting, smoke test, or hello
 
 When the request is already backend-pinned and low ambiguity, execute immediately through the skill instead of re-reading general docs.
 
+When the skill selects a grouped MCP tool such as `c64_program`, always include its `op` discriminator in the call arguments.
+
 Extract missing requirements from the user request, execute the skill, and summarize the result and validation.

@@ -6,7 +6,7 @@ import { createLogger, tmpPath } from "./helpers.mjs";
 
 test("cross_platform_greeting switches backends, captures screenshots, and restores the starting backend", async () => {
   const switches = [];
-  const runs = [];
+  const renders = [];
   let activeBackend = "vice";
   const { dir } = tmpPath("program", "cross-platform-greeting");
   await fs.rm(dir, { recursive: true, force: true });
@@ -23,8 +23,8 @@ test("cross_platform_greeting switches backends, captures screenshots, and resto
         switches.push(backend);
         activeBackend = backend;
       },
-      async uploadAndRunBasic(program) {
-        runs.push({ backend: activeBackend, program });
+      async renderGreetingScreen({ message }) {
+        renders.push({ backend: activeBackend, message });
         return { success: true };
       },
       async readScreen() {
@@ -66,9 +66,10 @@ test("cross_platform_greeting switches backends, captures screenshots, and resto
   assert.deepEqual(data.requestedBackends, ["vice", "c64u"]);
   assert.equal(data.results.length, 2);
   assert.equal(data.results.every((entry) => entry.success === true), true);
-  assert.equal(runs.length, 2);
-  assert.equal(runs[0].backend, "vice");
-  assert.equal(runs[1].backend, "c64u");
+  assert.equal(renders.length, 2);
+  assert.equal(renders[0].backend, "vice");
+  assert.equal(renders[1].backend, "c64u");
+  assert.equal(data.results.every((entry) => entry.executionMode === "direct_screen_write"), true);
   assert.equal(switches.join(","), "vice,c64u,vice");
   assert.equal(activeBackend, "vice");
   await fs.stat(data.results[0].screenshotPath);
@@ -96,7 +97,7 @@ test("cross_platform_greeting uses the visible VICE fast path by default for a s
         switchBackend(backend) {
           activeBackend = backend;
         },
-        async uploadAndRunBasic() {
+        async renderGreetingScreen() {
           return { success: true };
         },
         async readScreen() {
@@ -132,6 +133,47 @@ test("cross_platform_greeting uses the visible VICE fast path by default for a s
       process.env.VICE_VISIBLE = originalVisible;
     }
   }
+});
+
+test("cross_platform_greeting falls back to BASIC upload when direct greeting rendering is unavailable", async () => {
+  const runs = [];
+  let activeBackend = "vice";
+
+  const ctx = {
+    client: {
+      getAvailableBackends() {
+        return ["vice"];
+      },
+      async getActiveBackendType() {
+        return activeBackend;
+      },
+      switchBackend(backend) {
+        activeBackend = backend;
+      },
+      async uploadAndRunBasic(program) {
+        runs.push(program);
+        return { success: true };
+      },
+      async readScreen() {
+        return "READY.\nHAVE A GREAT DAY, VICE!";
+      },
+    },
+    logger: createLogger(),
+    setPlatform(target) {
+      activeBackend = target;
+      return { id: target, features: [], limitedFeatures: [] };
+    },
+  };
+
+  const res = await metaModule.invoke("cross_platform_greeting", {
+    platforms: ["vice"],
+    verify: true,
+    captureScreenshot: false,
+  }, ctx);
+
+  assert.equal(res.metadata?.success, true);
+  assert.equal(runs.length, 1);
+  assert.equal(res.structuredContent?.data?.results?.[0]?.executionMode, "basic_program");
 });
 
 test("program_shuffle discovers and runs programs", async () => {

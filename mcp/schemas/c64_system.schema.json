@@ -176,6 +176,49 @@
       "required": [
         "op"
       ]
+    },
+    {
+      "type": "object",
+      "description": "Summarize diagnostics spans and tool latencies from the current or latest MCP session.",
+      "properties": {
+        "scope": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Which diagnostics session to summarize.",
+          "enum": [
+            "current",
+            "latest"
+          ],
+          "default": "current"
+        },
+        "includeTimeline": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Include the tail of the event timeline.",
+          "default": true
+        },
+        "maxEntries": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Maximum number of span and timeline entries to return.",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 25
+        },
+        "op": {
+          "const": "performance_report"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "op"
+      ]
     }
   ],
   "discriminator": {

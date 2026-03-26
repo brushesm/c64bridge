@@ -74,6 +74,9 @@ If a workflow description starts listing tool calls outside `.github/skills`, tr
 - Discover resources and prompts with ListResources and ListPrompts.
 - Use the matching skill in `.github/skills/` to decide the actual tool sequence, validation, and safety behavior.
 - After discovery has already happened for the active session, prefer execution over repeated rediscovery for unambiguous requests.
+- Treat `c64_program`, `c64_memory`, `c64_graphics`, `c64_sound`, `c64_system`, `c64_config`, `c64_rag`, `c64_extract`, and similar grouped MCP tools as discriminated unions: every direct call must include `op`.
+- Never call a grouped tool with `{}` or with only secondary arguments. Choose the sub-operation first, then send `{ op: "...", ... }`.
+- When a skill tells you to execute a grouped tool, copy the exact `op` string from the skill instead of inferring it from the tool name.
 
 ## Capabilities
 

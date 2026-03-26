@@ -14,6 +14,7 @@ Use this skill for quick greetings, smoke tests, and visible confirmation that o
 
 ## Execution
 
+0. Grouped MCP tools always require `op`. Do not call `c64_program` without it.
 1. Execute `c64_program` with `op: "cross_platform_greeting"`.
 2. Pass `platforms` only when the user wants a subset of the configured backends.
 3. Pass `messageTemplate` only when the user explicitly wants custom text.

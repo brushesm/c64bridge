@@ -123,8 +123,6 @@ async function main() {
   const promptRegistry = createPromptRegistry();
   const getPromptRegistry = createPromptRegistryGetter();
   const implementationInfo = getMcpServerImplementationInfo();
-  const entries = getPromptRegistry().list();
-  const resolved = getPromptRegistry().resolve(name, args);
 
   // Create MCP server
   const server = new Server(

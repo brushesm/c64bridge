@@ -337,7 +337,7 @@ export function summarizeDiagnosticsSession(
     .sort((left, right) => right.totalLatencyMs - left.totalLatencyMs);
 
   const startedAt = records[0]?.ts ?? null;
-  const endedAt = records.at(-1)?.ts ?? null;
+  const endedAt = records.length > 0 ? (records[records.length - 1]?.ts ?? null) : null;
   const durationMs = startedAt && endedAt
     ? roundNumber(new Date(endedAt).getTime() - new Date(startedAt).getTime())
     : 0;

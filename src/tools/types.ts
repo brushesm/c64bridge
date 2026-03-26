@@ -182,8 +182,8 @@ export function createOperationDispatcher<TMap extends OperationMap>(
 
     if (typeof opValue !== "string" || opValue.length === 0) {
       throw new ToolValidationError(
-        `${toolName} requires an ${OPERATION_DISCRIMINATOR} string to select an operation`,
-        { path: `$.${OPERATION_DISCRIMINATOR}` },
+        `${toolName} is a grouped tool and requires an ${OPERATION_DISCRIMINATOR} string to select an operation`,
+        { path: `$.${OPERATION_DISCRIMINATOR}`, details: { allowed } },
       );
     }
 

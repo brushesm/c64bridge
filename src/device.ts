@@ -33,6 +33,7 @@ export interface C64Facade {
   // Memory/register access
   readMemory(address: number, length: number): Promise<Uint8Array>;
   writeMemory(address: number, bytes: Uint8Array): Promise<void>;
+  writeMemoryBlocks?(blocks: ReadonlyArray<{ address: number; bytes: Uint8Array }>): Promise<void>;
   // System control
   reset(): Promise<RunResult>;
   reboot(): Promise<RunResult>;
@@ -237,6 +238,9 @@ class C64uBackend implements C64Facade {
         { headers: { "Content-Type": "application/octet-stream" } },
       );
     }
+  }
+  async writeMemoryBlocks(blocks: ReadonlyArray<{ address: number; bytes: Uint8Array }>): Promise<void> {
+    await Promise.all(blocks.map(({ address, bytes }) => this.writeMemory(address, bytes)));
   }
   async reset(): Promise<RunResult> { const res = await this.api.v1.machineResetUpdate(":reset"); return { success: true, details: res.data }; }
   async reboot(): Promise<RunResult> { const res = await this.api.v1.machineRebootUpdate(":reboot"); return { success: true, details: res.data }; }
@@ -561,6 +565,23 @@ export class ViceBackend implements C64Facade {
     }
     await this.withClient(async (client) => {
       await client.memSet(address, Buffer.from(bytes));
+    });
+  }
+
+  async writeMemoryBlocks(blocks: ReadonlyArray<{ address: number; bytes: Uint8Array }>): Promise<void> {
+    if (!Array.isArray(blocks) || blocks.length === 0) {
+      throw new Error("Blocks must be a non-empty array");
+    }
+    await this.withClient(async (client) => {
+      for (const { address, bytes } of blocks) {
+        if (!Number.isInteger(address) || address < 0 || address > 0xffff) {
+          throw new Error("Address must be within 0x0000-0xFFFF");
+        }
+        if (!(bytes instanceof Uint8Array) || bytes.length === 0) {
+          throw new Error("Bytes must be a non-empty Uint8Array");
+        }
+        await client.memSet(address, Buffer.from(bytes));
+      }
     });
   }
 

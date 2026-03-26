@@ -326,6 +326,61 @@ export class C64Client {
     return this.uploadAndRunBasic(program);
   }
 
+  async renderGreetingScreen(options: {
+    readonly message: string;
+    readonly borderColor?: number;
+    readonly backgroundColor?: number;
+  }): Promise<RunBasicResult> {
+    return withDiagnosticSpan("client", "render_greeting_screen", { messageLength: options.message.length }, async () => {
+      try {
+        const facade = await this.facadePromise;
+        const currentDd00 = await this.readByteOrDefault(facade, 0xDD00, 0);
+        const textRegisters = buildVicTextRegisters({
+          currentDd00,
+          borderColor: options.borderColor ?? DEFAULT_BORDER_COLOR,
+          backgroundColor: options.backgroundColor ?? DEFAULT_BACKGROUND_COLOR,
+        });
+        const screenRam = buildGreetingScreenRam(options.message);
+        const colorRam = new Uint8Array(TEXT_SCREEN_SIZE).fill(DEFAULT_TEXT_FOREGROUND);
+
+        const writes = [
+          { address: TEXT_SCREEN_ADDRESS, bytes: screenRam },
+          { address: TEXT_COLOR_RAM_ADDRESS, bytes: colorRam },
+          { address: 0xDD00, bytes: Uint8Array.of(textRegisters.dd00) },
+          { address: 0xD011, bytes: Uint8Array.of(textRegisters.d011) },
+          { address: 0xD016, bytes: Uint8Array.of(textRegisters.d016) },
+          { address: 0xD018, bytes: Uint8Array.of(textRegisters.d018) },
+          { address: 0xD020, bytes: Uint8Array.of(textRegisters.d020) },
+          { address: 0xD021, bytes: Uint8Array.of(textRegisters.d021) },
+        ] as const;
+
+        if (typeof facade.writeMemoryBlocks === "function") {
+          await facade.writeMemoryBlocks(writes);
+        } else {
+          for (const write of writes) {
+            await facade.writeMemory(write.address, write.bytes);
+          }
+        }
+
+        return {
+          success: true,
+          details: {
+            mode: "direct_screen_write",
+            screenAddress: this.formatAddress(TEXT_SCREEN_ADDRESS),
+            colorRamAddress: this.formatAddress(TEXT_COLOR_RAM_ADDRESS),
+            registers: textRegisters,
+            message: options.message,
+          },
+        };
+      } catch (error) {
+        return {
+          success: false,
+          details: this.normaliseError(error),
+        };
+      }
+    });
+  }
+
   async displaySprite(options: {
     readonly spriteBytes: Uint8Array | Buffer;
     readonly spriteIndex?: number;
@@ -1649,6 +1704,65 @@ function buildVicTextRegisters(options: {
     d020: normaliseColorNibble(options.borderColor ?? DEFAULT_BORDER_COLOR),
     d021: normaliseColorNibble(options.backgroundColor ?? DEFAULT_BACKGROUND_COLOR),
   };
+}
+
+function asciiCharToScreenCode(char: string): number {
+  if (char.length !== 1) {
+    return SPACE_SCREEN_CODE;
+  }
+
+  const upper = char.toUpperCase();
+  if (upper >= "A" && upper <= "Z") {
+    return upper.charCodeAt(0) - 64;
+  }
+
+  if (upper >= "0" && upper <= "9") {
+    return upper.charCodeAt(0);
+  }
+
+  switch (upper) {
+    case " ":
+      return SPACE_SCREEN_CODE;
+    case ".":
+      return 0x2E;
+    case ",":
+      return 0x2C;
+    case "!":
+      return 0x21;
+    case ":":
+      return 0x3A;
+    case ";":
+      return 0x3B;
+    case "-":
+      return 0x2D;
+    case "'":
+      return 0x27;
+    case "/":
+      return 0x2F;
+    case "?":
+      return 0x3F;
+    default:
+      return SPACE_SCREEN_CODE;
+  }
+}
+
+function writeScreenLine(screenRam: Uint8Array, row: number, text: string): void {
+  if (row < 0 || row >= TEXT_SCREEN_ROWS) {
+    return;
+  }
+
+  const offset = row * TEXT_SCREEN_COLUMNS;
+  const clipped = text.slice(0, TEXT_SCREEN_COLUMNS);
+  for (let index = 0; index < clipped.length; index += 1) {
+    screenRam[offset + index] = asciiCharToScreenCode(clipped[index] ?? " ");
+  }
+}
+
+function buildGreetingScreenRam(message: string): Uint8Array {
+  const screenRam = new Uint8Array(TEXT_SCREEN_SIZE).fill(SPACE_SCREEN_CODE);
+  writeScreenLine(screenRam, 1, message);
+  writeScreenLine(screenRam, 3, "READY.");
+  return screenRam;
 }
 
 function buildSingleSpriteProgram(opts: {

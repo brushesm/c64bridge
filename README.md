@@ -552,7 +552,7 @@ This allows agents to inspect the available tools, resources, prompts, and schem
 
 <!-- AUTO-GENERATED:MCP-DOCS-START -->
 
-This MCP server exposes **15 tools**, **26 resources**, and **9 prompts** for controlling your Commodore 64.
+This MCP server exposes **15 tools**, **26 resources**, and **10 prompts** for controlling your Commodore 64.
 
 ### Tools
 
@@ -737,6 +737,7 @@ Grouped entry point for power, reset, menu, and background task control.
 | `list_tasks` | List known background tasks with status metadata. | — | — | ✅ | ✅ |
 | `menu` | Toggle the Ultimate menu button for navigation. | — | — | ✅ |  |
 | `pause` | Pause the machine until resumed. | — | — | ✅ |  |
+| `performance_report` | Summarize diagnostics spans and tool latencies from the current or latest MCP session. | — | — | ✅ | ✅ |
 | `poweroff` | Request a controlled shutdown via the Ultimate firmware. | — | — | ✅ | ✅ |
 | `reboot` | Trigger a firmware reboot to recover from faults. | — | — | ✅ | ✅ |
 | `reset` | Issue a soft reset without cutting power. | — | — | ✅ | ✅ |
@@ -794,6 +795,7 @@ Grouped entry point for reading and updating selected VICE resources.
 | `cross-platform-demo` | Route quick visible demo requests to the cross-platform demo skill. |
 | `drive-manager` | Route disk-image and drive-state requests to the canonical drive skill. |
 | `graphics-demo` | Route graphics requests to the canonical graphics skill. |
+| `hello-world` | Route ultra-fast hello-world and smoke-test requests to the canonical greeting skill. |
 | `memory-debug` | Route reversible memory inspection or patching work to the canonical memory skill. |
 | `preset-music-demo` | Route quick recognizable tune requests to the SID music skill. |
 | `printer-job` | Route printer work to the canonical printer skill. |

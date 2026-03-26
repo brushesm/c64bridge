@@ -375,7 +375,6 @@ export const tools: ToolDefinition[] = [
           });
         }
 
-        const verify = parsed.verify !== false;
         const visibleViceFastPath = shouldUseVisibleViceGreetingFastPath(args ?? {}, requestedBackends);
         const verify = visibleViceFastPath ? false : parsed.verify !== false;
         const captureScreenshot = visibleViceFastPath ? false : parsed.captureScreenshot !== false;
@@ -401,6 +400,7 @@ export const tools: ToolDefinition[] = [
             const expectedText = applyGreetingTemplate(template, backend);
             const program = buildGreetingProgram(expectedText);
             const timeline: Array<Record<string, unknown>> = [];
+            let executionMode = "direct_screen_write";
             const timedStep = async <T>(name: string, fn: () => Promise<T> | T): Promise<T> => {
               const startedAt = Date.now();
               try {
@@ -423,11 +423,23 @@ export const tools: ToolDefinition[] = [
               ctx.setPlatform(backend);
             });
 
-            const runResult = await timedStep("upload_run_basic", () => ctx.client.uploadAndRunBasic(program));
+            const runResult = await timedStep("render_greeting_screen", async () => {
+              const client = ctx.client as ToolExecutionContext["client"] & {
+                renderGreetingScreen?: (options: { message: string }) => Promise<{ success: boolean; details?: unknown }>;
+              };
+              if (typeof client.renderGreetingScreen === "function") {
+                executionMode = "direct_screen_write";
+                return client.renderGreetingScreen({ message: expectedText });
+              }
+
+              executionMode = "basic_program";
+              return ctx.client.uploadAndRunBasic(program);
+            });
             const backendResult: Record<string, unknown> = {
               backend,
               expectedText,
               program,
+              executionMode,
               timeline,
             };
 
@@ -448,8 +460,6 @@ export const tools: ToolDefinition[] = [
               );
               screen = waited.screen;
               screenMatched = waited.matched;
-            } else {
-              screen = await ctx.client.readScreen();
             }
 
             backendResult.screen = screen;
@@ -493,6 +503,12 @@ export const tools: ToolDefinition[] = [
             backendResult.success = runResult.success
               && (!verify || screenMatched)
               && (!captureScreenshot || !screenshotError);
+            backendResult.promptToVisibleLatencyMs = timeline
+              .filter((entry) => entry.ok === true && (entry.name === "switch_backend" || entry.name === "render_greeting_screen" || entry.name === "verify_screen"))
+              .reduce((total, entry) => total + Number(entry.latencyMs ?? 0), 0);
+            backendResult.totalLatencyMs = timeline
+              .filter((entry) => entry.ok === true)
+              .reduce((total, entry) => total + Number(entry.latencyMs ?? 0), 0);
             results.push(backendResult);
           }
         } finally {

@@ -430,6 +430,32 @@ test("C64Client against mock server", async (t) => {
   });
 });
 
+test("renderGreetingScreen uses batched writes when the facade supports them", async () => {
+  const client = new C64Client("http://127.0.0.1:65535");
+  const writeMemoryCalls = [];
+  const writeMemoryBlocksCalls = [];
+
+  client.facadePromise = Promise.resolve({
+    type: "c64u",
+    async readMemory() {
+      return Uint8Array.of(0);
+    },
+    async writeMemory(address, bytes) {
+      writeMemoryCalls.push({ address, length: bytes.length });
+    },
+    async writeMemoryBlocks(blocks) {
+      writeMemoryBlocksCalls.push(blocks.map(({ address, bytes }) => ({ address, length: bytes.length })));
+    },
+  });
+
+  const result = await client.renderGreetingScreen({ message: "HELLO TEST" });
+
+  assert.equal(result.success, true);
+  assert.equal(writeMemoryCalls.length, 0);
+  assert.equal(writeMemoryBlocksCalls.length, 1);
+  assert.equal(writeMemoryBlocksCalls[0].length, 8);
+});
+
 test("C64Client against real C64", async (t) => {
   if (target !== "real") {
     t.skip("real target disabled");

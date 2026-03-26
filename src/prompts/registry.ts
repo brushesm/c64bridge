@@ -202,6 +202,7 @@ export function createPromptRegistry(): PromptRegistry {
       routingNotes: [
         "Use this prompt for the narrowest hello-world, greeting, or smoke-test path.",
         "Backend-pinned requests such as `vice: write a small BASIC program that clears the screen and prints HELLO VICE` should prefer this prompt over the bespoke BASIC prompt.",
+        "`c64_program` is a grouped tool, so every direct invocation must include `op`; for this prompt the canonical call is `{ op: \"cross_platform_greeting\", ... }`.",
         "If the current agent cannot directly call `c64_program`, immediately delegate the same request to the `C64` agent instead of exploring repository files or manifests.",
         "For visible single-backend VICE greetings, prefer the no-probe fast path unless the user explicitly asks for screenshots or verification.",
       ],
@@ -235,6 +236,7 @@ export function createPromptRegistry(): PromptRegistry {
       skillPath: ".github/skills/cross-platform-demo/SKILL.md",
       routingNotes: [
         "This prompt is for the shortest visible confirmation path across one or more configured backends.",
+        "`c64_program` is a grouped tool, so always call it with `op: \"cross_platform_greeting\"` for this workflow.",
       ],
     },
     {
