@@ -30,6 +30,8 @@ When Ultimate firmware network protection is enabled, `networkPassword` is sent 
 When both `c64u` and `vice` are configured, the server can keep both backends live at the same time.
 Use `c64_select_backend` to switch the active backend without restarting the MCP server.
 The `c64://platform/status` resource always reports the currently active backend and the configured backend set.
+State the desired backend directly in the prompt when you want to pin execution, for example: `use vice`, `vice: load this PRG`, `use c64u`, or `run this on hardware`.
+When using the VS Code `C64` agent, keep the backend request in the same prompt so tool routing can call `c64_select_backend` before backend-specific operations.
 
 3) VS Code Copilot Chat (MCP)
 

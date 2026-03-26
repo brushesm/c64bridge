@@ -1,7 +1,7 @@
 import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import { Buffer } from "node:buffer";
 import { audioModule } from "../src/tools/audio.js";
-import { recordAndAnalyzeAudio } from "../src/audio/record_and_analyze_audio.js";
+import { analyzePcmForTest, recordAndAnalyzeAudio } from "../src/audio/record_and_analyze_audio.js";
 
 function createLogger() {
   return {
@@ -82,6 +82,10 @@ afterAll(() => {
 });
 
 describe("audio runtime integration", () => {
+  test("recordAndAnalyzeAudio validates duration input before capture", async () => {
+    await expect(recordAndAnalyzeAudio({ durationSeconds: "invalid" })).rejects.toThrow("durationSeconds must be a number");
+  });
+
   test("recordAndAnalyzeAudio surfaces missing audio backend dependencies", async () => {
     await expect(recordAndAnalyzeAudio({ durationSeconds: 0.5 })).rejects.toThrow("Audio backend not available");
   });
@@ -246,5 +250,62 @@ describe("audio runtime integration", () => {
     expect(analyzed.metadata?.analyzed).toBe(true);
     expect(String(analyzed.content?.[0]?.text ?? "")).toContain("Voice 1:");
     expect(String(analyzed.content?.[0]?.text ?? "")).toContain("sounds accurate");
+  });
+
+  test("analyzePcmForTest falls back when RMS extraction throws and splits changing pitches into segments", async () => {
+    let callIndex = 0;
+    mock.module("pitchfinder", () => ({
+      default: {
+        YIN: () => () => [440, 440, 493.88, 493.88, 493.88][callIndex++] ?? 493.88,
+      },
+    }));
+    mock.module("meyda", () => ({
+      default: {
+        extract: () => {
+          throw new Error("meyda missing");
+        },
+      },
+    }));
+
+    const signal = new Float32Array(4096);
+    signal.fill(0.2);
+
+    const result = await analyzePcmForTest(signal, 44100, {
+      voices: [
+        {
+          patterns: {
+            main: {
+              notes: ["A4", "B4"],
+            },
+          },
+        },
+      ],
+    });
+
+    const detected = result.analysis.voices[0]?.detected_notes ?? [];
+    expect(detected.length).toBeGreaterThan(1);
+    expect(detected.some((entry) => entry.note === "A4")).toBe(true);
+    expect(detected.some((entry) => entry.note === "B4")).toBe(true);
+    expect(result.analysis.global_metrics.average_rms).toBeGreaterThan(0);
+  });
+
+  test("analyzePcmForTest handles empty captures without detected notes", async () => {
+    mock.module("pitchfinder", () => ({
+      default: {
+        YIN: () => () => null,
+      },
+    }));
+    mock.module("meyda", () => ({
+      default: {
+        extract: () => ({ rms: 0 }),
+      },
+    }));
+
+    const result = await analyzePcmForTest(new Float32Array(0), 44100);
+
+    expect(result.analysis.voices[0]?.detected_notes).toEqual([]);
+    expect(result.analysis.global_metrics.average_pitch_deviation).toBeNull();
+    expect(result.analysis.global_metrics.detected_bpm).toBeNull();
+    expect(result.analysis.global_metrics.average_rms).toBeNull();
   });
 });

@@ -461,3 +461,34 @@ test("pollForProgramOutcome ASM treats repeated memory read failures as crashed"
   assert.equal(result.type, "ASM");
   assert.equal(result.reason, "no VIC/CIA/TI/screen progression within window");
 });
+
+test("pollForProgramOutcome ASM treats jiffy clock progress as activity even when other signatures stay stable", async () => {
+  let readCycle = 0;
+  const client = {
+    async readScreen() {
+      return "RUN\nSYS 2061\n";
+    },
+    async readMemoryRaw(address, length) {
+      if (address === 0xD000) {
+        return new Uint8Array(length).fill(0);
+      }
+
+      readCycle += 1;
+      const buffer = new Uint8Array(length).fill(0);
+      if (readCycle >= 2) {
+        buffer[0xA0] = 1;
+      }
+      return buffer;
+    },
+  };
+
+  const result = await pollForProgramOutcome(
+    "ASM",
+    client,
+    createLogger(),
+    { maxMs: 120, intervalMs: 10, stabilizeMs: 0 },
+  );
+
+  assert.equal(result.status, "ok");
+  assert.equal(result.type, "ASM");
+});

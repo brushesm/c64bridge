@@ -10,6 +10,9 @@ const DEFAULT_TARGET = "mock";
 const DEFAULT_PLATFORM = "c64u";
 const DEFAULT_BUN_FILE_LIMIT = 4;
 const DEFAULT_BUN_BATCH_SIZE = 12;
+const ISOLATED_BUN_TEST_FILES = new Set([
+  "test/audioRuntime.test.mjs",
+]);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaultEmbeddingsDir = path.join(repoRoot, "artifacts", "test-embeddings");
 const defaultTestFiles = listRepoTestFiles(path.join(repoRoot, "test"));
@@ -116,7 +119,11 @@ export function shouldUseNodeFallback(runCoverage: boolean, passthrough: string[
 export function buildBunTestBatches(passthrough: string[], env: NodeJS.ProcessEnv = process.env): string[][] {
   const explicitFiles = passthrough.filter(looksLikeTestFileArg);
   if (passthrough.length === 0) {
-    return chunkFiles(defaultTestFiles, resolveBunBatchSize(env.C64BRIDGE_BUN_BATCH_SIZE));
+    const sharedFiles = defaultTestFiles.filter((file) => !ISOLATED_BUN_TEST_FILES.has(file));
+    return [
+      ...chunkFiles(sharedFiles, resolveBunBatchSize(env.C64BRIDGE_BUN_BATCH_SIZE)),
+      ...[...ISOLATED_BUN_TEST_FILES].filter((file) => defaultTestFiles.includes(file)).map((file) => [file]),
+    ];
   }
   if (explicitFiles.length === 0) {
     return [passthrough];
@@ -124,7 +131,12 @@ export function buildBunTestBatches(passthrough: string[], env: NodeJS.ProcessEn
 
   const batchSize = resolveBunBatchSize(env.C64BRIDGE_BUN_BATCH_SIZE);
   const sharedArgs = passthrough.filter((arg) => !looksLikeTestFileArg(arg));
-  return chunkFiles(explicitFiles, batchSize).map((files) => [...files, ...sharedArgs]);
+  const sharedFiles = explicitFiles.filter((file) => !ISOLATED_BUN_TEST_FILES.has(file));
+  const isolatedFiles = explicitFiles.filter((file) => ISOLATED_BUN_TEST_FILES.has(file));
+  return [
+    ...chunkFiles(sharedFiles, batchSize).map((files) => [...files, ...sharedArgs]),
+    ...isolatedFiles.map((file) => [file, ...sharedArgs]),
+  ];
 }
 
 async function runNodeFallback(target: string, explicitBaseUrl: string | null, passthrough: string[], env: Record<string, string>, runCoverage: boolean): Promise<number> {

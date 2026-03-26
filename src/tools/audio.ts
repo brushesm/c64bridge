@@ -1095,7 +1095,8 @@ export const audioModule = defineToolModule({
           const duration = parsed.durationSeconds ?? 3;
           ctx.logger.info("Auto-analyzing SID audio", { durationSeconds: duration });
 
-          const analysis = await recordAndAnalyzeAudio({
+            const analyzer = resolveAnalyzer(ctx);
+            const analysis = await analyzer({
             durationSeconds: duration,
             expectedSidwave: normaliseSidwaveInput(parsed.expectedSidwave),
           });

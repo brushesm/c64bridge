@@ -6,6 +6,8 @@ import {
   createOperationDispatcher,
   defineToolModule,
   discriminatedUnionSchema,
+  type OperationHandlerMap,
+  type OperationMap,
   operationSchema,
   type ToolDescriptor,
   type ToolModule,
@@ -23,7 +25,7 @@ import { soundModuleGroup as soundModule } from "./sound.js";
 import { streamModule } from "./stream.js";
 import { systemModuleGroup as systemModule } from "./system.js";
 
-interface PlatformOperations {
+interface PlatformOperations extends OperationMap {
   readonly select: {
     readonly backend: PlatformId;
   };
@@ -74,15 +76,16 @@ const selectBackendSchema = operationSchema("select", {
   required: ["backend"],
 });
 
-const platformOperationHandlers = {
-  async select(args: PlatformOperations["select"] & { readonly op: "select" }, ctx) {
+const platformOperationHandlers: OperationHandlerMap<PlatformOperations> = {
+  async select(args, ctx) {
+    const backend = args.backend as PlatformId;
     const availableBackends = ctx.client.getAvailableBackends().slice().sort();
-    if (!availableBackends.includes(args.backend)) {
+    if (!availableBackends.includes(backend)) {
       const data = {
         success: false,
-        requestedBackend: args.backend,
+        requestedBackend: backend,
         configuredBackends: availableBackends,
-        message: `Backend '${args.backend}' is not configured. Available backends: ${availableBackends.join(", ") || "none"}.`,
+        message: `Backend '${backend}' is not configured. Available backends: ${availableBackends.join(", ") || "none"}.`,
         usageHint: "Use c64_select_backend with one of the configured backends when you want to switch later.",
       };
       return {
@@ -91,14 +94,14 @@ const platformOperationHandlers = {
       };
     }
 
-    ctx.client.switchBackend(args.backend);
-    ctx.setPlatform(args.backend);
+    ctx.client.switchBackend(backend);
+    ctx.setPlatform(backend);
 
-    const { availableTools, unavailableTools } = describeTargetPlatform(args.backend);
-    const switchBackTarget = args.backend === "c64u" ? "vice" : "c64u";
+    const { availableTools, unavailableTools } = describeTargetPlatform(backend);
+    const switchBackTarget = backend === "c64u" ? "vice" : "c64u";
     const data = {
       success: true,
-      activeBackend: args.backend,
+      activeBackend: backend,
       configuredBackends: availableBackends,
       availableTools,
       unavailableTools,
@@ -106,7 +109,7 @@ const platformOperationHandlers = {
     };
     return jsonResult(data, { success: true });
   },
-} satisfies Parameters<typeof createOperationDispatcher<PlatformOperations>>[1];
+};
 
 export const platformModuleGroup = defineToolModule({
   domain: "platform",

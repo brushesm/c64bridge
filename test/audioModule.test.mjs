@@ -493,6 +493,16 @@ test("sid_note_off reports firmware failure", async () => {
   assert.equal(res.isError, true);
 });
 
+test("sid_note_off wraps unexpected errors", async () => {
+  const res = await audioModule.invoke("sid_note_off", { voice: 2 }, {
+    client: { sidNoteOff: async () => { throw new Error("note off boom"); } },
+    logger: createLogger(),
+  });
+
+  assert.equal(res.isError, true);
+  assert.ok(String(res.content[0].text).includes("note off boom"));
+});
+
 test("sid_silence_all verify reports silence metrics", async () => {
   const ctx = {
     client: {
@@ -561,6 +571,18 @@ test("sid_silence_all verify fails when analyzer omits RMS metrics", async () =>
   assert.ok(String(result.content[0].text).includes("RMS metrics"));
 });
 
+test("sid_silence_all surfaces firmware failure before verification", async () => {
+  const result = await audioModule.invoke("sid_silence_all", { verify: true }, {
+    client: {
+      sidSilenceAll: async () => ({ success: false }),
+    },
+    logger: createLogger(),
+  });
+
+  assert.equal(result.isError, true);
+  assert.ok(String(result.content[0].text).includes("silencing SID"));
+});
+
 test("sidplay_file and modplay_file surface execution failures", async () => {
   const sidResult = await audioModule.invoke("sidplay_file", { path: "/music/bad.sid" }, {
     client: {
@@ -579,6 +601,26 @@ test("sidplay_file and modplay_file surface execution failures", async () => {
   assert.equal(modResult.isError, true);
 });
 
+test("sidplay_file wraps unexpected failures and modplay_file surfaces firmware failures", async () => {
+  const sidResult = await audioModule.invoke("sidplay_file", { path: "/music/crash.sid" }, {
+    client: {
+      sidplayFile: async () => { throw new Error("sid crash"); },
+    },
+    logger: createLogger(),
+  });
+  assert.equal(sidResult.isError, true);
+  assert.ok(String(sidResult.content[0].text).includes("sid crash"));
+
+  const modResult = await audioModule.invoke("modplay_file", { path: "/music/fail.mod" }, {
+    client: {
+      modplayFile: async () => ({ success: false }),
+    },
+    logger: createLogger(),
+  });
+  assert.equal(modResult.isError, true);
+  assert.ok(String(modResult.content[0].text).includes("MOD playback"));
+});
+
 test("analyze_audio returns guidance when no keywords detected", async () => {
   const res = await audioModule.invoke("analyze_audio", { request: "just print status" }, { client: {} });
   assert.equal(res.isError, undefined);
@@ -590,9 +632,45 @@ test("analyze_audio wraps backend errors when keywords present", async () => {
   assert.equal(res.isError, true);
 });
 
+test("analyze_audio reports missing analysis and moderate pitch drift feedback", async () => {
+  const missing = await audioModule.invoke("analyze_audio", { request: "please check if the music sounds right" }, {
+    client: {
+      recordAndAnalyzeAudio: async () => ({}),
+    },
+    logger: createLogger(),
+  });
+  assert.equal(missing.isError, undefined);
+  assert.ok(String(missing.content[0].text).includes("no musical content"));
+
+  const moderate = await audioModule.invoke("analyze_audio", { request: "does the music sound right?" }, {
+    client: {
+      recordAndAnalyzeAudio: async () => ({
+        analysis: {
+          durationSeconds: 2,
+          voices: [{ id: 1, detected_notes: [{ note: "A4", frequency: 440 }], average_deviation: 30 }],
+          global_metrics: {
+            average_pitch_deviation: 30,
+            detected_bpm: 128,
+          },
+        },
+      }),
+    },
+    logger: createLogger(),
+  });
+  assert.equal(moderate.isError, undefined);
+  assert.ok(String(moderate.content[0].text).includes("Detected tempo: 128 BPM"));
+  assert.ok(String(moderate.content[0].text).includes("some pitch variation"));
+});
+
 test("record_and_analyze_audio returns error when backend missing", async () => {
   const res = await audioModule.invoke("record_and_analyze_audio", { durationSeconds: 0.5 }, { client: {} });
   assert.equal(res.isError, true);
+});
+
+test("record_and_analyze_audio validates schema-level errors", async () => {
+  const res = await audioModule.invoke("record_and_analyze_audio", { durationSeconds: 0.1 }, { client: {} });
+  assert.equal(res.isError, true);
+  assert.ok(String(res.content[0].text).length > 0);
 });
 
 test("music_generate validates pattern input", async () => {
@@ -634,4 +712,17 @@ timeline:
   assert.equal(result.isError, undefined);
   assert.equal(result.metadata.dryRun, true);
   assert.equal(result.metadata.ranOnC64, false);
+});
+
+test("music_compile_and_play rejects empty sidwave strings", async () => {
+  const result = await audioModule.invoke("music_compile_and_play", {
+    sidwave: "   ",
+    dryRun: true,
+  }, {
+    client: {},
+    logger: createLogger(),
+  });
+
+  assert.equal(result.isError, true);
+  assert.ok(String(result.content[0].text).includes("must not be empty"));
 });

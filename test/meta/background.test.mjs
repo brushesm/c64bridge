@@ -2,7 +2,55 @@ import test from "#test/runner";
 import assert from "#test/assert";
 import fs from "node:fs/promises";
 import { metaModule } from "../../src/tools/meta/index.js";
+import { getTasksHomeDir } from "../../src/tools/meta/background.js";
 import { createLogger, tmpPath, waitForTaskCompletion } from "./helpers.mjs";
+
+test("background tasks load persisted task state and expose default home dir", async () => {
+  const previous = process.env.C64_TASK_STATE_FILE;
+  delete process.env.C64_TASK_STATE_FILE;
+  assert.ok(getTasksHomeDir().endsWith(".c64bridge"));
+
+  const { file, dir } = tmpPath("background0", "tasks.json");
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(file, JSON.stringify({
+    tasks: [
+      {
+        id: "0001_preloaded",
+        name: "preloaded",
+        type: "background",
+        operation: "read",
+        args: { address: "$0400", length: 1 },
+        intervalMs: 50,
+        maxIterations: 1,
+        iterations: 1,
+        status: "completed",
+        startedAt: "2026-03-26T09:00:00.000Z",
+        updatedAt: "2026-03-26T09:00:01.000Z",
+        stoppedAt: "2026-03-26T09:00:01.000Z",
+        lastError: null,
+        nextRunAt: null,
+        folder: "tasks/background/0001_preloaded",
+      },
+    ],
+  }, null, 2));
+  process.env.C64_TASK_STATE_FILE = file;
+
+  try {
+    const list = await metaModule.invoke("list_background_tasks", {}, {
+      client: {},
+      logger: createLogger(),
+    });
+
+    const task = list.structuredContent?.data?.tasks?.find((entry) => entry.name === "preloaded");
+    assert.ok(task);
+    assert.equal(task.id, "0001_preloaded");
+    assert.equal(task.status, "completed");
+    assert.equal(task.folder, "tasks/background/0001_preloaded");
+  } finally {
+    if (previous === undefined) delete process.env.C64_TASK_STATE_FILE;
+    else process.env.C64_TASK_STATE_FILE = previous;
+  }
+});
 
 test("background tasks persist and complete iterations", async () => {
   const { file, dir } = tmpPath("background", "tasks.json");
@@ -241,6 +289,50 @@ test("background tasks run write_memory alias with default address and bytes", a
     const task = await waitForTaskCompletion(metaModule, "writer-defaults", ctx);
     assert.equal(task?.status, "completed");
     assert.deepEqual(calls, [["$0400", "$00"]]);
+  } finally {
+    if (previous === undefined) delete process.env.C64_TASK_STATE_FILE;
+    else process.env.C64_TASK_STATE_FILE = previous;
+  }
+});
+
+test("background task tools validate input and reject duplicate running names", async () => {
+  const { file, dir } = tmpPath("background7", "tasks.json");
+  await fs.mkdir(dir, { recursive: true });
+  const previous = process.env.C64_TASK_STATE_FILE;
+  process.env.C64_TASK_STATE_FILE = file;
+  try {
+    const ctx = {
+      client: {
+        async readMemory() { return { success: true, data: "$00" }; },
+      },
+      logger: createLogger(),
+    };
+
+    const started = await metaModule.invoke("start_background_task", {
+      name: "duplicate-check",
+      operation: "read",
+      intervalMs: 100,
+      maxIterations: 1,
+    }, ctx);
+    assert.equal(started.metadata?.success, true);
+
+    const duplicate = await metaModule.invoke("start_background_task", {
+      name: "duplicate-check",
+      operation: "read",
+      intervalMs: 100,
+    }, ctx);
+    assert.equal(duplicate.isError, true);
+
+    const invalidStart = await metaModule.invoke("start_background_task", {}, ctx);
+    assert.equal(invalidStart.isError, true);
+
+    const invalidList = await metaModule.invoke("list_background_tasks", { unexpected: true }, ctx);
+    assert.equal(invalidList.isError, true);
+
+    const invalidStopAll = await metaModule.invoke("stop_all_background_tasks", { unexpected: true }, ctx);
+    assert.equal(invalidStopAll.isError, true);
+
+    await metaModule.invoke("stop_background_task", { name: "duplicate-check" }, ctx);
   } finally {
     if (previous === undefined) delete process.env.C64_TASK_STATE_FILE;
     else process.env.C64_TASK_STATE_FILE = previous;

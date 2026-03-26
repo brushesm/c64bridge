@@ -70,13 +70,13 @@
 
 ### Phase 8 — Final Validation
 
-- [ ] Run `./build test` (full mock suite) — zero failures.
-- [ ] Run `./build test:matrix` if available — zero failures.
-- [ ] Run `./build coverage` — overall coverage ≥ 91%.
-- [ ] Manually inspect `plans.md` — every checkbox ticked.
-- [ ] Review `worklog.md` — every phase has a completion entry.
-- [ ] Read `README.md` configuration section and update it to document:
-- [ ] The new `C64U_HOST`, `C64U_PORT`, `C64U_PASSWORD` env vars.
-- [ ] The config-merging behaviour (both config files are read; first-found per section wins).
-- [ ] The dual-backend runtime switching capability and `c64_select_backend`.
-- [ ] Append Phase 8 completion entry to `worklog.md`.
+- [x] Run `./build test` (full mock suite) — zero failures.
+- [x] Run `./build test:matrix` if available — zero failures.
+- [x] Run `./build coverage` — overall coverage ≥ 91%.
+- [x] Manually inspect `plans.md` — every checkbox ticked.
+- [x] Review `worklog.md` — every phase has a completion entry.
+- [x] Read `README.md` configuration section and update it to document:
+- [x] The new `C64U_HOST`, `C64U_PORT`, `C64U_PASSWORD` env vars.
+- [x] The config-merging behaviour (both config files are read; first-found per section wins).
+- [x] The dual-backend runtime switching capability and `c64_select_backend`.
+- [x] Append Phase 8 completion entry to `worklog.md`.

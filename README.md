@@ -141,6 +141,8 @@ When both `c64u` and `vice` are configured, C64 Bridge starts with one active ba
 - `C64_MODE` still chooses the initial backend (`c64u` or `vice`).
 - `c64_select_backend` switches between configured backends without restarting the MCP server.
 - `c64://platform/status` reports both the active backend and the full configured backend set.
+- To request a backend explicitly in chat, say things like `use vice`, `vice: run this program`, `use c64u`, or `run this on the real machine`.
+- In VS Code, the `C64` agent can route those requests directly; include the backend preference in the same prompt when you want to force emulator versus hardware execution.
 
 ## VS Code MCP Setup
 
@@ -278,7 +280,7 @@ This allows agents to inspect the available tools, resources, prompts, and schem
 
 <!-- AUTO-GENERATED:MCP-DOCS-START -->
 
-This MCP server exposes **14 tools**, **25 resources**, and **7 prompts** for controlling your Commodore 64.
+This MCP server exposes **15 tools**, **25 resources**, and **7 prompts** for controlling your Commodore 64.
 
 ### Tools
 
@@ -414,6 +416,14 @@ Grouped entry point for BASIC and assembly RAG lookups.
 | --- | --- | --- | --- | --- | --- |
 | `asm` | Retrieve 6502/6510 assembly references from the local knowledge base. | `q` | — | ✅ | ✅ |
 | `basic` | Retrieve BASIC references and snippets from the local knowledge base. | `q` | — | ✅ | ✅ |
+
+#### c64_select_backend
+
+Switch the active backend between C64U hardware and the VICE emulator at runtime.
+
+| Operation | Description | Required Inputs | Notes | C64U | VICE |
+| --- | --- | --- | --- | --- | --- |
+| `select` | Switch the active runtime backend without restarting the MCP server. | `backend` | — | ✅ | ✅ |
 
 #### c64_sound
 

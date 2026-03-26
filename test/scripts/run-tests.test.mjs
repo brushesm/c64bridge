@@ -65,6 +65,8 @@ test("run-tests shards default Bun suites instead of sending the full matrix thr
   assert.equal(batches.length > 1, true);
   assert.equal(batches[0]?.length <= 20, true);
   assert.equal(batches.flat().includes("test/scripts/run-tests.test.mjs"), true);
+  const isolatedBatch = batches.find((batch) => batch.length === 1 && batch[0] === "test/audioRuntime.test.mjs");
+  assert.ok(isolatedBatch);
 });
 
 test("run-tests shards explicit Bun file lists and preserves shared args", () => {
@@ -82,6 +84,23 @@ test("run-tests shards explicit Bun file lists and preserves shared args", () =>
   assert.deepEqual(batches, [
     ["test/a.test.mjs", "test/b.test.mjs", "--timeout", "5000"],
     ["test/c.test.mjs", "--timeout", "5000"],
+  ]);
+});
+
+test("run-tests isolates mock-heavy explicit Bun files", () => {
+  const batches = buildBunTestBatches(
+    [
+      "test/audioRuntime.test.mjs",
+      "test/a.test.mjs",
+      "--timeout",
+      "5000",
+    ],
+    { C64BRIDGE_BUN_BATCH_SIZE: "4" },
+  );
+
+  assert.deepEqual(batches, [
+    ["test/a.test.mjs", "--timeout", "5000"],
+    ["test/audioRuntime.test.mjs", "--timeout", "5000"],
   ]);
 });
 
