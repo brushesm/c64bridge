@@ -37,6 +37,8 @@ When using the VS Code `C64` agent, keep the backend request in the same prompt 
 
 When the prompt is already specific and backend-pinned, execute the matching skill immediately instead of re-reading general documentation.
 Example: `vice: write a small BASIC program that clears the screen and prints HELLO VICE` should route straight to `.github/skills/hello-world/SKILL.md` and use that skill's minimal path.
+If the current agent cannot directly see `c64bridge` MCP tools such as `c64_program`, immediately hand the request to the `C64` agent instead of inspecting repository files or MCP manifests first.
+For a visible single-backend VICE greeting, prefer a no-probe fast path and avoid screenshot capture or Binary Monitor verification unless the user explicitly requests confirmation artifacts.
 Once the MCP server is connected and tools are available in-session, do not spend extra turns inspecting README sections or tool manifests for routine `c64_select_backend`, `c64_program`, or `c64_memory` operations.
 
 3) VS Code Copilot Chat (MCP)

@@ -5,6 +5,7 @@ GPL-2.0-only
 
 import fs from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { LocalMiniHashEmbedding } from "./embeddings.js";
 import { buildAllIndexes, loadIndexes } from "./indexer.js";
 import { LocalRagRetriever } from "./retriever.js";
@@ -36,7 +37,61 @@ function embeddingIndexPaths() {
   };
 }
 
+export interface LazyRagRetriever extends RagRetriever {
+  warmup(): Promise<void>;
+}
+
+interface LazyRagHooks {
+  onInitStart?: () => void;
+  onInitComplete?: () => void;
+  onInitError?: (error: unknown) => void;
+}
+
+export function createLazyRagRetriever(
+  factory: () => Promise<RagRetriever>,
+  hooks: LazyRagHooks = {},
+): LazyRagRetriever {
+  let resolved: RagRetriever | undefined;
+  let pending: Promise<RagRetriever> | undefined;
+
+  const ensure = async (): Promise<RagRetriever> => {
+    if (resolved) {
+      return resolved;
+    }
+
+    if (!pending) {
+      hooks.onInitStart?.();
+      pending = factory().then((retriever) => {
+        resolved = retriever;
+        hooks.onInitComplete?.();
+        return retriever;
+      }).catch((error) => {
+        pending = undefined;
+        hooks.onInitError?.(error);
+        throw error;
+      });
+    }
+
+    return pending;
+  };
+
+  return {
+    async retrieve(query, topK, filterLanguage) {
+      const retriever = await ensure();
+      return retriever.retrieve(query, topK, filterLanguage);
+    },
+    async warmup() {
+      await ensure();
+    },
+  };
+}
+
 export async function initRag(): Promise<RagRetriever> {
+  const initDelayMs = Number(process.env.RAG_INIT_DELAY_MS ?? 0);
+  if (Number.isFinite(initDelayMs) && initDelayMs > 0) {
+    await delay(initDelayMs);
+  }
+
   const model = new LocalMiniHashEmbedding(384);
   // Build on start only when explicitly requested
   const buildOnStart = String(process.env.RAG_BUILD_ON_START ?? "").trim().toLowerCase();

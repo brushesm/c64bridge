@@ -94,5 +94,7 @@ Use these rules to ensure Copilot reliably engages the `c64bridge` server when t
 - If the stdio server is not yet connected, bring it online before executing the chosen skill.
 - Avoid destructive actions such as reset, reboot, poweroff, or drive-state mutations without explicit confirmation.
 - For backend-prefixed, low-ambiguity hello-world requests such as `vice: write a small BASIC program that clears the screen and prints HELLO VICE`, route immediately to `.github/skills/hello-world/SKILL.md` and execute the skill's fast path.
+- If the current chat tool set does not expose the required `c64bridge` MCP tools, immediately invoke the `C64` agent with the same backend-pinned request instead of exploring the repository or re-reading manifests.
+- For a single visible VICE greeting, do not spend time on screenshots, extra probes, or manual verification unless the user asks for them or the fast path fails.
 - When the MCP server is already connected in the current chat session, do not re-read README sections or MCP tool manifests before routine BASIC/ASM/demo runs unless the request is ambiguous or a tool call fails.
 - Assume local VICE runs should be visible by default. Only expect Xvfb or other headless fallback in CI or when no framebuffer/display session exists.

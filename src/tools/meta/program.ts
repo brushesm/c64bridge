@@ -9,6 +9,7 @@ import { sleep, formatTimestampSpec } from "./util.js";
 import { getTasksHomeDir } from "./background.js";
 import { Jimp } from "jimp";
 import type { CapturedFrame } from "../../streamCapture.js";
+import { withDiagnosticSpan } from "../../diagnostics.js";
 
 const C64_SCREENSHOT_PALETTE = [
   0x000000ff,
@@ -30,6 +31,45 @@ const C64_SCREENSHOT_PALETTE = [
 ] as const;
 
 type GreetingBackend = "vice" | "c64u";
+
+function hasOwnProperty(value: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function isVisibleViceSessionPreferred(): boolean {
+  const visible = String(process.env.VICE_VISIBLE ?? "true").trim().toLowerCase();
+  const forceXvfb = String(process.env.FORCE_XVFB ?? "0").trim().toLowerCase();
+  const disableXvfb = String(process.env.DISABLE_XVFB ?? "0").trim().toLowerCase();
+
+  if (forceXvfb === "1" || forceXvfb === "true" || forceXvfb === "yes") {
+    return false;
+  }
+
+  if (disableXvfb === "1" || disableXvfb === "true" || disableXvfb === "yes") {
+    return visible !== "0" && visible !== "false" && visible !== "no";
+  }
+
+  return visible !== "0" && visible !== "false" && visible !== "no";
+}
+
+function shouldUseVisibleViceGreetingFastPath(rawArgs: unknown, requestedBackends: readonly GreetingBackend[]): boolean {
+  if (!rawArgs || typeof rawArgs !== "object" || Array.isArray(rawArgs)) {
+    return false;
+  }
+
+  if (requestedBackends.length !== 1 || requestedBackends[0] !== "vice") {
+    return false;
+  }
+
+  if (!isVisibleViceSessionPreferred()) {
+    return false;
+  }
+
+  const args = rawArgs as Record<string, unknown>;
+  return !hasOwnProperty(args, "verify")
+    && !hasOwnProperty(args, "captureScreenshot")
+    && !hasOwnProperty(args, "outputPath");
+}
 
 function canonicalGreetingBackends(): readonly GreetingBackend[] {
   return ["vice", "c64u"];
@@ -336,7 +376,9 @@ export const tools: ToolDefinition[] = [
         }
 
         const verify = parsed.verify !== false;
-        const captureScreenshot = parsed.captureScreenshot !== false;
+        const visibleViceFastPath = shouldUseVisibleViceGreetingFastPath(args ?? {}, requestedBackends);
+        const verify = visibleViceFastPath ? false : parsed.verify !== false;
+        const captureScreenshot = visibleViceFastPath ? false : parsed.captureScreenshot !== false;
         const restoreActiveBackend = parsed.restoreActiveBackend !== false;
         const outputPath = captureScreenshot || parsed.outputPath
           ? resolvePath(
@@ -358,14 +400,35 @@ export const tools: ToolDefinition[] = [
           for (const backend of requestedBackends) {
             const expectedText = applyGreetingTemplate(template, backend);
             const program = buildGreetingProgram(expectedText);
-            ctx.client.switchBackend(backend);
-            ctx.setPlatform(backend);
+            const timeline: Array<Record<string, unknown>> = [];
+            const timedStep = async <T>(name: string, fn: () => Promise<T> | T): Promise<T> => {
+              const startedAt = Date.now();
+              try {
+                const result = await withDiagnosticSpan("greeting", name, { backend }, fn);
+                timeline.push({ name, latencyMs: Date.now() - startedAt, ok: true });
+                return result;
+              } catch (error) {
+                timeline.push({
+                  name,
+                  latencyMs: Date.now() - startedAt,
+                  ok: false,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+                throw error;
+              }
+            };
 
-            const runResult = await ctx.client.uploadAndRunBasic(program);
+            await timedStep("switch_backend", async () => {
+              ctx.client.switchBackend(backend);
+              ctx.setPlatform(backend);
+            });
+
+            const runResult = await timedStep("upload_run_basic", () => ctx.client.uploadAndRunBasic(program));
             const backendResult: Record<string, unknown> = {
               backend,
               expectedText,
               program,
+              timeline,
             };
 
             if (!runResult.success) {
@@ -379,7 +442,10 @@ export const tools: ToolDefinition[] = [
             let screen = "";
             let screenMatched = false;
             if (verify) {
-              const waited = await waitForGreetingScreen(ctx, expectedText, timeoutMs, pollIntervalMs);
+              const waited = await timedStep(
+                "verify_screen",
+                () => waitForGreetingScreen(ctx, expectedText, timeoutMs, pollIntervalMs),
+              );
               screen = waited.screen;
               screenMatched = waited.matched;
             } else {
@@ -394,7 +460,7 @@ export const tools: ToolDefinition[] = [
 
             if (captureScreenshot) {
               try {
-                const capture = await ctx.client.captureFrames({ count: 1 });
+                const capture = await timedStep("capture_screenshot", () => ctx.client.captureFrames({ count: 1 }));
                 const frame = capture.frames[0];
                 if (!frame) {
                   throw new Error("No video frame returned by backend capture");
@@ -432,8 +498,10 @@ export const tools: ToolDefinition[] = [
         } finally {
           if (restoreActiveBackend) {
             try {
-              ctx.client.switchBackend(startingBackend);
-              ctx.setPlatform(startingBackend);
+              await withDiagnosticSpan("greeting", "restore_backend", { backend: startingBackend }, async () => {
+                ctx.client.switchBackend(startingBackend);
+                ctx.setPlatform(startingBackend);
+              });
             } catch (error) {
               restoreError = error instanceof Error ? error.message : String(error);
             }
@@ -448,6 +516,7 @@ export const tools: ToolDefinition[] = [
           startingBackend,
           restoredBackend: restoreActiveBackend ? startingBackend : await ctx.client.getActiveBackendType(),
           outputPath: outputPath ?? null,
+          fastPath: visibleViceFastPath ? "visible_vice_no_probe" : null,
           results,
           ...(restoreError ? { restoreError } : {}),
         };

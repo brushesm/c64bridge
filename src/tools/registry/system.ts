@@ -109,6 +109,15 @@ const systemOperations: GroupedOperationConfig[] = [
     ),
     handler: async (rawArgs, ctx) => invokeModuleTool(metaModule, "list_background_tasks", rawArgs, ctx),
   },
+  {
+    op: "performance_report",
+    schema: extendSchemaWithOp(
+      "performance_report",
+      ensureDescriptor(metaDescriptorIndex, "performance_report").inputSchema,
+      { description: "Summarize diagnostics spans and tool latencies from the current or latest MCP session." },
+    ),
+    handler: async (rawArgs, ctx) => invokeModuleTool(metaModule, "performance_report", rawArgs, ctx),
+  },
 ];
 
 const systemOperationHandlers = createOperationHandlers(systemOperations);
@@ -151,6 +160,11 @@ export const systemModuleGroup = defineToolModule({
             operation: "read_screen",
             intervalMs: 2000,
           },
+        },
+        {
+          name: "Inspect performance trace",
+          description: "Summarize the current session diagnostics for profiling",
+          arguments: { op: "performance_report", scope: "current" },
         },
       ],
       execute: createOperationDispatcher<GenericOperationMap>(

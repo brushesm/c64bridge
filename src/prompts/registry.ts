@@ -202,6 +202,8 @@ export function createPromptRegistry(): PromptRegistry {
       routingNotes: [
         "Use this prompt for the narrowest hello-world, greeting, or smoke-test path.",
         "Backend-pinned requests such as `vice: write a small BASIC program that clears the screen and prints HELLO VICE` should prefer this prompt over the bespoke BASIC prompt.",
+        "If the current agent cannot directly call `c64_program`, immediately delegate the same request to the `C64` agent instead of exploring repository files or manifests.",
+        "For visible single-backend VICE greetings, prefer the no-probe fast path unless the user explicitly asks for screenshots or verification.",
       ],
     },
     {

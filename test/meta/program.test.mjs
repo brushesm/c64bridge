@@ -76,6 +76,64 @@ test("cross_platform_greeting switches backends, captures screenshots, and resto
   await fs.stat(data.reportPath);
 });
 
+test("cross_platform_greeting uses the visible VICE fast path by default for a single backend", async () => {
+  const originalVisible = process.env.VICE_VISIBLE;
+  process.env.VICE_VISIBLE = "true";
+
+  let activeBackend = "vice";
+  let screenReads = 0;
+  let captures = 0;
+
+  try {
+    const ctx = {
+      client: {
+        getAvailableBackends() {
+          return ["vice"];
+        },
+        async getActiveBackendType() {
+          return activeBackend;
+        },
+        switchBackend(backend) {
+          activeBackend = backend;
+        },
+        async uploadAndRunBasic() {
+          return { success: true };
+        },
+        async readScreen() {
+          screenReads += 1;
+          return "READY.\nHELLO VICE";
+        },
+        async captureFrames() {
+          captures += 1;
+          return { backend: activeBackend, frames: [] };
+        },
+      },
+      logger: createLogger(),
+      platform: { id: "vice", features: [], limitedFeatures: [] },
+      rag: {},
+      setPlatform(target) {
+        return { id: target, features: [], limitedFeatures: [] };
+      },
+    };
+
+    const res = await metaModule.invoke("cross_platform_greeting", {
+      platforms: ["vice"],
+      messageTemplate: "HELLO VICE",
+    }, ctx);
+
+    assert.equal(res.isError, undefined);
+    assert.equal(screenReads, 0);
+    assert.equal(captures, 0);
+    assert.equal(res.structuredContent?.data?.fastPath, "visible_vice_no_probe");
+  } finally {
+    if (originalVisible === undefined) {
+      delete process.env.VICE_VISIBLE;
+    } else {
+      process.env.VICE_VISIBLE = originalVisible;
+    }
+  }
+});
+
 test("program_shuffle discovers and runs programs", async () => {
   let resetCount = 0;
   let runPrgCount = 0;

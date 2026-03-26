@@ -212,4 +212,40 @@ test("mcp-server initialises platform state from the active backend", async (t) 
       },
     );
   });
+
+  await t.test("startup does not wait for RAG warmup before serving requests", async () => {
+    const server = await startViceMockServer({ host: "127.0.0.1", port: 0 });
+    t.after(async () => {
+      await server.stop();
+    });
+
+    const startedAt = Date.now();
+    await withServerConfig(
+      {
+        vice: {
+          host: "127.0.0.1",
+          port: server.port,
+        },
+      },
+      {
+        VICE_TEST_TARGET: "mock",
+        RAG_INIT_DELAY_MS: "2500",
+      },
+      async ({ client, diagnosticsDir }) => {
+        const startupMs = Date.now() - startedAt;
+        assert.ok(startupMs < 1500, `expected startup under 1500ms, got ${startupMs}ms`);
+
+        const resource = await client.request(
+          { method: "resources/read", params: { uri: PLATFORM_RESOURCE_URI } },
+          ReadResourceResultSchema,
+        );
+        const text = resource.contents?.[0]?.text ?? "";
+
+        assert.equal(parsePlatformStatus(text), "vice");
+
+        const complete = await waitForDiagnosticEvent(diagnosticsDir, "rag_init_complete");
+        assert.ok(complete.timestamp);
+      },
+    );
+  });
 });

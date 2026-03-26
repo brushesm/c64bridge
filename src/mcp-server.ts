@@ -20,7 +20,7 @@ import {
   listKnowledgeResources,
   readKnowledgeResource,
 } from "./rag/knowledgeIndex.js";
-import { initRag } from "./rag/init.js";
+import { createLazyRagRetriever, initRag } from "./rag/init.js";
 import type { RagRetriever } from "./rag/types.js";
 import { getMcpServerImplementationInfo } from "./mcp/metadata.js";
 import { toolRegistry } from "./tools/registry/index.js";
@@ -30,7 +30,7 @@ import { createPromptRegistry, type PromptSegment } from "./prompts/registry.js"
 import { describePlatformCapabilities, getPlatformStatus, setPlatform } from "./platform.js";
 import axios, { type AxiosResponse } from "axios";
 import { loggerFor, payloadByteLength, formatPayloadForDebug, formatErrorMessage } from "./logger.js";
-import { getDiagnosticsSessionInfo, installProcessDiagnostics, writeDiagnosticEvent } from "./diagnostics.js";
+import { getDiagnosticsSessionInfo, installProcessDiagnostics, withDiagnosticSpan, writeDiagnosticEvent } from "./diagnostics.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -42,6 +42,18 @@ interface ServerRuntimeContext {
   client: C64Client;
   rag: RagRetriever;
   baseUrl: string;
+}
+
+function createPromptRegistryGetter() {
+  let registry: ReturnType<typeof createPromptRegistry> | undefined;
+  return () => {
+    if (!registry) {
+      writeDiagnosticEvent("prompt_registry_init_start");
+      registry = createPromptRegistry();
+      writeDiagnosticEvent("prompt_registry_init_complete");
+    }
+    return registry;
+  };
 }
 
 function parseCliOptions(argv: string[]): CliOptions {
@@ -70,7 +82,7 @@ async function main() {
   console.error(`c64bridge diagnostics file: ${diagnostics.filePath}`);
   writeDiagnosticEvent("server_start", { diagnosticsFile: diagnostics.filePath });
 
-  const config = loadConfig();
+  const config = await withDiagnosticSpan("startup", "load_config", {}, () => Promise.resolve(loadConfig()));
   const baseUrl = config.baseUrl ?? `http://${config.c64_host}`;
   writeDiagnosticEvent("config_loaded", {
     baseUrl,
@@ -78,25 +90,41 @@ async function main() {
   });
   
   // Initialize C64 client (reuse existing)
-  const client = new C64Client(baseUrl, {
+  const client = await withDiagnosticSpan("startup", "create_client", { baseUrl }, async () => new C64Client(baseUrl, {
     networkPassword: config.networkPassword,
     forceC64uFacade: false,
-  });
-  const initialBackendType = await client.getActiveBackendType();
+  }));
+  const initialBackendType = await withDiagnosticSpan("startup", "resolve_active_backend", {}, () => client.getActiveBackendType());
   setPlatform(initialBackendType);
   writeDiagnosticEvent("platform_initialised", { platform: initialBackendType });
-  void client.prewarmBackends(["vice"]).then((results) => {
+  void withDiagnosticSpan("startup", "prewarm_backends", { backends: ["vice"] }, () => client.prewarmBackends(["vice"])).then((results) => {
     writeDiagnosticEvent("backend_prewarm_complete", { results });
   }).catch((error) => {
     writeDiagnosticEvent("backend_prewarm_failed", { error });
   });
-  const rag = await initRag();
+  const rag: RagRetriever = createLazyRagRetriever(() => initRag(), {
+    onInitStart() {
+      writeDiagnosticEvent("rag_init_start");
+    },
+    onInitComplete() {
+      writeDiagnosticEvent("rag_init_complete");
+    },
+    onInitError(error) {
+      writeDiagnosticEvent("rag_init_failed", { error });
+    },
+  });
+  void (rag as { warmup?: () => Promise<void> }).warmup?.().catch(() => {
+    // Diagnostics already record the failure; keep startup non-blocking.
+  });
 
   const toolLogger = loggerFor("tool");
   const resourceLogger = loggerFor("resource");
   const promptLogger = loggerFor("prompt");
   const promptRegistry = createPromptRegistry();
+  const getPromptRegistry = createPromptRegistryGetter();
   const implementationInfo = getMcpServerImplementationInfo();
+  const entries = getPromptRegistry().list();
+  const resolved = getPromptRegistry().resolve(name, args);
 
   // Create MCP server
   const server = new Server(

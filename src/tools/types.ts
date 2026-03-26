@@ -7,6 +7,7 @@ import {
   type PlatformId,
   type PlatformStatus,
 } from "../platform.js";
+import { withDiagnosticSpan } from "../diagnostics.js";
 import { ToolUnsupportedPlatformError, ToolValidationError } from "./errors.js";
 
 export type JsonSchema = {
@@ -324,7 +325,17 @@ export function defineToolModule(config: ToolModuleConfig): ToolModule {
         setPlatform: setter,
       };
 
-      return tool.execute(args, enrichedCtx);
+      return withDiagnosticSpan(
+        "tool",
+        `${config.domain}.${name}`,
+        {
+          domain: config.domain,
+          tool: name,
+          operation: getSelectedOperation(args) ?? null,
+          platform: status.id,
+        },
+        () => tool.execute(args, enrichedCtx),
+      );
     },
   };
 }

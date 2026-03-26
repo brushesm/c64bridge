@@ -671,6 +671,38 @@ test("c64_disk list_drives delegates to storage module", async () => {
   assert.deepEqual(calls, ["drivesList"]);
 });
 
+test("c64_system performance_report delegates to diagnostics summary tool", async () => {
+  const previousDir = process.env.C64BRIDGE_DIAGNOSTICS_DIR;
+  const previousEnable = process.env.C64BRIDGE_ENABLE_TEST_DIAGNOSTICS;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "c64bridge-grouped-performance-"));
+
+  try {
+    process.env.C64BRIDGE_DIAGNOSTICS_DIR = tempDir;
+    process.env.C64BRIDGE_ENABLE_TEST_DIAGNOSTICS = "1";
+
+    installProcessDiagnostics("grouped-performance");
+    writeDiagnosticEvent("mcp_call_tool_ok", { name: "c64_program", latencyMs: 7.5, isError: false });
+
+    const ctx = {
+      client: {},
+      rag: {},
+      logger: createLogger(),
+      platform: getPlatformStatus(),
+      setPlatform,
+    };
+
+    const result = await toolRegistry.invoke("c64_system", { op: "performance_report", scope: "current" }, ctx);
+
+    assert.equal(result.isError, undefined);
+    assert.equal(result.structuredContent?.data?.toolCalls[0]?.name, "c64_program");
+  } finally {
+    if (previousDir === undefined) delete process.env.C64BRIDGE_DIAGNOSTICS_DIR;
+    else process.env.C64BRIDGE_DIAGNOSTICS_DIR = previousDir;
+    if (previousEnable === undefined) delete process.env.C64BRIDGE_ENABLE_TEST_DIAGNOSTICS;
+    else process.env.C64BRIDGE_ENABLE_TEST_DIAGNOSTICS = previousEnable;
+  }
+});
+
 test("c64_disk mount without verify calls driveMount", async () => {
   const calls = [];
   const stubClient = {

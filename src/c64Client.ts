@@ -16,6 +16,7 @@ import { resolveAddressSymbol } from "./knowledge.js";
 import { C64Facade, createAllFacades, createFacade, type DeviceType, ViceBackend } from "./device.js";
 import { Api, HttpClient } from "../generated/c64/index.js";
 import { createLoggingHttpClient } from "./loggingHttpClient.js";
+import { withDiagnosticSpan, writeDiagnosticEvent } from "./diagnostics.js";
 import type {
   ViceClient,
   ViceCheckpoint,
@@ -194,23 +195,25 @@ export class C64Client {
   }
 
   async prewarmBackends(types?: readonly DeviceType[]): Promise<Record<string, boolean>> {
-    await this.initPromise;
-    const targets = (types && types.length > 0 ? [...types] : this.getAvailableBackends()).filter(
-      (type, index, all) => all.indexOf(type) === index,
-    );
-    const entries = await Promise.all(targets.map(async (type) => {
-      let warmup = this.warmupPromises.get(type);
-      if (!warmup) {
-        const facadePromise = this.allFacades.get(type);
-        if (!facadePromise) {
-          throw new Error(`Backend '${type}' is not configured`);
+    return withDiagnosticSpan("client", "prewarm_backends", { types: types ?? null }, async () => {
+      await this.initPromise;
+      const targets = (types && types.length > 0 ? [...types] : this.getAvailableBackends()).filter(
+        (type, index, all) => all.indexOf(type) === index,
+      );
+      const entries = await Promise.all(targets.map(async (type) => {
+        let warmup = this.warmupPromises.get(type);
+        if (!warmup) {
+          const facadePromise = this.allFacades.get(type);
+          if (!facadePromise) {
+            throw new Error(`Backend '${type}' is not configured`);
+          }
+          warmup = facadePromise.then((facade) => facade.ping()).catch(() => false);
+          this.warmupPromises.set(type, warmup);
         }
-        warmup = facadePromise.then((facade) => facade.ping()).catch(() => false);
-        this.warmupPromises.set(type, warmup);
-      }
-      return [type, await warmup] as const;
-    }));
-    return Object.fromEntries(entries);
+        return [type, await warmup] as const;
+      }));
+      return Object.fromEntries(entries);
+    });
   }
 
   switchBackend(type: DeviceType): void {
@@ -221,6 +224,7 @@ export class C64Client {
     // Platform state is owned by the caller so tool-level flows can update global routing explicitly.
     this.facadePromise = nextFacade;
     this.activeType = type;
+    writeDiagnosticEvent("client_switch_backend", { backend: type });
   }
 
   private async shouldUseC64uMockBypass(): Promise<boolean> {
@@ -289,8 +293,10 @@ export class C64Client {
   }
 
   async uploadAndRunBasic(program: string): Promise<RunBasicResult> {
-    const prg = basicToPrg(program);
-    return this.runPrg(prg);
+    return withDiagnosticSpan("client", "upload_run_basic", { programLength: program.length }, async () => {
+      const prg = basicToPrg(program);
+      return this.runPrg(prg);
+    });
   }
 
   /**
@@ -557,9 +563,10 @@ export class C64Client {
   }
 
   async readScreen(): Promise<string> {
-    // Exposed as MCP tool: read_screen
-    const bytes = await this.readMemoryRaw(0x0400, 0x03e8);
-    return screenCodesToAscii(bytes, { columns: 40, rows: 25 });
+    return withDiagnosticSpan("client", "read_screen", {}, async () => {
+      const bytes = await this.readMemoryRaw(0x0400, 0x03e8);
+      return screenCodesToAscii(bytes, { columns: 40, rows: 25 });
+    });
   }
 
   async reset(): Promise<{ success: boolean; details?: unknown }> {
@@ -900,13 +907,15 @@ export class C64Client {
   }
 
   async captureFrames(options?: { readonly count?: number }): Promise<FrameCaptureResult> {
-    const requestedCount = Math.max(1, Math.min(32, Math.trunc(options?.count ?? 1)));
-    const facade = await this.facadePromise;
-    if (facade.type === "vice") {
-      return this.captureViceFrames(requestedCount);
-    }
+    return withDiagnosticSpan("client", "capture_frames", { count: options?.count ?? 1 }, async () => {
+      const requestedCount = Math.max(1, Math.min(32, Math.trunc(options?.count ?? 1)));
+      const facade = await this.facadePromise;
+      if (facade.type === "vice") {
+        return this.captureViceFrames(requestedCount);
+      }
 
-    return this.captureC64uVideoFrames(facade, requestedCount);
+      return this.captureC64uVideoFrames(facade, requestedCount);
+    });
   }
 
   async captureSamples(options?: { readonly count?: number }): Promise<SampleCaptureResult> {

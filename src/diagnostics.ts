@@ -24,12 +24,67 @@ export interface OutputTailCapture {
   snapshot(): OutputTailSnapshot;
 }
 
+export interface DiagnosticRecord {
+  readonly ts: string;
+  readonly pid: number;
+  readonly sessionId: string;
+  readonly component: string;
+  readonly event: string;
+  readonly details?: unknown;
+}
+
+export interface DiagnosticSpan {
+  readonly spanId: string;
+  readonly category: string;
+  readonly name: string;
+  end(outcome?: "ok" | "error", details?: unknown): void;
+}
+
+export interface DiagnosticSummarySpan {
+  readonly category: string;
+  readonly name: string;
+  readonly count: number;
+  readonly totalDurationMs: number;
+  readonly avgDurationMs: number;
+  readonly maxDurationMs: number;
+  readonly lastOutcome?: string;
+}
+
+export interface DiagnosticSummaryToolCall {
+  readonly name: string;
+  readonly count: number;
+  readonly errorCount: number;
+  readonly totalLatencyMs: number;
+  readonly avgLatencyMs: number;
+  readonly maxLatencyMs: number;
+}
+
+export interface DiagnosticTimelineEntry {
+  readonly ts: string;
+  readonly event: string;
+  readonly details?: unknown;
+}
+
+export interface DiagnosticSessionSummary {
+  readonly filePath: string;
+  readonly sessionId: string | null;
+  readonly component: string | null;
+  readonly eventCount: number;
+  readonly startedAt: string | null;
+  readonly endedAt: string | null;
+  readonly durationMs: number;
+  readonly topSpans: readonly DiagnosticSummarySpan[];
+  readonly toolCalls: readonly DiagnosticSummaryToolCall[];
+  readonly timeline?: readonly DiagnosticTimelineEntry[];
+}
+
 interface DiagnosticsState {
   readonly info: DiagnosticsSessionInfo;
 }
 
 let state: DiagnosticsState | null = null;
 let handlersInstalled = false;
+let spanCounter = 0;
 
 const DEFAULT_OUTPUT_TAIL_CHARS = 4_096;
 
@@ -48,6 +103,10 @@ export function installProcessDiagnostics(component: string): DiagnosticsSession
 
 export function getDiagnosticsSessionInfo(): DiagnosticsSessionInfo | null {
   return state?.info ?? null;
+}
+
+export function getDiagnosticsDirectory(): string {
+  return resolveDiagnosticsDirectory();
 }
 
 export function writeDiagnosticEvent(event: string, details?: unknown): void {
@@ -100,6 +159,208 @@ export function createOutputTailCapture(name: string, maxChars = DEFAULT_OUTPUT_
         stderrTail: stderrTail.trim(),
       };
     },
+  };
+}
+
+export function beginDiagnosticSpan(category: string, name: string, details?: unknown): DiagnosticSpan {
+  const spanId = `${Date.now().toString(36)}-${process.pid}-${++spanCounter}`;
+  const startedAt = process.hrtime.bigint();
+  let closed = false;
+
+  writeDiagnosticEvent("perf_span_start", {
+    spanId,
+    category,
+    name,
+    details,
+  });
+
+  return {
+    spanId,
+    category,
+    name,
+    end(outcome = "ok", details) {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      writeDiagnosticEvent("perf_span_end", {
+        spanId,
+        category,
+        name,
+        outcome,
+        durationMs: roundDurationMs(startedAt),
+        details,
+      });
+    },
+  };
+}
+
+export async function withDiagnosticSpan<T>(
+  category: string,
+  name: string,
+  details: unknown,
+  fn: () => Promise<T> | T,
+): Promise<T> {
+  const span = beginDiagnosticSpan(category, name, details);
+  try {
+    const result = await fn();
+    span.end("ok");
+    return result;
+  } catch (error) {
+    span.end("error", { error });
+    throw error;
+  }
+}
+
+export function listDiagnosticSessionFiles(directory = resolveDiagnosticsDirectory()): readonly string[] {
+  if (!fs.existsSync(directory)) {
+    return [];
+  }
+
+  return fs.readdirSync(directory)
+    .filter((entry) => entry.endsWith(".ndjson"))
+    .map((entry) => path.join(directory, entry))
+    .sort((left, right) => right.localeCompare(left));
+}
+
+export function resolveDiagnosticSessionFile(scope: "current" | "latest" = "current"): string | null {
+  if (scope === "current") {
+    return getDiagnosticsSessionInfo()?.filePath ?? null;
+  }
+
+  const [latest] = listDiagnosticSessionFiles();
+  return latest ?? null;
+}
+
+export function readDiagnosticRecords(filePath: string): readonly DiagnosticRecord[] {
+  if (!fs.existsSync(filePath)) {
+    return [];
+  }
+
+  const text = fs.readFileSync(filePath, "utf8").trim();
+  if (!text) {
+    return [];
+  }
+
+  return text.split("\n")
+    .map((line) => JSON.parse(line) as DiagnosticRecord);
+}
+
+export function summarizeDiagnosticsSession(
+  filePath: string,
+  options: { includeTimeline?: boolean; maxEntries?: number } = {},
+): DiagnosticSessionSummary {
+  const records = readDiagnosticRecords(filePath);
+  const maxEntries = Math.max(1, Math.min(200, Math.trunc(options.maxEntries ?? 25)));
+  const spanGroups = new Map<string, {
+    category: string;
+    name: string;
+    count: number;
+    totalDurationMs: number;
+    maxDurationMs: number;
+    lastOutcome?: string;
+  }>();
+  const toolCalls = new Map<string, {
+    name: string;
+    count: number;
+    errorCount: number;
+    totalLatencyMs: number;
+    maxLatencyMs: number;
+  }>();
+
+  for (const record of records) {
+    if (record.event === "perf_span_end") {
+      const details = (record.details ?? {}) as Record<string, unknown>;
+      const category = String(details.category ?? "unknown");
+      const name = String(details.name ?? "unknown");
+      const key = `${category}:${name}`;
+      const existing = spanGroups.get(key) ?? {
+        category,
+        name,
+        count: 0,
+        totalDurationMs: 0,
+        maxDurationMs: 0,
+        lastOutcome: undefined,
+      };
+      const durationMs = Number(details.durationMs ?? 0);
+      existing.count += 1;
+      existing.totalDurationMs += durationMs;
+      existing.maxDurationMs = Math.max(existing.maxDurationMs, durationMs);
+      existing.lastOutcome = typeof details.outcome === "string" ? details.outcome : existing.lastOutcome;
+      spanGroups.set(key, existing);
+      continue;
+    }
+
+    if (record.event === "mcp_call_tool_ok" || record.event === "mcp_call_tool_failed") {
+      const details = (record.details ?? {}) as Record<string, unknown>;
+      const name = String(details.name ?? "unknown");
+      const existing = toolCalls.get(name) ?? {
+        name,
+        count: 0,
+        errorCount: 0,
+        totalLatencyMs: 0,
+        maxLatencyMs: 0,
+      };
+      const latencyMs = Number(details.latencyMs ?? 0);
+      existing.count += 1;
+      existing.totalLatencyMs += latencyMs;
+      existing.maxLatencyMs = Math.max(existing.maxLatencyMs, latencyMs);
+      if (record.event === "mcp_call_tool_failed" || details.isError === true) {
+        existing.errorCount += 1;
+      }
+      toolCalls.set(name, existing);
+    }
+  }
+
+  const topSpans = Array.from(spanGroups.values())
+    .map((entry) => ({
+      category: entry.category,
+      name: entry.name,
+      count: entry.count,
+      totalDurationMs: roundNumber(entry.totalDurationMs),
+      avgDurationMs: roundNumber(entry.totalDurationMs / Math.max(1, entry.count)),
+      maxDurationMs: roundNumber(entry.maxDurationMs),
+      lastOutcome: entry.lastOutcome,
+    }))
+    .sort((left, right) => right.totalDurationMs - left.totalDurationMs)
+    .slice(0, maxEntries);
+
+  const summarizedToolCalls = Array.from(toolCalls.values())
+    .map((entry) => ({
+      name: entry.name,
+      count: entry.count,
+      errorCount: entry.errorCount,
+      totalLatencyMs: roundNumber(entry.totalLatencyMs),
+      avgLatencyMs: roundNumber(entry.totalLatencyMs / Math.max(1, entry.count)),
+      maxLatencyMs: roundNumber(entry.maxLatencyMs),
+    }))
+    .sort((left, right) => right.totalLatencyMs - left.totalLatencyMs);
+
+  const startedAt = records[0]?.ts ?? null;
+  const endedAt = records.at(-1)?.ts ?? null;
+  const durationMs = startedAt && endedAt
+    ? roundNumber(new Date(endedAt).getTime() - new Date(startedAt).getTime())
+    : 0;
+
+  const timeline = options.includeTimeline
+    ? records.slice(-maxEntries).map((record) => ({
+        ts: record.ts,
+        event: record.event,
+        details: record.details,
+      }))
+    : undefined;
+
+  return {
+    filePath,
+    sessionId: records[0]?.sessionId ?? null,
+    component: records[0]?.component ?? null,
+    eventCount: records.length,
+    startedAt,
+    endedAt,
+    durationMs,
+    topSpans,
+    toolCalls: summarizedToolCalls,
+    ...(timeline ? { timeline } : {}),
   };
 }
 
@@ -239,6 +500,14 @@ function limitString(value: string, maxChars: number): string {
     return value;
   }
   return `${value.slice(0, maxChars)}…[truncated ${value.length - maxChars} chars]`;
+}
+
+function roundDurationMs(startedAt: bigint): number {
+  return roundNumber(Number(process.hrtime.bigint() - startedAt) / 1_000_000);
+}
+
+function roundNumber(value: number): number {
+  return Number(value.toFixed(3));
 }
 
 function safeStderrWrite(text: string): void {
