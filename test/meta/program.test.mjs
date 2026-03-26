@@ -1,7 +1,80 @@
 import test from "#test/runner";
 import assert from "#test/assert";
+import fs from "node:fs/promises";
 import { metaModule } from "../../src/tools/meta/index.js";
-import { createLogger } from "./helpers.mjs";
+import { createLogger, tmpPath } from "./helpers.mjs";
+
+test("cross_platform_greeting switches backends, captures screenshots, and restores the starting backend", async () => {
+  const switches = [];
+  const runs = [];
+  let activeBackend = "vice";
+  const { dir } = tmpPath("program", "cross-platform-greeting");
+  await fs.rm(dir, { recursive: true, force: true });
+
+  const ctx = {
+    client: {
+      getAvailableBackends() {
+        return ["vice", "c64u"];
+      },
+      async getActiveBackendType() {
+        return activeBackend;
+      },
+      switchBackend(backend) {
+        switches.push(backend);
+        activeBackend = backend;
+      },
+      async uploadAndRunBasic(program) {
+        runs.push({ backend: activeBackend, program });
+        return { success: true };
+      },
+      async readScreen() {
+        return activeBackend === "vice"
+          ? "READY.\nHAVE A GREAT DAY, VICE!"
+          : "READY.\nHAVE A GREAT DAY, C64U!";
+      },
+      async captureFrames() {
+        return {
+          backend: activeBackend,
+          frames: [
+            {
+              frameNumber: null,
+              width: 2,
+              height: 2,
+              bitsPerPixel: 4,
+              pixels: Uint8Array.from([0, 1, 2, 3]),
+              complete: true,
+            },
+          ],
+        };
+      },
+    },
+    logger: createLogger(),
+    setPlatform(target) {
+      activeBackend = target;
+      return { id: target, features: [], limitedFeatures: [] };
+    },
+  };
+
+  const res = await metaModule.invoke("cross_platform_greeting", {
+    outputPath: dir,
+    timeoutMs: 100,
+    pollIntervalMs: 50,
+  }, ctx);
+
+  assert.equal(res.metadata?.success, true);
+  const data = res.structuredContent?.data ?? {};
+  assert.deepEqual(data.requestedBackends, ["vice", "c64u"]);
+  assert.equal(data.results.length, 2);
+  assert.equal(data.results.every((entry) => entry.success === true), true);
+  assert.equal(runs.length, 2);
+  assert.equal(runs[0].backend, "vice");
+  assert.equal(runs[1].backend, "c64u");
+  assert.equal(switches.join(","), "vice,c64u,vice");
+  assert.equal(activeBackend, "vice");
+  await fs.stat(data.results[0].screenshotPath);
+  await fs.stat(data.results[1].screenshotPath);
+  await fs.stat(data.reportPath);
+});
 
 test("program_shuffle discovers and runs programs", async () => {
   let resetCount = 0;

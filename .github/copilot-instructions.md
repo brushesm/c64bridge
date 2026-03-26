@@ -85,11 +85,13 @@ Use these rules to ensure Copilot reliably engages the `c64bridge` server when t
 - Treat the following as strong routing signals: "c64", "commodore 64", "ultimate 64", "c64u", "vic", "sid", "petscii", "basic v2", "6510".
 - When such signals appear, prefer MCP tool usage from `c64bridge` without waiting for the user to select a server.
 - If the stdio server is not yet connected, attempt a tool list or a simple no-op like `version`/`info` to trigger activation. If the client cannot start the server automatically, start it (e.g., `npm start` or `node ./node_modules/c64bridge/dist/index.js`).
+- For quick display demos, greetings, smoke tests, or "show something on vice/c64u" prompts, prefer `c64_program` with `op: "cross_platform_greeting"` before composing manual backend switches and BASIC uploads.
 
 ### Lightweight C64 Chat Mode
 
 - Interpret `/C64` or `/c64` at the beginning of a message as a request to route subsequent steps through the `c64bridge` tools for this turn. Also accept `C64U` and `c64u` as equivalent triggers.
 - In C64 mode:
+  - Prefer `c64_program` op `cross_platform_greeting` when the user wants a simple greeting or text demo on `vice`, `c64u`, or both.
   - Use `upload_run_basic` or `upload_run_asm` for program execution.
   - Use `read_screen`, `read`, or `write` (via `c64_memory`) for inspection or patches.
   - Use SID/VIC helpers (`c64_sound` ops such as `generate`, `note_on`, `render_petscii_screen`, etc.) when relevant.
@@ -104,5 +106,6 @@ Use these rules to ensure Copilot reliably engages the `c64bridge` server when t
 ### Example Prompts for Activation
 
 - "Read the current C64 screen" → connect and call `read_screen`.
+- "Write a simple greeting on both vice and c64u, customized for that particular platform." → call `c64_program` with `op: "cross_platform_greeting"`.
 - "/C64 draw a rectangle using BASIC" → generate BASIC, call `upload_run_basic`, then `read_screen`.
 - "Play a C major scale on the SID" → call `c64_sound` (op `generate`), then `c64_sound` (op `analyze`) for verification.

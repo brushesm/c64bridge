@@ -10,7 +10,9 @@
           "c64://context/bootstrap",
           "c64://docs/index"
         ],
-        "optionalResources": [],
+        "optionalResources": [
+          "c64://context/fast-paths"
+        ],
         "tools": [
           "c64_program",
           "c64_memory"
@@ -18,6 +20,28 @@
         "tags": [
           "basic",
           "program"
+        ],
+        "argumentOptions": {}
+      }
+    },
+    {
+      "name": "cross-platform-demo",
+      "title": "Cross-Platform Demo Workflow",
+      "description": "Use the shortest safe path to show a platform-customized greeting on VICE and C64U.",
+      "_meta": {
+        "requiredResources": [
+          "c64://context/bootstrap",
+          "c64://context/fast-paths",
+          "c64://docs/index"
+        ],
+        "optionalResources": [],
+        "tools": [
+          "c64_program"
+        ],
+        "tags": [
+          "demo",
+          "platform",
+          "greeting"
         ],
         "argumentOptions": {}
       }

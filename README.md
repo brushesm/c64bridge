@@ -520,7 +520,7 @@ This allows agents to inspect the available tools, resources, prompts, and schem
 
 <!-- AUTO-GENERATED:MCP-DOCS-START -->
 
-This MCP server exposes **15 tools**, **25 resources**, and **7 prompts** for controlling your Commodore 64.
+This MCP server exposes **15 tools**, **26 resources**, and **8 prompts** for controlling your Commodore 64.
 
 ### Tools
 
@@ -642,6 +642,7 @@ Grouped entry point for program upload, execution, and batch workflows.
 | --- | --- | --- | --- | --- | --- |
 | `batch_run` | Run multiple PRG/CRT programs with post-run assertions. | `programs` | — | ✅ | ✅ |
 | `bundle_run` | Capture screen, memory, and debug registers into an artifact bundle. | `runId`, `outputPath` | — | ✅ |  |
+| `cross_platform_greeting` | Show a platform-customized greeting on one or more configured backends, capture screenshots, and verify the results. | — | supports verify | ✅ | ✅ |
 | `load_prg` | Load a PRG from Ultimate storage without executing it. | `path` | — | ✅ |  |
 | `run_crt` | Mount and run a CRT cartridge image. | `path` | — | ✅ |  |
 | `run_prg` | Load and execute a PRG from Ultimate-visible storage on c64u or a host-local path on VICE. | `path` | — | ✅ | ✅ |
@@ -726,6 +727,7 @@ Grouped entry point for reading and updating selected VICE resources.
 | --- | --- |
 | `c64://docs/index` | Explains how to approach each knowledge bundle and when to consult it. |
 | `c64://context/bootstrap` | Step-by-step rules for safe automation, verification, and rollback on the C64. |
+| `c64://context/fast-paths` | Condensed routing guide for one-call demos, backend switching, and when to prefer orchestration over manual tool composition. |
 | `c64://specs/basic` | Token definitions, syntax rules, and device I/O guidance for BASIC v2. |
 | `c64://docs/basic/pitfalls` | Quickref covering quotation handling, line length, tokenization, variable names, and other BASIC traps. |
 | `c64://specs/assembly` | Official opcode matrix, addressing modes, and zero-page strategy for the 6510 CPU. |
@@ -756,6 +758,7 @@ Grouped entry point for reading and updating selected VICE resources.
 | --- | --- |
 | `assembly-program` | Author 6502/6510 assembly routines with precise hardware guidance. |
 | `basic-program` | Plan, implement, and verify Commodore BASIC v2 programs safely. |
+| `cross-platform-demo` | Use the shortest safe path to show a platform-customized greeting on VICE and C64U. |
 | `drive-manager` | Mount, create, or power drives while preserving running workloads. |
 | `graphics-demo` | Create VIC-II graphics demos with safe setup and validation steps. |
 | `memory-debug` | Inspect or patch memory ranges with reversible steps and logging. |

@@ -12,11 +12,13 @@
         "prompts": [
           "basic-program",
           "assembly-program",
-          "memory-debug"
+          "memory-debug",
+          "cross-platform-demo"
         ],
         "tools": [
           "upload_run_basic",
           "upload_run_asm",
+          "cross_platform_greeting",
           "read_screen",
           "read"
         ],
@@ -32,6 +34,44 @@
         },
         "order": 0,
         "relatedResources": []
+      }
+    },
+    {
+      "name": "Fast Path Workflows",
+      "uri": "c64://context/fast-paths",
+      "description": "Shortest reliable workflows for common C64U and VICE tasks, including dual-backend demos.",
+      "mimeType": "text/markdown",
+      "_meta": {
+        "domain": "orientation",
+        "priority": "critical",
+        "summary": "Condensed routing guide for one-call demos, backend switching, and when to prefer orchestration over manual tool composition.",
+        "prompts": [
+          "basic-program",
+          "graphics-demo",
+          "cross-platform-demo"
+        ],
+        "tools": [
+          "c64_program",
+          "c64_select_backend",
+          "c64_memory",
+          "c64_graphics"
+        ],
+        "tags": [
+          "workflow",
+          "fast-path",
+          "routing"
+        ],
+        "bundle": {
+          "id": "orientation",
+          "title": "Workflow & Orientation",
+          "summary": "Mandatory workflow and safety guidance before issuing any C64 commands.",
+          "order": 0
+        },
+        "order": 1,
+        "relatedResources": [
+          "c64://context/bootstrap",
+          "c64://platform/status"
+        ]
       }
     },
     {
@@ -844,6 +884,7 @@
         "order": 0,
         "relatedResources": [
           "c64://context/bootstrap",
+          "c64://context/fast-paths",
           "c64://specs/basic",
           "c64://docs/basic/pitfalls",
           "c64://specs/assembly",

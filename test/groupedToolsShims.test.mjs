@@ -210,6 +210,72 @@ test("c64_program upload_run_basic uses shared BASIC handler", async () => {
   assert.ok(screenReads >= 1);
 });
 
+test("c64_program cross_platform_greeting delegates to the orchestration workflow", async () => {
+  const switches = [];
+  let activeBackend = "vice";
+  const { dir } = tmpPath("grouped-program", "cross-platform-greeting");
+  await fs.rm(dir, { recursive: true, force: true });
+
+  const stubClient = {
+    getAvailableBackends() {
+      return ["vice", "c64u"];
+    },
+    async getActiveBackendType() {
+      return activeBackend;
+    },
+    switchBackend(backend) {
+      switches.push(backend);
+      activeBackend = backend;
+    },
+    async uploadAndRunBasic() {
+      return { success: true };
+    },
+    async readScreen() {
+      return activeBackend === "vice"
+        ? "READY.\nHAVE A GREAT DAY, VICE!"
+        : "READY.\nHAVE A GREAT DAY, C64U!";
+    },
+    async captureFrames() {
+      return {
+        backend: activeBackend,
+        frames: [
+          {
+            frameNumber: null,
+            width: 2,
+            height: 2,
+            bitsPerPixel: 4,
+            pixels: Uint8Array.from([0, 1, 2, 3]),
+            complete: true,
+          },
+        ],
+      };
+    },
+  };
+
+  const ctx = {
+    client: stubClient,
+    rag: {},
+    logger: createLogger(),
+    platform: { id: "c64u", features: [], limitedFeatures: [] },
+    setPlatform(target) {
+      return { id: target, features: [], limitedFeatures: [] };
+    },
+  };
+
+  const result = await toolRegistry.invoke(
+    "c64_program",
+    { op: "cross_platform_greeting", outputPath: dir, timeoutMs: 100, pollIntervalMs: 50 },
+    ctx,
+  );
+
+  assert.equal(result.isError, undefined);
+  const data = result.structuredContent?.data;
+  assert.equal(data.results.length, 2);
+  assert.equal(data.results[0].backend, "vice");
+  assert.equal(data.results[1].backend, "c64u");
+  assert.equal(switches.join(","), "vice,c64u,vice");
+});
+
 test("c64_memory read delegates to legacy handler", async () => {
   const calls = [];
   const stubClient = {

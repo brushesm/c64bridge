@@ -15,6 +15,12 @@ Two backends may be available: `c64u` (physical C64 Ultimate hardware) and `vice
 Do not assume the current backend is correct without checking
 `c64://platform/status` if the user has expressed a preference.
 
+## Fast Paths
+
+- For simple visible confirmation on `vice`, `c64u`, or both, prefer `c64_program` with `op: "cross_platform_greeting"`.
+- That workflow switches backends internally, writes a platform-customized BASIC greeting, captures screenshots, and verifies the rendered text without extra tool composition.
+- Use manual `c64_select_backend` plus `upload_run_basic` only when the user needs custom program logic beyond a quick greeting or text demo.
+
 ## Device & Services
 
 - MCP server controls Ultimate 64/C64 via REST: upload/run BASIC or ASM, screen/memory I/O, drives, SID music, audio analysis, local RAG.

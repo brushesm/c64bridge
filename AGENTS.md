@@ -66,6 +66,13 @@ Examples (MCP tool calls; HTTP only for illustration):
 ```
 
 ```json
+// c64_program — fastest dual-backend greeting demo
+{
+  "op": "cross_platform_greeting"
+}
+```
+
+```json
 // c64_memory — wait for output on the screen (ASCII)
 {
   "op": "wait_for_text",
@@ -84,6 +91,7 @@ Examples (MCP tool calls; HTTP only for illustration):
 ## Capabilities
 
 - Program runners: `c64_program` (`upload_run_basic`, `upload_run_asm`, `run_prg`, `run_crt`, `bundle_run`, `batch_run`)
+- Fast demo workflow: `c64_program` (`cross_platform_greeting`) for one-call greetings on VICE and/or C64U with screenshot capture and verification
 - Screen & memory: `c64_memory` (`read`, `write`, `read_screen`, `wait_for_text`)
 - System control: `c64_system` (`pause`, `resume`, `reset`, `reboot`, `poweroff`, `menu`, tasks)
 - Configuration: `c64_config` (get/set, `batch_update`, `snapshot`, `restore`, `diff`, `shuffle`)
@@ -111,6 +119,7 @@ Pull RAG snippets via `c64_rag` (ops `basic`/`asm`) for targeted examples.
 ## Expert Workflow (recommended)
 
 - Plan → Run → Verify: generate code, run via `c64_program`, then verify with `c64_memory.read_screen`/`wait_for_text` and optional RAM checks.
+- For quick visible confirmations, skip the manual composition and use `c64_program` (`cross_platform_greeting`) first; it performs backend switching, BASIC upload, screenshot capture, and verification internally.
 - Prefer stdio transport; only use the HTTP bridge for manual inspection.
 - Use `c64_rag` to fetch relevant BASIC/ASM snippets and specs before coding.
 - BASIC tips: tokenised keywords, short variable names, careful quoting; keep lines ≤ 2 screen rows; prefer `PRINT` with explicit spacing.

@@ -82,6 +82,15 @@ const programOperations: GroupedOperationConfig[] = [
     ),
     handler: async (rawArgs, ctx) => invokeModuleTool(metaModule, "bundle_run_artifacts", rawArgs, ctx),
   },
+  {
+    op: "cross_platform_greeting",
+    schema: extendSchemaWithOp(
+      "cross_platform_greeting",
+      ensureDescriptor(metaDescriptorIndex, "cross_platform_greeting").inputSchema,
+      { description: "Show a platform-customized greeting on one or more configured backends, capture screenshots, and verify the results." },
+    ),
+    handler: async (rawArgs, ctx) => invokeModuleTool(metaModule, "cross_platform_greeting", rawArgs, ctx),
+  },
 ];
 
 const programOperationHandlers = createOperationHandlers(programOperations);
@@ -95,6 +104,7 @@ export const programModule = defineToolModule({
   workflowHints: [
     "Choose BASIC or assembly uploaders based on the language you just generated for the user.",
     "Prefer PRG or CRT runners when the user supplies a file path instead of source text; PRG paths are host-local on VICE and Ultimate-visible on c64u.",
+    "For a quick visible confirmation on VICE and/or C64U, prefer cross_platform_greeting instead of composing manual backend switches and BASIC upload steps.",
   ],
   supportedPlatforms: ["c64u", "vice"],
   tools: [
@@ -112,6 +122,7 @@ export const programModule = defineToolModule({
         load_prg: "load_prg",
         run_crt: "run_crt",
         bundle_run: "bundle_run_artifacts",
+        cross_platform_greeting: "cross_platform_greeting",
       },
       examples: [
         {
@@ -123,6 +134,11 @@ export const programModule = defineToolModule({
           name: "Upload BASIC source",
           description: "Send inline BASIC to the C64 and run it",
           arguments: { op: "upload_run_basic", program: "10 PRINT \"HELLO\"\n20 GOTO 10" },
+        },
+        {
+          name: "Show greeting on both backends",
+          description: "Render a platform-specific greeting on VICE and C64U with screenshot verification",
+          arguments: { op: "cross_platform_greeting" },
         },
       ],
       execute: createOperationDispatcher<GenericOperationMap>(

@@ -28,6 +28,16 @@ test("promptRegistry.resolve resolves a basic prompt", () => {
   assert.ok(result.messages.length > 0, "should have at least one message");
   assert.ok(Array.isArray(result.resources), "should have resources");
   assert.ok(Array.isArray(result.tools), "should have tools");
+  assert.equal(result.resources.some((resource) => resource.uri === "c64://context/fast-paths"), true);
+});
+
+test("promptRegistry.resolve exposes the cross-platform demo prompt", () => {
+  const result = registry.resolve("cross-platform-demo", {});
+  assert.ok(result, "should return a result");
+  assert.equal(result.name, "cross-platform-demo");
+  assert.equal(result.tools.length, 1);
+  assert.equal(result.tools[0]?.name, "c64_program");
+  assert.equal(result.resources.some((resource) => resource.uri === "c64://context/fast-paths"), true);
 });
 
 test("promptRegistry.resolve throws for unknown prompt", () => {
@@ -69,7 +79,7 @@ test("promptRegistry.resolve handles printer-job prompt with printerType argumen
 
 test("promptRegistry.resolve handles workflow prompts", () => {
   // Test a few workflow prompts to ensure they resolve
-  const workflows = ["memory-debug", "drive-manager"];
+  const workflows = ["memory-debug", "drive-manager", "cross-platform-demo"];
   
   for (const name of workflows) {
     const result = registry.resolve(name, {});

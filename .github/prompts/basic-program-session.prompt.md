@@ -1,11 +1,13 @@
 ---
-mode: 'agent'
+mode: "agent"
 model: GPT-4o
-tools: ['c64bridge/*']
-description: 'Plan, write, and validate a Commodore BASIC v2 program with MCP tooling.'
+tools: ["c64bridge/*"]
+description: "Plan, write, and validate a Commodore BASIC v2 program with MCP tooling."
 ---
+
 Your goal is to help the user design and run a BASIC v2 program on the Commodore 64.
 
+0. If the request is just a quick greeting or visible text demo on `vice`, `c64u`, or both, prefer `c64_program` (op `cross_platform_greeting`) instead of composing manual backend switches and BASIC uploads.
 1. Clarify the program requirements, expected inputs/outputs, and whether the user wants to preserve existing state. Use [`basic-spec.md`](../../data/basic/basic-spec.md) for quick syntax reminders.
 2. Outline a short plan before coding, citing helpful docs like [`basic-spec.md`](../../data/basic/basic-spec.md) for keywords or [`bootstrap.md`](../../data/context/bootstrap.md) for workflow rules.
 3. Generate uppercase, token-friendly BASIC with line numbers. Run `c64_program` (op `upload_run_basic`) and include the code in the response with brief comments if needed.

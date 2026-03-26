@@ -296,6 +296,99 @@
               "op"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Show a platform-customized greeting on one or more configured backends, capture screenshots, and verify the results.",
+            "properties": {
+              "platforms": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "string",
+                  "description": "Backends to target in sequence.",
+                  "minLength": 1,
+                  "enum": [
+                    "vice",
+                    "c64u"
+                  ]
+                },
+                "default": [
+                  "vice",
+                  "c64u"
+                ]
+              },
+              "messageTemplate": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Greeting template. Use {PLATFORM}/{BACKEND} for uppercase or {platform}/{backend} for lowercase substitution.",
+                "minLength": 1,
+                "default": "HAVE A GREAT DAY, {PLATFORM}!"
+              },
+              "verify": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "Poll the text screen and require the rendered greeting to appear.",
+                "default": true
+              },
+              "captureScreenshot": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "Capture a framebuffer screenshot and save it as a PNG per backend.",
+                "default": true
+              },
+              "outputPath": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Directory for screenshots and the workflow summary JSON.",
+                "minLength": 1
+              },
+              "restoreActiveBackend": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "Restore the backend that was active before the workflow started.",
+                "default": true
+              },
+              "timeoutMs": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Maximum time to wait for each greeting to appear on screen.",
+                "minimum": 100,
+                "maximum": 5000,
+                "default": 1500
+              },
+              "pollIntervalMs": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Delay between screen polls while verifying the greeting.",
+                "minimum": 50,
+                "maximum": 1000,
+                "default": 100
+              },
+              "op": {
+                "const": "cross_platform_greeting"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "op"
+            ]
           }
         ],
         "discriminator": {
@@ -331,6 +424,13 @@
               "op": "upload_run_basic",
               "program": "10 PRINT \"HELLO\"\n20 GOTO 10"
             }
+          },
+          {
+            "name": "Show greeting on both backends",
+            "description": "Render a platform-specific greeting on VICE and C64U with screenshot verification",
+            "arguments": {
+              "op": "cross_platform_greeting"
+            }
           }
         ],
         "tags": [
@@ -340,7 +440,8 @@
         ],
         "workflowHints": [
           "Choose BASIC or assembly uploaders based on the language you just generated for the user.",
-          "Prefer PRG or CRT runners when the user supplies a file path instead of source text; PRG paths are host-local on VICE and Ultimate-visible on c64u."
+          "Prefer PRG or CRT runners when the user supplies a file path instead of source text; PRG paths are host-local on VICE and Ultimate-visible on c64u.",
+          "For a quick visible confirmation on VICE and/or C64U, prefer cross_platform_greeting instead of composing manual backend switches and BASIC upload steps."
         ],
         "platforms": [
           "c64u",

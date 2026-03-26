@@ -88,6 +88,16 @@ const BASE_SEGMENTS: Record<string, PromptSegment> = {
     "- Call out newline and quotation handling quirks so the user can interpret the output accurately.",
     ].join("\n"),
   },
+  "workflow/fast-paths": {
+    id: "workflow/fast-paths",
+    role: "assistant",
+    content: [
+      "Fast-path routing:",
+      "- For quick visible text or greeting demos on VICE and/or C64U, prefer `c64_program` with op `cross_platform_greeting` before composing manual backend switches.",
+      "- Use the workflow's structured verification and screenshot paths as the primary evidence of success.",
+      "- Fall back to `upload_run_basic` plus `c64_memory` only when the request needs custom control flow beyond a simple display demo.",
+    ].join("\n"),
+  },
   "workflow/asm-irq": {
     id: "workflow/asm-irq",
     role: "assistant",
@@ -159,6 +169,17 @@ const BASIC_CORE_SEGMENT: PromptSegment = {
   "- Generate a numbered BASIC listing with inline remarks when clarity is required.",
   "- Describe how `c64_program` (op `upload_run_basic`) loads the program and what output to inspect.",
   "- Suggest follow-up diagnostics (screen capture, memory snapshot, or tool reruns).",
+  ].join("\n"),
+};
+
+const CROSS_PLATFORM_CORE_SEGMENT: PromptSegment = {
+  id: "family/cross-platform-core",
+  role: "assistant",
+  content: [
+    "Cross-platform demo workflow:",
+    "- If the request is a quick greeting or visible confirmation on `vice`, `c64u`, or both, use `c64_program` with op `cross_platform_greeting`.",
+    "- Let the tool generate the platform-customized BASIC, switch backends internally, capture screenshots, and verify the rendered text.",
+    "- Only expand into manual backend control or custom BASIC when the user asks for logic beyond a simple display demo.",
   ].join("\n"),
 };
 
@@ -366,15 +387,36 @@ export function createPromptRegistry(): PromptRegistry {
           "c64://context/bootstrap",
           "c64://docs/index",
         ],
-        optionalResources: [],
+        optionalResources: ["c64://context/fast-paths"],
   tools: ["c64_program", "c64_memory"],
         tags: ["basic", "program"],
       },
       buildMessages: () => [
         BASE_SEGMENTS["intro/core"],
         BASE_SEGMENTS["safety/reset"],
+        BASE_SEGMENTS["workflow/fast-paths"],
         BASIC_CORE_SEGMENT,
         BASE_SEGMENTS["workflow/basic-verify"],
+      ],
+    },
+    {
+      descriptor: {
+        name: "cross-platform-demo",
+        title: "Cross-Platform Demo Workflow",
+        description: "Use the shortest safe path to show a platform-customized greeting on VICE and C64U.",
+        requiredResources: [
+          "c64://context/bootstrap",
+          "c64://context/fast-paths",
+          "c64://docs/index",
+        ],
+        optionalResources: [],
+        tools: ["c64_program"],
+        tags: ["demo", "platform", "greeting"],
+      },
+      buildMessages: () => [
+        BASE_SEGMENTS["intro/core"],
+        BASE_SEGMENTS["workflow/fast-paths"],
+        CROSS_PLATFORM_CORE_SEGMENT,
       ],
     },
     {
