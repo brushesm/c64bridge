@@ -14,7 +14,7 @@ This repository contains a Model Context Protocol (MCP) server that drives Commo
   - C64 hardware control (BASIC/ASM upload, screen & memory access, SID, VIC-II).
   - Local RAG over `data/` with embeddings.
   - Only transport is MCP over stdio.
-- Documentation sources: `README.md`, `doc/` (including SID/BASIC references), `AGENTS.md`, `.github/prompts/*.prompt.md`, and `data/context/*.md`.
+- Documentation sources: `README.md`, `doc/` (including SID/BASIC references), `AGENTS.md`, `CLAUDE.md`, `.github/prompts/*.prompt.md`, and `data/context/*.md`.
 
 ## Coding Standards
 
@@ -42,8 +42,15 @@ This repository contains a Model Context Protocol (MCP) server that drives Commo
 
 ## Prompts & Personas
 
-- Agent context layers: `data/context/bootstrap.md` → `AGENTS.md` → `.github/prompts/*.prompt.md` → `data/context/chat.md` → RAG fetches. Respect existing tone, persona descriptions, and instructions.
+- Agent context layers: `data/context/bootstrap.md` → `AGENTS.md` / `CLAUDE.md` / `.github/copilot-instructions.md` → `.github/prompts/*.prompt.md` → `.github/skills/*/SKILL.md` → `data/context/chat.md` → RAG fetches. Respect existing tone, persona descriptions, and instructions.
 - MCP server wiring lives in `src/mcp-server.ts` (imported by `src/index.ts`). No manifest regeneration step is needed; clients discover tools dynamically via MCP.
+
+## Skill Architecture
+
+- `.github/skills/*/SKILL.md` is the only place where execution logic may live.
+- `.github/prompts/*.prompt.md` and `src/prompts/registry.ts` must define intent and routing only.
+- Agent instruction files such as `AGENTS.md`, `CLAUDE.md`, and `.github/agents/*.md` must reference skills instead of restating tool sequences.
+- If you find duplicated MCP steps outside `.github/skills`, treat that as a defect and move the procedure into the matching skill.
 
 ## Review Checklist
 
@@ -77,35 +84,12 @@ Thanks for helping keep the Commodore 64 MCP server robust and user-friendly!
 
 ---
 
-## Using MCP with Copilot Chat (and Eager C64 Activation)
+## Using MCP With Copilot Chat
 
 Use these rules to ensure Copilot reliably engages the `c64bridge` server when the user asks for C64 work.
 
-- Only transport is stdio; always use it. Ensure the experimental MCP setting is enabled and a server entry exists for `c64bridge` (see `doc/AGENTS.md`). If the server is not running, start it.
-- Treat the following as strong routing signals: "c64", "commodore 64", "ultimate 64", "c64u", "vic", "sid", "petscii", "basic v2", "6510".
-- When such signals appear, prefer MCP tool usage from `c64bridge` without waiting for the user to select a server.
-- If the stdio server is not yet connected, attempt a tool list or a simple no-op like `version`/`info` to trigger activation. If the client cannot start the server automatically, start it (e.g., `npm start` or `node ./node_modules/c64bridge/dist/index.js`).
-- For quick display demos, greetings, smoke tests, or "show something on vice/c64u" prompts, prefer `c64_program` with `op: "cross_platform_greeting"` before composing manual backend switches and BASIC uploads.
-
-### Lightweight C64 Chat Mode
-
-- Interpret `/C64` or `/c64` at the beginning of a message as a request to route subsequent steps through the `c64bridge` tools for this turn. Also accept `C64U` and `c64u` as equivalent triggers.
-- In C64 mode:
-  - Prefer `c64_program` op `cross_platform_greeting` when the user wants a simple greeting or text demo on `vice`, `c64u`, or both.
-  - Use `upload_run_basic` or `upload_run_asm` for program execution.
-  - Use `read_screen`, `read`, or `write` (via `c64_memory`) for inspection or patches.
-  - Use SID/VIC helpers (`c64_sound` ops such as `generate`, `note_on`, `render_petscii_screen`, etc.) when relevant.
-  - Explain intended tool calls briefly before invoking them.
-
-### Fallback Guidance
-
-- If MCP tooling is unavailable, propose the minimal steps to bring it online:
-  1. ensure MCP is enabled in Copilot, 2) add the stdio server entry for `c64bridge`, 3) run `npm start` (Node.js provides better stdio/MCP compatibility for production runtime).
-- Avoid performing destructive actions (reset/reboot/power) without explicit confirmation.
-
-### Example Prompts for Activation
-
-- "Read the current C64 screen" → connect and call `read_screen`.
-- "Write a simple greeting on both vice and c64u, customized for that particular platform." → call `c64_program` with `op: "cross_platform_greeting"`.
-- "/C64 draw a rectangle using BASIC" → generate BASIC, call `upload_run_basic`, then `read_screen`.
-- "Play a C major scale on the SID" → call `c64_sound` (op `generate`), then `c64_sound` (op `analyze`) for verification.
+- Only transport is stdio; always use it.
+- Treat the following as strong routing signals: "c64", "commodore 64", "ultimate 64", "c64u", "vice", "vic", "sid", "petscii", "basic v2", and "6510".
+- When such signals appear, route to the matching skill in `.github/skills/` instead of describing ad hoc execution steps.
+- If the stdio server is not yet connected, bring it online before executing the chosen skill.
+- Avoid destructive actions such as reset, reboot, poweroff, or drive-state mutations without explicit confirmation.

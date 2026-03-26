@@ -29,6 +29,7 @@ test("promptRegistry.resolve resolves a basic prompt", () => {
   assert.ok(Array.isArray(result.resources), "should have resources");
   assert.ok(Array.isArray(result.tools), "should have tools");
   assert.equal(result.resources.some((resource) => resource.uri === "c64://context/fast-paths"), true);
+  assert.equal(result.messages.some((message) => message.content.includes(".github/skills/basic-program/SKILL.md")), true);
 });
 
 test("promptRegistry.resolve exposes the cross-platform demo prompt", () => {
@@ -38,6 +39,16 @@ test("promptRegistry.resolve exposes the cross-platform demo prompt", () => {
   assert.equal(result.tools.length, 1);
   assert.equal(result.tools[0]?.name, "c64_program");
   assert.equal(result.resources.some((resource) => resource.uri === "c64://context/fast-paths"), true);
+});
+
+test("promptRegistry.resolve exposes the preset music demo prompt", () => {
+  const result = registry.resolve("preset-music-demo", {});
+  assert.ok(result, "should return a result");
+  assert.equal(result.name, "preset-music-demo");
+  assert.equal(result.tools.length, 1);
+  assert.equal(result.tools[0]?.name, "c64_sound");
+  assert.equal(result.resources.some((resource) => resource.uri === "c64://context/fast-paths"), true);
+  assert.equal(result.messages.some((message) => message.content.includes(".github/skills/sid-music/SKILL.md")), true);
 });
 
 test("promptRegistry.resolve throws for unknown prompt", () => {
@@ -59,6 +70,7 @@ test("promptRegistry.resolve handles assembly-program prompt with hardware argum
   assert.ok(Array.isArray(result.messages), "should have messages");
   assert.ok(Array.isArray(result.resources), "should have resources");
   assert.ok(result.resources.length > 0, "should have at least one resource");
+  assert.equal(result.messages.some((message) => message.content.includes("hardware is set to `sid`")), true);
 });
 
 test("promptRegistry.resolve handles graphics-demo prompt with mode argument", () => {
@@ -67,6 +79,7 @@ test("promptRegistry.resolve handles graphics-demo prompt with mode argument", (
   assert.equal(result.name, "graphics-demo");
   assert.ok(result.arguments, "should have prepared arguments");
   assert.equal(result.arguments.mode, "multicolour");
+  assert.equal(result.messages.some((message) => message.content.includes("mode is set to `multicolour`")), true);
 });
 
 test("promptRegistry.resolve handles printer-job prompt with printerType argument", () => {
@@ -75,11 +88,12 @@ test("promptRegistry.resolve handles printer-job prompt with printerType argumen
   assert.equal(result.name, "printer-job");
   assert.ok(result.arguments, "should have prepared arguments");
   assert.equal(result.arguments.printerType, "epson");
+  assert.equal(result.messages.some((message) => message.content.includes("printerType is set to `epson`")), true);
 });
 
 test("promptRegistry.resolve handles workflow prompts", () => {
   // Test a few workflow prompts to ensure they resolve
-  const workflows = ["memory-debug", "drive-manager", "cross-platform-demo"];
+  const workflows = ["memory-debug", "drive-manager", "cross-platform-demo", "preset-music-demo"];
   
   for (const name of workflows) {
     const result = registry.resolve(name, {});
@@ -87,6 +101,7 @@ test("promptRegistry.resolve handles workflow prompts", () => {
     assert.equal(result.name, name);
     assert.ok(Array.isArray(result.messages), `${name} should have messages`);
     assert.ok(Array.isArray(result.tools), `${name} should have tools`);
+    assert.equal(result.messages.some((message) => message.content.includes("single source of truth for execution")), true);
   }
 });
 

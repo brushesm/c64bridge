@@ -520,7 +520,7 @@ This allows agents to inspect the available tools, resources, prompts, and schem
 
 <!-- AUTO-GENERATED:MCP-DOCS-START -->
 
-This MCP server exposes **15 tools**, **26 resources**, and **8 prompts** for controlling your Commodore 64.
+This MCP server exposes **15 tools**, **26 resources**, and **9 prompts** for controlling your Commodore 64.
 
 ### Tools
 
@@ -680,6 +680,7 @@ Grouped entry point for SID control, playback, composition, and analysis workflo
 | `note_on` | Trigger a SID voice with configurable waveform, ADSR, and pitch. | — | — | ✅ | ✅ |
 | `pipeline` | Compile a SIDWAVE score, play it, and analyze the recording. | — | supports verify | ✅ |  |
 | `play_mod_file` | Play a MOD tracker module via the Ultimate SID player. | `path` | — | ✅ |  |
+| `play_preset` | Compile and play a built-in SID preset such as Für Elise by Beethoven. | — | supports verify | ✅ | ✅ |
 | `play_sid_file` | Play a SID file stored on the Ultimate filesystem. | `path` | — | ✅ |  |
 | `record_analyze` | Record audio for a fixed duration and return SID analysis metrics. | `durationSeconds` | — | ✅ |  |
 | `reset` | Soft or hard reset of SID registers to clear glitches. | — | — | ✅ | ✅ |
@@ -756,13 +757,14 @@ Grouped entry point for reading and updating selected VICE resources.
 
 | Name | Description |
 | --- | --- |
-| `assembly-program` | Author 6502/6510 assembly routines with precise hardware guidance. |
-| `basic-program` | Plan, implement, and verify Commodore BASIC v2 programs safely. |
-| `cross-platform-demo` | Use the shortest safe path to show a platform-customized greeting on VICE and C64U. |
-| `drive-manager` | Mount, create, or power drives while preserving running workloads. |
-| `graphics-demo` | Create VIC-II graphics demos with safe setup and validation steps. |
-| `memory-debug` | Inspect or patch memory ranges with reversible steps and logging. |
-| `printer-job` | Send formatted output to Commodore or Epson printers with safe teardown steps. |
-| `sid-music` | Compose SID music with expressive phrasing and iterative audio verification. |
+| `assembly-program` | Route 6502/6510 routine requests to the canonical assembly skill. |
+| `basic-program` | Route bespoke Commodore BASIC v2 requests to the canonical BASIC skill. |
+| `cross-platform-demo` | Route quick visible demo requests to the cross-platform demo skill. |
+| `drive-manager` | Route disk-image and drive-state requests to the canonical drive skill. |
+| `graphics-demo` | Route graphics requests to the canonical graphics skill. |
+| `memory-debug` | Route reversible memory inspection or patching work to the canonical memory skill. |
+| `preset-music-demo` | Route quick recognizable tune requests to the SID music skill. |
+| `printer-job` | Route printer work to the canonical printer skill. |
+| `sid-music` | Route SID playback and composition work to the canonical SID skill. |
 
 <!-- AUTO-GENERATED:MCP-DOCS-END -->

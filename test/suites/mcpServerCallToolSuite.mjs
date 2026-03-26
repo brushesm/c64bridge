@@ -458,21 +458,17 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
 
   test("c64_graphics capture_frame returns normalized frame data via MCP", async () => {
     await withSharedMcpClient(async (ctx) => {
-      const { result, supported } = ctx.platform === "vice"
-        ? await callToolUntil(
-            ctx,
-            "c64_graphics",
-            { op: "capture_frame" },
-            (candidate) => candidate.metadata?.success === true,
-            {
-              timeoutMs: 20_000,
-              intervalMs: 500,
-              description: "VICE capture_frame",
-            },
-          )
-        : await callTool(ctx, "c64_graphics", {
-            op: "capture_frame",
-          });
+      const { result, supported } = await callToolUntil(
+        ctx,
+        "c64_graphics",
+        { op: "capture_frame" },
+        (candidate) => candidate.metadata?.success === true,
+        {
+          timeoutMs: 20_000,
+          intervalMs: 500,
+          description: `${ctx.platform} capture_frame`,
+        },
+      );
 
       if (!supported) {
         return;
@@ -487,8 +483,8 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
 
       if (ctx.platform === "vice") {
         assert.equal(result.structuredContent?.data?.backend, "vice");
-        assert.equal(frame.width, 384);
-        assert.equal(frame.height, 272);
+        assert.equal(frame.width, 320); // VICE returns debugWidth (320), not UDP stream width
+        assert.equal(frame.height, 200); // VICE mock encodeDisplay() sets debugHeight = 200
       } else {
         assert.equal(result.structuredContent?.data?.backend, "c64u");
         assert.equal(frame.width, 384);

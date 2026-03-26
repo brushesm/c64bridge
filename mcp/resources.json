@@ -13,12 +13,14 @@
           "basic-program",
           "assembly-program",
           "memory-debug",
-          "cross-platform-demo"
+          "cross-platform-demo",
+          "preset-music-demo"
         ],
         "tools": [
           "upload_run_basic",
           "upload_run_asm",
           "cross_platform_greeting",
+          "music_play_preset",
           "read_screen",
           "read"
         ],
@@ -48,10 +50,13 @@
         "prompts": [
           "basic-program",
           "graphics-demo",
-          "cross-platform-demo"
+          "cross-platform-demo",
+          "sid-music",
+          "preset-music-demo"
         ],
         "tools": [
           "c64_program",
+          "c64_sound",
           "c64_select_backend",
           "c64_memory",
           "c64_graphics"
@@ -862,7 +867,9 @@
           "sid-music",
           "graphics-demo",
           "printer-job",
-          "memory-debug"
+          "memory-debug",
+          "cross-platform-demo",
+          "preset-music-demo"
         ],
         "tools": [
           "upload_run_basic",

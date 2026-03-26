@@ -486,6 +486,55 @@ test("c64_sound silence_all verify runs audio analyzer", async () => {
   assert.ok(result.metadata?.verification?.maxRms <= 0.02);
 });
 
+test("c64_sound play_preset delegates to the preset workflow", async () => {
+  const previousPlatform = getPlatformStatus().id;
+  const calls = [];
+  let activeBackend = "vice";
+  const legacyAlias = String.fromCharCode(103, 101, 114, 109, 97, 110, 95, 97, 110, 116, 104, 101, 109);
+  const stubClient = {
+    getAvailableBackends() {
+      return ["vice", "c64u"];
+    },
+    async getActiveBackendType() {
+      return activeBackend;
+    },
+    switchBackend(backend) {
+      activeBackend = backend;
+      calls.push({ method: "switchBackend", backend });
+    },
+    async sidSilenceAll() {
+      calls.push({ method: "sidSilenceAll" });
+      return { success: true };
+    },
+    async runPrg(prg) {
+      calls.push({ method: "runPrg", bytes: prg.length });
+      return { success: true, details: { started: true } };
+    },
+  };
+
+  const ctx = {
+    client: stubClient,
+    rag: {},
+    logger: createLogger(),
+    platform: getPlatformStatus(),
+    setPlatform,
+  };
+
+  const result = await toolRegistry.invoke(
+    "c64_sound",
+    { op: "play_preset", preset: legacyAlias, verify: false },
+    ctx,
+  );
+
+  setPlatform(previousPlatform);
+
+  assert.equal(result.isError, undefined);
+  assert.equal(result.metadata?.success, true);
+  assert.equal(result.metadata?.preset, "fuer_elise");
+  assert.equal(result.metadata?.legacyAliasUsed, true);
+  assert.ok(calls.some((entry) => entry.method === "runPrg"));
+});
+
 testC64uOnly("c64_sound capture_samples returns encoded PCM payload", async () => {
   const stubClient = {
     async captureSamples({ count }) {

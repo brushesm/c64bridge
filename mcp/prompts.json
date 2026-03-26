@@ -3,7 +3,7 @@
     {
       "name": "basic-program",
       "title": "BASIC Program Workflow",
-      "description": "Plan, implement, and verify Commodore BASIC v2 programs safely.",
+      "description": "Route bespoke Commodore BASIC v2 requests to the canonical BASIC skill.",
       "_meta": {
         "requiredResources": [
           "c64://specs/basic",
@@ -27,7 +27,7 @@
     {
       "name": "cross-platform-demo",
       "title": "Cross-Platform Demo Workflow",
-      "description": "Use the shortest safe path to show a platform-customized greeting on VICE and C64U.",
+      "description": "Route quick visible demo requests to the cross-platform demo skill.",
       "_meta": {
         "requiredResources": [
           "c64://context/bootstrap",
@@ -47,9 +47,33 @@
       }
     },
     {
+      "name": "preset-music-demo",
+      "title": "Preset Music Demo Workflow",
+      "description": "Route quick recognizable tune requests to the SID music skill.",
+      "_meta": {
+        "requiredResources": [
+          "c64://specs/sid",
+          "c64://specs/sidwave",
+          "c64://context/fast-paths"
+        ],
+        "optionalResources": [
+          "c64://docs/sid/best-practices"
+        ],
+        "tools": [
+          "c64_sound"
+        ],
+        "tags": [
+          "sid",
+          "music",
+          "demo"
+        ],
+        "argumentOptions": {}
+      }
+    },
+    {
       "name": "assembly-program",
       "title": "Assembly Program Workflow",
-      "description": "Author 6502/6510 assembly routines with precise hardware guidance.",
+      "description": "Route 6502/6510 routine requests to the canonical assembly skill.",
       "arguments": [
         {
           "name": "hardware",
@@ -93,7 +117,7 @@
     {
       "name": "sid-music",
       "title": "SID Composition Workflow",
-      "description": "Compose SID music with expressive phrasing and iterative audio verification.",
+      "description": "Route SID playback and composition work to the canonical SID skill.",
       "_meta": {
         "requiredResources": [
           "c64://specs/sid",
@@ -101,7 +125,9 @@
           "c64://docs/sid/file-structure",
           "c64://docs/sid/best-practices"
         ],
-        "optionalResources": [],
+        "optionalResources": [
+          "c64://context/fast-paths"
+        ],
         "tools": [
           "c64_sound"
         ],
@@ -115,7 +141,7 @@
     {
       "name": "graphics-demo",
       "title": "Graphics Demo Workflow",
-      "description": "Create VIC-II graphics demos with safe setup and validation steps.",
+      "description": "Route graphics requests to the canonical graphics skill.",
       "arguments": [
         {
           "name": "mode",
@@ -160,7 +186,7 @@
     {
       "name": "printer-job",
       "title": "Printer Job Workflow",
-      "description": "Send formatted output to Commodore or Epson printers with safe teardown steps.",
+      "description": "Route printer work to the canonical printer skill.",
       "arguments": [
         {
           "name": "printerType",
@@ -200,7 +226,7 @@
     {
       "name": "memory-debug",
       "title": "Memory Debug Workflow",
-      "description": "Inspect or patch memory ranges with reversible steps and logging.",
+      "description": "Route reversible memory inspection or patching work to the canonical memory skill.",
       "_meta": {
         "requiredResources": [
           "c64://context/bootstrap",
@@ -222,7 +248,7 @@
     {
       "name": "drive-manager",
       "title": "Drive Manager Workflow",
-      "description": "Mount, create, or power drives while preserving running workloads.",
+      "description": "Route disk-image and drive-state requests to the canonical drive skill.",
       "_meta": {
         "requiredResources": [
           "c64://context/bootstrap"

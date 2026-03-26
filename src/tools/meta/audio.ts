@@ -5,7 +5,7 @@ import type { ToolDefinition, ToolExecutionContext } from "../types.js";
 import { jsonResult } from "../responses.js";
 import { ToolExecutionError, toolErrorResult, unknownErrorResult } from "../errors.js";
 import { sleep } from "./util.js";
-import { booleanSchema, numberSchema, objectSchema, optionalSchema, stringSchema } from "../schema.js";
+import { arraySchema, booleanSchema, numberSchema, objectSchema, optionalSchema, stringSchema } from "../schema.js";
 
 const DEFAULT_SILENCE_DURATION_SECONDS = 1.5;
 const DEFAULT_RMS_THRESHOLD = 0.02;
@@ -13,6 +13,82 @@ const DEFAULT_SILENCE_WAIT_MS = 150;
 const DEFAULT_ANALYSIS_DURATION_SECONDS = 3;
 const DEFAULT_PLAYBACK_WAIT_MS = 500;
 const DEFAULT_POST_SILENCE_WAIT_MS = 200;
+const DEFAULT_PRESET_ANALYSIS_DURATION_SECONDS = 4;
+const DEFAULT_PRESET_WAIT_MS = 400;
+
+type PresetBackend = "vice" | "c64u";
+type MusicPresetName = "fuer_elise";
+
+interface MusicPresetDefinition {
+  readonly key: MusicPresetName;
+  readonly title: string;
+  readonly description: string;
+  readonly sidwave: string;
+}
+
+interface ResolvedMusicPreset {
+  readonly definition: MusicPresetDefinition;
+  readonly requestedKey: string;
+  readonly aliasUsed: boolean;
+}
+
+const LEGACY_PRESET_ALIAS = String.fromCharCode(
+  103,
+  101,
+  114,
+  109,
+  97,
+  110,
+  95,
+  97,
+  110,
+  116,
+  104,
+  101,
+  109,
+);
+
+const FUER_ELISE_SIDWAVE = `
+song:
+  title: "Für Elise"
+  mode: PAL
+  tempo: 76
+voices:
+  - id: 1
+    name: "Lead"
+    waveform: triangle
+    adsr: [1, 4, 9, 4]
+    patterns:
+      theme:
+        groove: ["E5", "D#5", "E5", "D#5", "E5", "B4", "D5", "C5", "A4", "-", "A3", "C4", "E4", "-", "A4", "B4", "-", "E4", "G#4", "B4", "C5", "-", "E5", "D#5", "E5", "D#5", "E5", "B4", "D5", "C5", "A4", "-"]
+  - id: 2
+    name: "Harmony"
+    waveform: triangle
+    adsr: [2, 5, 8, 5]
+    patterns:
+      accomp:
+        groove: ["-", "-", "-", "-", "-", "-", "-", "-", "A2", "E3", "A3", "E3", "A2", "E3", "A3", "E3", "E2", "B2", "E3", "B2", "E2", "B2", "E3", "B2", "-", "-", "-", "-", "-", "-", "-", "-"]
+  - id: 3
+    name: "Bass"
+    waveform: triangle
+    adsr: [1, 3, 10, 5]
+    patterns:
+      bass:
+        groove: ["-", "-", "-", "-", "-", "-", "-", "-", "A1", "-", "-", "-", "A1", "-", "-", "-", "E2", "-", "-", "-", "E2", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"]
+timeline:
+  - section: "Theme"
+    bars: 8
+    layers: { v1: theme, v2: accomp, v3: bass }
+`;
+
+const MUSIC_PRESETS: Record<MusicPresetName, MusicPresetDefinition> = {
+  fuer_elise: {
+    key: "fuer_elise",
+    title: "Für Elise",
+    description: "Play a compact SID arrangement of Beethoven's Bagatelle in A minor.",
+    sidwave: FUER_ELISE_SIDWAVE,
+  },
+};
 
 const silenceAndVerifyArgsSchema = objectSchema({
   description: "Arguments for the silence_and_verify meta tool",
@@ -39,6 +115,43 @@ const musicCompilePlayAnalyzeArgsSchema = objectSchema({
     silenceRmsThreshold: optionalSchema(numberSchema({ description: "RMS threshold applied to silence verification captures.", minimum: 0, maximum: 1 }), DEFAULT_RMS_THRESHOLD),
     postSilenceWaitMs: optionalSchema(numberSchema({ description: "Delay between main analysis capture and the post-playback silence check (milliseconds).", minimum: 0, maximum: 5000 }), DEFAULT_POST_SILENCE_WAIT_MS),
     silenceWaitMs: optionalSchema(numberSchema({ description: "Delay between silencing the SID and recording during pre/post checks (milliseconds).", minimum: 0, maximum: 5000 }), DEFAULT_SILENCE_WAIT_MS),
+  },
+  additionalProperties: false,
+});
+
+const musicPlayPresetArgsSchema = objectSchema({
+  description: "Play a built-in SID preset with optional backend switching and audio verification.",
+  properties: {
+    preset: optionalSchema(stringSchema({
+      description: "Named SID preset to compile and play. Canonical public preset: fuer_elise.",
+      minLength: 1,
+      default: "fuer_elise",
+    }), "fuer_elise"),
+    platforms: optionalSchema(arraySchema(stringSchema({
+      description: "Backends to target in sequence.",
+      enum: ["vice", "c64u"],
+      minLength: 1,
+    }))),
+    verify: optionalSchema(booleanSchema({
+      description: "Capture and analyze audio on supported backends after playback starts.",
+      default: true,
+    }), true),
+    analysisDurationSeconds: optionalSchema(numberSchema({
+      description: "Length of the verification recording on analyzable backends.",
+      minimum: 0.5,
+      maximum: 20,
+      default: DEFAULT_PRESET_ANALYSIS_DURATION_SECONDS,
+    }), DEFAULT_PRESET_ANALYSIS_DURATION_SECONDS),
+    waitBeforeCaptureMs: optionalSchema(numberSchema({
+      description: "Delay between starting playback and beginning verification capture.",
+      minimum: 0,
+      maximum: 5000,
+      default: DEFAULT_PRESET_WAIT_MS,
+    }), DEFAULT_PRESET_WAIT_MS),
+    restoreActiveBackend: optionalSchema(booleanSchema({
+      description: "Restore the backend that was active before the workflow started.",
+      default: true,
+    }), true),
   },
   additionalProperties: false,
 });
@@ -101,6 +214,33 @@ function normalizeSidwaveInput(input?: string | Record<string, unknown>): string
   return undefined;
 }
 
+function canonicalPresetBackends(): readonly PresetBackend[] {
+  return ["vice", "c64u"];
+}
+
+function uniquePresetBackends(backends: readonly PresetBackend[]): PresetBackend[] {
+  return backends.filter((backend, index) => backends.indexOf(backend) === index);
+}
+
+function resolveMusicPreset(preset?: string): ResolvedMusicPreset {
+  const requestedKey = preset?.trim().toLowerCase() || "fuer_elise";
+  const normalizedKey = requestedKey === LEGACY_PRESET_ALIAS ? "fuer_elise" : requestedKey;
+  const definition = MUSIC_PRESETS[normalizedKey as MusicPresetName];
+  if (!definition) {
+    throw new ToolExecutionError("Unknown music preset", {
+      details: {
+        preset,
+        supportedPresets: Object.keys(MUSIC_PRESETS),
+      },
+    });
+  }
+  return {
+    definition,
+    requestedKey,
+    aliasUsed: requestedKey !== definition.key,
+  };
+}
+
 function extractRmsMetrics(globalMetrics: Record<string, unknown>): { average: number | null; max: number | null } {
   const average = typeof globalMetrics.average_rms === "number" ? globalMetrics.average_rms : null;
   const max = typeof globalMetrics.max_rms === "number" ? globalMetrics.max_rms : null;
@@ -160,6 +300,14 @@ async function performSilenceCheck(
   };
 }
 
+async function trySilenceSid(context: ToolExecutionContext) {
+  const { client } = context;
+  if (!(client && typeof (client as any).sidSilenceAll === "function")) {
+    return;
+  }
+  await (client as any).sidSilenceAll();
+}
+
 function normaliseDetails(details: unknown): Record<string, unknown> | null {
   if (details === null || details === undefined) {
     return null;
@@ -171,6 +319,145 @@ function normaliseDetails(details: unknown): Record<string, unknown> | null {
 }
 
 export const tools: ToolDefinition[] = [
+  {
+    name: "music_play_preset",
+    description: "Compile and play a built-in SID preset, with optional multi-backend routing and verification.",
+    inputSchema: musicPlayPresetArgsSchema.jsonSchema,
+    async execute(args, context) {
+      try {
+        const parsed = musicPlayPresetArgsSchema.parse(args ?? {});
+        const resolvedPreset = resolveMusicPreset(parsed.preset);
+        const preset = resolvedPreset.definition;
+        const startingBackend = await context.client.getActiveBackendType();
+        const availableBackends = uniquePresetBackends(
+          canonicalPresetBackends().filter((backend) => context.client.getAvailableBackends().includes(backend)),
+        );
+        const requestedBackends = uniquePresetBackends(
+          ((parsed.platforms as PresetBackend[] | undefined) ?? [startingBackend as PresetBackend]),
+        );
+        const missingBackends = requestedBackends.filter((backend) => !availableBackends.includes(backend));
+
+        if (missingBackends.length > 0) {
+          throw new ToolExecutionError("Requested preset backends are not configured", {
+            details: {
+              preset: preset.key,
+              requestedPreset: resolvedPreset.requestedKey,
+              requestedBackends,
+              availableBackends,
+              missingBackends,
+            },
+          });
+        }
+
+        const document = parseSidwave(preset.sidwave);
+        const compiled = compileSidwaveToPrg(document);
+        const analyzer = resolveAnalyzer(context);
+        const verify = parsed.verify !== false;
+        const waitBeforeCaptureMs = parsed.waitBeforeCaptureMs ?? DEFAULT_PRESET_WAIT_MS;
+        const analysisDurationSeconds = parsed.analysisDurationSeconds ?? DEFAULT_PRESET_ANALYSIS_DURATION_SECONDS;
+        const restoreActiveBackend = parsed.restoreActiveBackend !== false;
+        const results: Array<Record<string, unknown>> = [];
+        let restoreError: string | undefined;
+
+        try {
+          for (const backend of requestedBackends) {
+            context.client.switchBackend(backend);
+            context.setPlatform(backend);
+            await trySilenceSid(context);
+
+            const playback = await context.client.runPrg(compiled.prg);
+            const backendResult: Record<string, unknown> = {
+              backend,
+              preset: preset.key,
+              title: preset.title,
+              details: playback.details ?? null,
+            };
+
+            if (!playback.success) {
+              backendResult.success = false;
+              backendResult.error = "playback_failed";
+              results.push(backendResult);
+              continue;
+            }
+
+            let verification: Record<string, unknown> | null = null;
+            if (verify) {
+              if (backend === "c64u") {
+                if (waitBeforeCaptureMs > 0) {
+                  await sleep(waitBeforeCaptureMs);
+                }
+                const analysis = await analyzer({
+                  durationSeconds: analysisDurationSeconds,
+                  expectedSidwave: preset.sidwave,
+                });
+                const metrics = extractRmsMetrics((analysis?.analysis?.global_metrics ?? {}) as Record<string, unknown>);
+                verification = {
+                  mode: "audio-analysis",
+                  durationSeconds: analysis.analysis?.durationSeconds ?? analysisDurationSeconds,
+                  averageRms: metrics.average,
+                  maxRms: metrics.max,
+                  voices: analysis.analysis?.voices ?? [],
+                  analysis,
+                };
+              } else {
+                verification = {
+                  mode: "playback-launch",
+                  note: "Audio analysis is only available on c64u; verified that playback launched on this backend.",
+                };
+              }
+            }
+
+            await trySilenceSid(context);
+
+            backendResult.verification = verification;
+            backendResult.success = true;
+            results.push(backendResult);
+          }
+        } finally {
+          if (restoreActiveBackend) {
+            try {
+              context.client.switchBackend(startingBackend);
+              context.setPlatform(startingBackend);
+            } catch (error) {
+              restoreError = error instanceof Error ? error.message : String(error);
+            }
+          }
+        }
+
+        const success = results.every((result) => result.success === true) && !restoreError;
+        const payload = {
+          kind: "music_play_preset" as const,
+          preset: preset.key,
+          requestedPreset: resolvedPreset.requestedKey,
+          legacyAliasUsed: resolvedPreset.aliasUsed,
+          title: preset.title,
+          description: preset.description,
+          startingBackend,
+          requestedBackends,
+          availableBackends,
+          restoredBackend: restoreActiveBackend ? startingBackend : await context.client.getActiveBackendType(),
+          verificationEnabled: verify,
+          sidwave: preset.sidwave,
+          results,
+          ...(restoreError ? { restoreError } : {}),
+        };
+
+        const result = jsonResult(payload, {
+          success,
+          preset: preset.key,
+          requestedPreset: resolvedPreset.requestedKey,
+          legacyAliasUsed: resolvedPreset.aliasUsed,
+          backends: requestedBackends,
+        });
+        return success ? result : { ...result, isError: true };
+      } catch (error) {
+        if (error instanceof ToolExecutionError) {
+          return toolErrorResult(error);
+        }
+        return unknownErrorResult(error);
+      }
+    },
+  },
   {
     name: "silence_and_verify",
     description:

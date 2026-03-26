@@ -95,8 +95,8 @@ const KNOWLEDGE_BUNDLES: readonly KnowledgeBundle[] = [
     id: "orientation",
     title: "Workflow & Orientation",
     summary: "Mandatory workflow and safety guidance before issuing any C64 commands.",
-    prompts: ["basic-program", "assembly-program", "memory-debug", "cross-platform-demo"],
-  tools: ["upload_run_basic", "upload_run_asm", "cross_platform_greeting", "read_screen", "read"],
+    prompts: ["basic-program", "assembly-program", "memory-debug", "cross-platform-demo", "preset-music-demo"],
+  tools: ["upload_run_basic", "upload_run_asm", "cross_platform_greeting", "music_play_preset", "read_screen", "read"],
     resources: [
       {
         uri: "c64://context/bootstrap",
@@ -105,8 +105,8 @@ const KNOWLEDGE_BUNDLES: readonly KnowledgeBundle[] = [
         relativePath: "data/context/bootstrap.md",
         priority: "critical",
         summary: "Step-by-step rules for safe automation, verification, and rollback on the C64.",
-        prompts: ["basic-program", "assembly-program", "memory-debug", "cross-platform-demo"],
-  tools: ["upload_run_basic", "upload_run_asm", "cross_platform_greeting", "read_screen", "read"],
+          prompts: ["basic-program", "assembly-program", "memory-debug", "cross-platform-demo", "preset-music-demo"],
+        tools: ["upload_run_basic", "upload_run_asm", "cross_platform_greeting", "music_play_preset", "read_screen", "read"],
         tags: ["workflow", "safety"],
       },
       {
@@ -116,8 +116,8 @@ const KNOWLEDGE_BUNDLES: readonly KnowledgeBundle[] = [
         relativePath: "data/context/fast-paths.md",
         priority: "critical",
         summary: "Condensed routing guide for one-call demos, backend switching, and when to prefer orchestration over manual tool composition.",
-        prompts: ["basic-program", "graphics-demo", "cross-platform-demo"],
-        tools: ["c64_program", "c64_select_backend", "c64_memory", "c64_graphics"],
+        prompts: ["basic-program", "graphics-demo", "cross-platform-demo", "sid-music", "preset-music-demo"],
+        tools: ["c64_program", "c64_sound", "c64_select_backend", "c64_memory", "c64_graphics"],
         relatedResources: ["c64://context/bootstrap", "c64://platform/status"],
         tags: ["workflow", "fast-path", "routing"],
       },
@@ -522,7 +522,7 @@ const INDEX_RESOURCE: KnowledgeResourceDefinition = {
     domain: "overview",
     priority: "critical",
     summary: "Explains how to approach each knowledge bundle and when to consult it.",
-    prompts: ["basic-program", "assembly-program", "sid-music", "graphics-demo", "printer-job", "memory-debug"],
+    prompts: ["basic-program", "assembly-program", "sid-music", "graphics-demo", "printer-job", "memory-debug", "cross-platform-demo", "preset-music-demo"],
     tools: [
       "upload_run_basic",
       "upload_run_asm",

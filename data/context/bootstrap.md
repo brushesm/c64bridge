@@ -145,7 +145,7 @@ Basic is used for simple programs and quick prototyping. It is very slow compare
 
 ## 6502/6510 Assembly
 
-Assembly is used for maximum performance and control. For more information see `data/asssembly/assembly-spec.md`.
+Assembly is used for maximum performance and control. For more information see `data/assembly/assembly-spec.md`.
 
 - Addressing modes: `#imm, zp, zp,X, zp,Y, abs, abs,X, abs,Y, (zp), (zp,X), (zp),Y, rel`.
 - Key opcodes (full set):
@@ -163,5 +163,5 @@ Assembly is used for maximum performance and control. For more information see `
 
 ## Context & RAG
 
-- Layers: `data/context/bootstrap.md` → `AGENTS.md` → `.github/prompts/*.prompt.md` → `data/context/chat.md` → RAG docs (`doc/**/*.md`, `data/**/*.md`).
+- Layers: `data/context/bootstrap.md` → `AGENTS.md` / `CLAUDE.md` / `.github/copilot-instructions.md` → `.github/prompts/*.prompt.md` → `.github/skills/*/SKILL.md` → `data/context/chat.md` → RAG docs (`doc/**/*.md`, `data/**/*.md`).
 - Retrieval returns relevant chunks with provenance comments for transparency.

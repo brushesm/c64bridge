@@ -184,6 +184,15 @@ const soundOperations: GroupedOperationConfig[] = [
     handler: async (rawArgs, ctx) => invokeModuleTool(audioModule, "music_compile_and_play", rawArgs, ctx),
   },
   {
+    op: "play_preset",
+    schema: extendSchemaWithOp(
+      "play_preset",
+      ensureDescriptor(metaDescriptorIndex, "music_play_preset").inputSchema,
+      { description: "Compile and play a built-in SID preset such as Für Elise by Beethoven." },
+    ),
+    handler: async (rawArgs, ctx) => invokeModuleTool(metaModule, "music_play_preset", rawArgs, ctx),
+  },
+  {
     op: "pipeline",
     schema: extendSchemaWithOp(
       "pipeline",
@@ -246,6 +255,7 @@ export const soundModuleGroup = defineToolModule({
       operationToolNames: {
         play_sid_file: "sidplay_file",
         play_mod_file: "modplay_file",
+        play_preset: "music_play_preset",
         pipeline: "music_compile_play_analyze",
         analyze: "analyze_audio",
         record_analyze: "record_and_analyze_audio",
@@ -260,6 +270,11 @@ export const soundModuleGroup = defineToolModule({
           name: "Trigger SID voice",
           description: "Start voice 1 on C4 with a triangle waveform",
           arguments: { op: "note_on", voice: 1, note: "C4", waveform: "tri" },
+        },
+        {
+          name: "Play Für Elise",
+          description: "Compile and play the built-in Für Elise preset on the active backend",
+          arguments: { op: "play_preset", preset: "fuer_elise" },
         },
         {
           name: "Verify silence",

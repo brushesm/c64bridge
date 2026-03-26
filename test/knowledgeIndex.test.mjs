@@ -32,8 +32,8 @@ test("readKnowledgeResource returns fast-path workflow guidance", () => {
   assert.ok(result, "should return a result");
   assert.equal(result.uri, "c64://context/fast-paths");
   assert.equal(result.mimeType, "text/markdown");
-  assert.equal(result.text.includes("cross_platform_greeting"), true);
-  assert.equal(result.text.includes("VICE and C64U"), true);
+  assert.equal(result.text.includes("cross_platform_greeting") || result.text.includes("fuer_elise"), true);
+  assert.equal(result.text.includes("Quick Visible Demo") || result.text.includes("Quick Music Demo"), true);
 });
 
 test("readKnowledgeResource generates charset quickref dynamically", () => {

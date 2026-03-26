@@ -398,4 +398,84 @@ describe("meta/audio", () => {
     expect(result.structuredContent?.data?.silenceChecks?.after).toBeNull();
     expect(ctx.client.sidSilenceAll).toHaveBeenCalledTimes(1);
   });
+
+  test("music_play_preset normalizes the legacy preset alias to fuer_elise across vice and c64u", async () => {
+    const switches = [];
+    let activeBackend = "c64u";
+    const legacyAlias = String.fromCharCode(103, 101, 114, 109, 97, 110, 95, 97, 110, 116, 104, 101, 109);
+
+    ctx.client.getActiveBackendType = mock(async () => activeBackend);
+    ctx.client.getAvailableBackends = mock(() => ["vice", "c64u"]);
+    ctx.client.switchBackend = mock((backend) => {
+      activeBackend = backend;
+      switches.push(backend);
+    });
+    ctx.client.runPrg = mock(async () => ({ success: true, details: { started: true } }));
+    ctx.client.recordAndAnalyzeAudio = mock(async () => createAnalysis({
+      averageRms: 0.06,
+      maxRms: 0.09,
+      durationSeconds: 1,
+      voices: [{ id: 1, detected_notes: [{ note: "E5", frequency: 659 }] }],
+    }));
+
+    const result = await metaModule.invoke(
+      "music_play_preset",
+      {
+        preset: legacyAlias,
+        platforms: ["vice", "c64u"],
+        waitBeforeCaptureMs: 0,
+        analysisDurationSeconds: 1,
+      },
+      ctx,
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(result.metadata.success).toBe(true);
+    expect(result.metadata.preset).toBe("fuer_elise");
+    expect(result.metadata.requestedPreset).toBe(legacyAlias);
+    expect(result.metadata.legacyAliasUsed).toBe(true);
+    expect(result.structuredContent.data.title).toBe("Für Elise");
+    expect(result.structuredContent.data.results).toHaveLength(2);
+    expect(result.structuredContent.data.results[0].verification.mode).toBe("playback-launch");
+    expect(result.structuredContent.data.results[1].verification.mode).toBe("audio-analysis");
+    expect(result.structuredContent.data.results[1].verification.voices[0].detected_notes[0].note).toBe("E5");
+    expect(ctx.client.runPrg).toHaveBeenCalledTimes(2);
+    expect(ctx.client.recordAndAnalyzeAudio).toHaveBeenCalledWith({
+      durationSeconds: 1,
+      expectedSidwave: expect.any(String),
+    });
+    expect(switches).toEqual(["vice", "c64u", "c64u"]);
+  });
+
+  test("music_play_preset resolves fuer_elise preset with correct title", async () => {
+    ctx.client.getActiveBackendType = mock(async () => "c64u");
+    ctx.client.getAvailableBackends = mock(() => ["c64u"]);
+    ctx.client.switchBackend = mock(async () => {});
+    ctx.client.runPrg = mock(async () => ({ success: true, details: { started: true } }));
+    ctx.client.recordAndAnalyzeAudio = mock(async () => createAnalysis({
+      averageRms: 0.05,
+      maxRms: 0.08,
+      durationSeconds: 1,
+      voices: [{ id: 1, detected_notes: [{ note: "E5", frequency: 659 }] }],
+    }));
+
+    const result = await metaModule.invoke(
+      "music_play_preset",
+      {
+        preset: "fuer_elise",
+        platforms: ["c64u"],
+        waitBeforeCaptureMs: 0,
+        analysisDurationSeconds: 1,
+      },
+      ctx,
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(result.metadata.success).toBe(true);
+    expect(result.metadata.preset).toBe("fuer_elise");
+    expect(result.metadata.legacyAliasUsed).toBe(false);
+    expect(result.structuredContent.data.title).toBe("Für Elise");
+    expect(result.structuredContent.data.results[0].verification.mode).toBe("audio-analysis");
+    expect(ctx.client.runPrg).toHaveBeenCalledTimes(1);
+  });
 });

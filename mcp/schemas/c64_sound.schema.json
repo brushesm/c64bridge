@@ -377,6 +377,79 @@
     },
     {
       "type": "object",
+      "description": "Compile and play a built-in SID preset such as Für Elise by Beethoven.",
+      "properties": {
+        "preset": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Named SID preset to compile and play. Canonical public preset: fuer_elise.",
+          "minLength": 1,
+          "default": "fuer_elise"
+        },
+        "platforms": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string",
+            "description": "Backends to target in sequence.",
+            "minLength": 1,
+            "enum": [
+              "vice",
+              "c64u"
+            ]
+          }
+        },
+        "verify": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Capture and analyze audio on supported backends after playback starts.",
+          "default": true
+        },
+        "analysisDurationSeconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Length of the verification recording on analyzable backends.",
+          "minimum": 0.5,
+          "maximum": 20,
+          "default": 4
+        },
+        "waitBeforeCaptureMs": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Delay between starting playback and beginning verification capture.",
+          "minimum": 0,
+          "maximum": 5000,
+          "default": 400
+        },
+        "restoreActiveBackend": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Restore the backend that was active before the workflow started.",
+          "default": true
+        },
+        "op": {
+          "const": "play_preset"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "op"
+      ]
+    },
+    {
+      "type": "object",
       "description": "Compile a SIDWAVE score, play it, and analyze the recording.",
       "properties": {
         "sidwave": {
