@@ -190,6 +190,22 @@ export function createPromptRegistry(): PromptRegistry {
   const definitions: readonly PromptDefinition[] = [
     {
       descriptor: {
+        name: "hello-world",
+        title: "Hello World Workflow",
+        description: "Route ultra-fast hello-world and smoke-test requests to the canonical greeting skill.",
+        requiredResources: ["c64://context/bootstrap", "c64://context/fast-paths", "c64://docs/index"],
+        optionalResources: [],
+        tools: ["c64_program"],
+        tags: ["hello", "demo", "greeting", "smoke-test"],
+      },
+      skillPath: ".github/skills/hello-world/SKILL.md",
+      routingNotes: [
+        "Use this prompt for the narrowest hello-world, greeting, or smoke-test path.",
+        "Backend-pinned requests such as `vice: write a small BASIC program that clears the screen and prints HELLO VICE` should prefer this prompt over the bespoke BASIC prompt.",
+      ],
+    },
+    {
+      descriptor: {
         name: "basic-program",
         title: "BASIC Program Workflow",
         description: "Route bespoke Commodore BASIC v2 requests to the canonical BASIC skill.",
@@ -201,7 +217,7 @@ export function createPromptRegistry(): PromptRegistry {
       skillPath: ".github/skills/basic-program/SKILL.md",
       routingNotes: [
         "This prompt is for bespoke BASIC programs rather than generic quick demos.",
-        "If the request collapses to a smoke test or visible greeting, the selected skill may redirect to the cross-platform demo flow.",
+        "If the request collapses to a hello-world or smoke test, the selected skill should redirect to the hello-world flow.",
       ],
     },
     {

@@ -36,7 +36,7 @@ When using the VS Code `C64` agent, keep the backend request in the same prompt 
 ### Fast Discovery Rules
 
 When the prompt is already specific and backend-pinned, execute the matching skill immediately instead of re-reading general documentation.
-Example: `vice: write a small BASIC program that clears the screen and prints HELLO VICE` should route straight to `.github/skills/basic-program/SKILL.md` and use that skill's minimal path.
+Example: `vice: write a small BASIC program that clears the screen and prints HELLO VICE` should route straight to `.github/skills/hello-world/SKILL.md` and use that skill's minimal path.
 Once the MCP server is connected and tools are available in-session, do not spend extra turns inspecting README sections or tool manifests for routine `c64_select_backend`, `c64_program`, or `c64_memory` operations.
 
 3) VS Code Copilot Chat (MCP)
@@ -91,6 +91,7 @@ Tools and parameters are listed dynamically via ListTools.
 
 | Intent | Skill |
 | --- | --- |
+| Ultra-fast hello world or smoke test | `.github/skills/hello-world/SKILL.md` |
 | Quick visible greeting or smoke test | `.github/skills/cross-platform-demo/SKILL.md` |
 | Custom BASIC program | `.github/skills/basic-program/SKILL.md` |
 | Custom assembly routine | `.github/skills/assembly-program/SKILL.md` |

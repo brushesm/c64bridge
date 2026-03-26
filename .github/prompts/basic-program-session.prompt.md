@@ -10,6 +10,6 @@ Use the skill defined in `../skills/basic-program/SKILL.md` as the single source
 
 This prompt only identifies the intent: a bespoke Commodore BASIC v2 program rather than a generic quick demo.
 
-If the request already pins a backend and asks for a tiny static program, execute immediately through the skill instead of asking follow-up questions or re-reading general docs.
+If the request collapses to a tiny hello-world or smoke-test program, reroute to `../skills/hello-world/SKILL.md` instead of treating it as bespoke BASIC.
 
 Extract missing requirements from the user request, execute the skill, and summarize the result and validation.

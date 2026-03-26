@@ -6,7 +6,9 @@
       "type": "stdio",
       "env": {
         "VICE_BINARY": "/usr/local/bin/x64sc",
-        "VICE_DIRECTORY": "/usr/local/share/vice"
+        "VICE_DIRECTORY": "/usr/local/share/vice",
+        "VICE_VISIBLE": "true",
+        "VICE_WARP": "false"
       }
     }
   }

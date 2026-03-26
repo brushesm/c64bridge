@@ -1,6 +1,6 @@
 # Copilot Instructions for c64bridge
 
-This repository contains a Model Context Protocol (MCP) server that drives Commodore 64 Ultimate hardware (Ultimate 64 / C64 Ultimate) over its REST API. Keep these guidelines in mind for any changes.
+This repository contains a Model Context Protocol (MCP) server that drives Commodore 64 Ultimate hardware (C64 Ultimate, Ultimate 64) over its REST API. Keep these guidelines in mind for any changes.
 
 ## Project Snapshot
 
@@ -93,5 +93,6 @@ Use these rules to ensure Copilot reliably engages the `c64bridge` server when t
 - When such signals appear, route to the matching skill in `.github/skills/` instead of describing ad hoc execution steps.
 - If the stdio server is not yet connected, bring it online before executing the chosen skill.
 - Avoid destructive actions such as reset, reboot, poweroff, or drive-state mutations without explicit confirmation.
-- For backend-prefixed, low-ambiguity requests such as `vice: write a small BASIC program that clears the screen and prints HELLO VICE`, route immediately to `.github/skills/basic-program/SKILL.md` and execute the skill's fast path.
+- For backend-prefixed, low-ambiguity hello-world requests such as `vice: write a small BASIC program that clears the screen and prints HELLO VICE`, route immediately to `.github/skills/hello-world/SKILL.md` and execute the skill's fast path.
 - When the MCP server is already connected in the current chat session, do not re-read README sections or MCP tool manifests before routine BASIC/ASM/demo runs unless the request is ambiguous or a tool call fails.
+- Assume local VICE runs should be visible by default. Only expect Xvfb or other headless fallback in CI or when no framebuffer/display session exists.
