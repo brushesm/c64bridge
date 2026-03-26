@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import { Buffer } from "node:buffer";
 import { audioModule } from "../src/tools/audio.js";
 import { recordAndAnalyzeAudio } from "../src/audio/record_and_analyze_audio.js";
@@ -74,6 +74,10 @@ function installAudioRuntimeMocks({
 }
 
 afterEach(() => {
+  mock.restore();
+});
+
+afterAll(() => {
   mock.restore();
 });
 

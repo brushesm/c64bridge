@@ -15,7 +15,7 @@ RUN npm install -g n && \
 
 # Install Bun (system-wide under /usr/local)
 ENV BUN_INSTALL=/usr/local
-RUN curl -fsSL https://bun.sh/install | bash
+RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.1"
 
 # Create non-root user for running the application
 RUN useradd -m -d /app c64bridge
