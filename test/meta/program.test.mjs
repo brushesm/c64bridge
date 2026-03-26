@@ -70,6 +70,12 @@ test("cross_platform_greeting switches backends, captures screenshots, and resto
   assert.equal(renders[0].backend, "vice");
   assert.equal(renders[1].backend, "c64u");
   assert.equal(data.results.every((entry) => entry.executionMode === "direct_screen_write"), true);
+  assert.equal(typeof data.toolCallLatencyMs, "number");
+  assert.equal(typeof data.restoreBackendLatencyMs, "number");
+  assert.equal(typeof data.orchestrationOverheadMs, "number");
+  assert.equal(data.results.every((entry) => Array.isArray(entry.timeline)), true);
+  assert.equal(data.results.every((entry) => entry.timeline.some((phase) => phase.name === "capture_screenshot")), true);
+  assert.equal(data.results.every((entry) => entry.timeline.some((phase) => phase.name === "persist_screenshot")), true);
   assert.equal(switches.join(","), "vice,c64u,vice");
   assert.equal(activeBackend, "vice");
   await fs.stat(data.results[0].screenshotPath);

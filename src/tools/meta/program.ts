@@ -350,6 +350,7 @@ export const tools: ToolDefinition[] = [
     ],
     async execute(args, ctx) {
       try {
+        const toolStartedAt = Date.now();
         const parsed = crossPlatformGreetingArgsSchema.parse(args ?? {});
         const availableBackends = uniqueGreetingBackends(
           canonicalGreetingBackends().filter((backend) => ctx.client.getAvailableBackends().includes(backend)),
@@ -390,6 +391,7 @@ export const tools: ToolDefinition[] = [
         const startingBackend = await ctx.client.getActiveBackendType();
         const results: Array<Record<string, unknown>> = [];
         let restoreError: string | undefined;
+        let restoreBackendLatencyMs = 0;
 
         if (outputPath) {
           await fs.mkdir(outputPath, { recursive: true });
@@ -476,13 +478,15 @@ export const tools: ToolDefinition[] = [
                   throw new Error("No video frame returned by backend capture");
                 }
 
-                screenshotAnalysis = analyseCapturedFrame(frame);
-                screenshotPath = outputPath
-                  ? resolvePath(joinPath(outputPath, `${backend}.png`))
-                  : undefined;
-                if (screenshotPath) {
-                  await writeCapturedFramePng(frame, screenshotPath);
-                }
+                await timedStep("persist_screenshot", async () => {
+                  screenshotAnalysis = analyseCapturedFrame(frame);
+                  screenshotPath = outputPath
+                    ? resolvePath(joinPath(outputPath, `${backend}.png`))
+                    : undefined;
+                  if (screenshotPath) {
+                    await writeCapturedFramePng(frame, screenshotPath);
+                  }
+                });
               } catch (error) {
                 screenshotError = error instanceof Error ? error.message : String(error);
               }
@@ -514,16 +518,23 @@ export const tools: ToolDefinition[] = [
         } finally {
           if (restoreActiveBackend) {
             try {
+              const restoreStartedAt = Date.now();
               await withDiagnosticSpan("greeting", "restore_backend", { backend: startingBackend }, async () => {
                 ctx.client.switchBackend(startingBackend);
                 ctx.setPlatform(startingBackend);
               });
+              restoreBackendLatencyMs = Date.now() - restoreStartedAt;
             } catch (error) {
               restoreError = error instanceof Error ? error.message : String(error);
             }
           }
         }
 
+        const toolCallLatencyMs = Date.now() - toolStartedAt;
+        const backendTimedLatencyMs = results
+          .map((result) => Number(result.totalLatencyMs ?? 0))
+          .reduce((total, latency) => total + latency, 0);
+        const orchestrationOverheadMs = Math.max(0, toolCallLatencyMs - backendTimedLatencyMs - restoreBackendLatencyMs);
         const success = results.every((result) => result.success === true) && !restoreError;
         const payload = {
           kind: "cross_platform_greeting" as const,
@@ -533,6 +544,9 @@ export const tools: ToolDefinition[] = [
           restoredBackend: restoreActiveBackend ? startingBackend : await ctx.client.getActiveBackendType(),
           outputPath: outputPath ?? null,
           fastPath: visibleViceFastPath ? "visible_vice_no_probe" : null,
+          toolCallLatencyMs,
+          restoreBackendLatencyMs,
+          orchestrationOverheadMs,
           results,
           ...(restoreError ? { restoreError } : {}),
         };

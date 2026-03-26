@@ -434,10 +434,12 @@ test("renderGreetingScreen uses batched writes when the facade supports them", a
   const client = new C64Client("http://127.0.0.1:65535");
   const writeMemoryCalls = [];
   const writeMemoryBlocksCalls = [];
+  let readMemoryCalls = 0;
 
   client.facadePromise = Promise.resolve({
     type: "c64u",
     async readMemory() {
+      readMemoryCalls += 1;
       return Uint8Array.of(0);
     },
     async writeMemory(address, bytes) {
@@ -454,6 +456,29 @@ test("renderGreetingScreen uses batched writes when the facade supports them", a
   assert.equal(writeMemoryCalls.length, 0);
   assert.equal(writeMemoryBlocksCalls.length, 1);
   assert.equal(writeMemoryBlocksCalls[0].length, 8);
+  assert.equal(readMemoryCalls, 1);
+});
+
+test("renderGreetingScreen reuses the cached DD00 value across repeated renders", async () => {
+  const client = new C64Client("http://127.0.0.1:65535");
+  let readMemoryCalls = 0;
+
+  client.facadePromise = Promise.resolve({
+    type: "c64u",
+    async readMemory() {
+      readMemoryCalls += 1;
+      return Uint8Array.of(0);
+    },
+    async writeMemory() {},
+    async writeMemoryBlocks() {},
+  });
+
+  const first = await client.renderGreetingScreen({ message: "HELLO ONCE" });
+  const second = await client.renderGreetingScreen({ message: "HELLO TWICE" });
+
+  assert.equal(first.success, true);
+  assert.equal(second.success, true);
+  assert.equal(readMemoryCalls, 1);
 });
 
 test("C64Client against real C64", async (t) => {

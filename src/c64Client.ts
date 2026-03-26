@@ -132,6 +132,8 @@ export class C64Client {
   private readonly api: Api<unknown>;
   private readonly allFacades = new Map<DeviceType, Promise<C64Facade>>();
   private readonly warmupPromises = new Map<DeviceType, Promise<boolean>>();
+  private readonly greetingDd00Cache = new Map<DeviceType, number>();
+  private readonly greetingDd00Warmups = new Map<DeviceType, Promise<number>>();
   private readonly initPromise: Promise<void>;
   private activeType: DeviceType = "c64u";
   private facadePromise: Promise<C64Facade>;
@@ -149,6 +151,7 @@ export class C64Client {
       }).then((sel) => sel.facade);
       this.allFacades.set("c64u", this.facadePromise);
       this.initPromise = Promise.resolve();
+      void this.primeGreetingDd00Cache(["c64u"]);
       return;
     }
 
@@ -170,6 +173,7 @@ export class C64Client {
       if (this.allFacades.has("vice")) {
         await this.prewarmBackends(["vice"]);
       }
+      void this.primeGreetingDd00Cache();
     }).catch(() => {});
   }
 
@@ -334,7 +338,7 @@ export class C64Client {
     return withDiagnosticSpan("client", "render_greeting_screen", { messageLength: options.message.length }, async () => {
       try {
         const facade = await this.facadePromise;
-        const currentDd00 = await this.readByteOrDefault(facade, 0xDD00, 0);
+        const currentDd00 = await this.getGreetingDd00(facade.type, facade);
         const textRegisters = buildVicTextRegisters({
           currentDd00,
           borderColor: options.borderColor ?? DEFAULT_BORDER_COLOR,
@@ -1572,6 +1576,45 @@ export class C64Client {
     } catch {
       return fallback;
     }
+  }
+
+  private async getGreetingDd00(type: DeviceType, facade: C64Facade): Promise<number> {
+    const cached = this.greetingDd00Cache.get(type);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    let warmup = this.greetingDd00Warmups.get(type);
+    if (!warmup) {
+      warmup = this.readByteOrDefault(facade, 0xDD00, 0).then((value) => {
+        this.greetingDd00Cache.set(type, value);
+        return value;
+      }).finally(() => {
+        this.greetingDd00Warmups.delete(type);
+      });
+      this.greetingDd00Warmups.set(type, warmup);
+    }
+
+    return warmup;
+  }
+
+  private async primeGreetingDd00Cache(types?: readonly DeviceType[]): Promise<void> {
+    await this.initPromise;
+    const targets = (types && types.length > 0 ? [...types] : this.getAvailableBackends()).filter(
+      (type, index, all) => all.indexOf(type) === index,
+    );
+    await Promise.all(targets.map(async (type) => {
+      const facadePromise = this.allFacades.get(type);
+      if (!facadePromise) {
+        return;
+      }
+      try {
+        const facade = await facadePromise;
+        await this.getGreetingDd00(type, facade);
+      } catch {
+        // Keep greeting prewarm best-effort; renderGreetingScreen still falls back safely.
+      }
+    }));
   }
 
   private parseNumeric(value: string): number {
