@@ -27,6 +27,12 @@ const supplementalTests = [
   "test/viceIntegration.test.mjs",
 ];
 
+// Tests that use mock.module() must run in isolation to prevent the module
+// mock from leaking into concurrently-executing test files.
+const isolatedTests = [
+  "test/audioRuntime.test.mjs",
+];
+
 const coverageConfig = JSON.parse(await fs.readFile(configPath, "utf8"));
 const includeMatchers = (coverageConfig.include ?? []).map(globToRegExp);
 const excludeMatchers = (coverageConfig.exclude ?? []).map(globToRegExp);
@@ -41,8 +47,10 @@ export async function main() {
   await fs.mkdir(path.join(coverageDir, "matrix"), { recursive: true });
 
   const legOutputs = [];
-  const defaultTestFiles = await listRepoTestFiles(testRoot);
-  const coverageBatches = buildCoverageBatches(defaultTestFiles, supplementalTests, process.env);
+  const allTestFiles = await listRepoTestFiles(testRoot);
+  const isolatedTestSet = new Set(isolatedTests);
+  const defaultTestFiles = allTestFiles.filter((f) => !isolatedTestSet.has(f));
+  const coverageBatches = buildCoverageBatches(defaultTestFiles, [...supplementalTests, ...isolatedTests], process.env);
   for (const leg of legs) {
     const legDir = path.join(coverageDir, "matrix", leg.name);
     await fs.mkdir(legDir, { recursive: true });
