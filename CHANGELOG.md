@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.8.0 - 2026-03-26
+
+### Highlights
+
+- Introduced multi-backend runtime (C64U + VICE)
+- Added diagnostics logging and performance improvements
+- Enhanced test infrastructure, coverage, and CI stability
+- Introduced SKILLS
+
+### Fixes
+
+- Fixed test isolation issues and CI memory problems
+- Resolved edge-case runtime bugs
+
+### Other
+
+- General refactoring, test improvements, and maintenance
 
 ## 0.7.4 - 2026-03-07
 
