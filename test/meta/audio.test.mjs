@@ -478,4 +478,34 @@ describe("meta/audio", () => {
     expect(result.structuredContent.data.results[0].verification.mode).toBe("audio-analysis");
     expect(ctx.client.runPrg).toHaveBeenCalledTimes(1);
   });
+
+  test("music_play_preset throws when a requested backend is not available", async () => {
+    ctx.client.getActiveBackendType = mock(async () => "vice");
+    ctx.client.getAvailableBackends = mock(() => ["vice"]);
+    ctx.client.switchBackend = mock(() => {});
+
+    const result = await metaModule.invoke(
+      "music_play_preset",
+      { platforms: ["c64u"] },
+      ctx,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.metadata.error?.kind).toBe("execution");
+  });
+
+  test("music_play_preset throws for an unknown preset name", async () => {
+    ctx.client.getActiveBackendType = mock(async () => "vice");
+    ctx.client.getAvailableBackends = mock(() => ["vice"]);
+    ctx.client.switchBackend = mock(() => {});
+
+    const result = await metaModule.invoke(
+      "music_play_preset",
+      { preset: "nonexistent_xyz_preset" },
+      ctx,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.metadata.error?.kind).toBe("execution");
+  });
 });

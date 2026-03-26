@@ -566,3 +566,180 @@ test("batch_run_with_assertions continues on error when flag set", async () => {
   assert.equal(data.summary?.total, 2);
   assert.equal(data.summary?.errors, 1);
 });
+
+test("cross_platform_greeting throws when a requested backend is not configured", async () => {
+  const ctx = {
+    client: {
+      getAvailableBackends() { return ["vice"]; },
+      async getActiveBackendType() { return "vice"; },
+      switchBackend() {},
+    },
+    logger: createLogger(),
+    setPlatform(target) { return { id: target, features: [], limitedFeatures: [] }; },
+  };
+
+  const res = await metaModule.invoke("cross_platform_greeting", {
+    platforms: ["c64u"],
+    captureScreenshot: false,
+    verify: false,
+  }, ctx);
+
+  assert.equal(res.isError, true);
+  assert.equal(res.metadata?.error?.kind, "execution");
+});
+
+test("cross_platform_greeting throws when no backends are available", async () => {
+  const ctx = {
+    client: {
+      getAvailableBackends() { return []; },
+      async getActiveBackendType() { return "vice"; },
+      switchBackend() {},
+    },
+    logger: createLogger(),
+    setPlatform(target) { return { id: target, features: [], limitedFeatures: [] }; },
+  };
+
+  const res = await metaModule.invoke("cross_platform_greeting", {
+    captureScreenshot: false,
+    verify: false,
+  }, ctx);
+
+  assert.equal(res.isError, true);
+  assert.equal(res.metadata?.error?.kind, "execution");
+});
+
+test("cross_platform_greeting disables fast path when FORCE_XVFB=1 is set", async () => {
+  const originalForceXvfb = process.env.FORCE_XVFB;
+  const originalVisible = process.env.VICE_VISIBLE;
+  process.env.FORCE_XVFB = "1";
+  process.env.VICE_VISIBLE = "true";
+
+  try {
+    let activeBackend = "vice";
+    let screenReads = 0;
+    const ctx = {
+      client: {
+        getAvailableBackends() { return ["vice"]; },
+        async getActiveBackendType() { return activeBackend; },
+        switchBackend(backend) { activeBackend = backend; },
+        async renderGreetingScreen() { return { success: true }; },
+        async readScreen() {
+          screenReads += 1;
+          return "HAVE A GREAT DAY, VICE!";
+        },
+      },
+      logger: createLogger(),
+      setPlatform(target) {
+        activeBackend = target;
+        return { id: target, features: [], limitedFeatures: [] };
+      },
+    };
+
+    const res = await metaModule.invoke("cross_platform_greeting", {
+      platforms: ["vice"],
+      captureScreenshot: false,
+      timeoutMs: 100,
+      pollIntervalMs: 50,
+    }, ctx);
+
+    assert.equal(res.isError, undefined);
+    assert.equal(res.structuredContent?.data?.fastPath, null);
+    assert.ok(screenReads > 0);
+  } finally {
+    if (originalForceXvfb === undefined) delete process.env.FORCE_XVFB;
+    else process.env.FORCE_XVFB = originalForceXvfb;
+    if (originalVisible === undefined) delete process.env.VICE_VISIBLE;
+    else process.env.VICE_VISIBLE = originalVisible;
+  }
+});
+
+test("cross_platform_greeting disables fast path when DISABLE_XVFB=1 and VICE_VISIBLE=false", async () => {
+  const originalDisableXvfb = process.env.DISABLE_XVFB;
+  const originalVisible = process.env.VICE_VISIBLE;
+  process.env.DISABLE_XVFB = "1";
+  process.env.VICE_VISIBLE = "false";
+
+  try {
+    let activeBackend = "vice";
+    const ctx = {
+      client: {
+        getAvailableBackends() { return ["vice"]; },
+        async getActiveBackendType() { return activeBackend; },
+        switchBackend(backend) { activeBackend = backend; },
+        async renderGreetingScreen() { return { success: true }; },
+        async readScreen() { return "HAVE A GREAT DAY, VICE!"; },
+      },
+      logger: createLogger(),
+      setPlatform(target) {
+        activeBackend = target;
+        return { id: target, features: [], limitedFeatures: [] };
+      },
+    };
+
+    const res = await metaModule.invoke("cross_platform_greeting", {
+      platforms: ["vice"],
+      captureScreenshot: false,
+      timeoutMs: 100,
+      pollIntervalMs: 50,
+    }, ctx);
+
+    assert.equal(res.isError, undefined);
+    assert.equal(res.structuredContent?.data?.fastPath, null);
+  } finally {
+    if (originalDisableXvfb === undefined) delete process.env.DISABLE_XVFB;
+    else process.env.DISABLE_XVFB = originalDisableXvfb;
+    if (originalVisible === undefined) delete process.env.VICE_VISIBLE;
+    else process.env.VICE_VISIBLE = originalVisible;
+  }
+});
+
+test("cross_platform_greeting captures and analyses a 24-bit RGB frame", async () => {
+  const { dir } = tmpPath("program", "24bit-frame");
+  let activeBackend = "vice";
+
+  const ctx = {
+    client: {
+      getAvailableBackends() { return ["vice"]; },
+      async getActiveBackendType() { return activeBackend; },
+      switchBackend(backend) { activeBackend = backend; },
+      async renderGreetingScreen() { return { success: true }; },
+      async readScreen() { return "HAVE A GREAT DAY, VICE!"; },
+      async captureFrames() {
+        return {
+          frames: [{
+            frameNumber: null,
+            width: 2,
+            height: 2,
+            bitsPerPixel: 24,
+            pixels: Uint8Array.from([
+              255, 0, 0,
+              0, 255, 0,
+              0, 0, 255,
+              255, 255, 0,
+            ]),
+            complete: true,
+          }],
+        };
+      },
+    },
+    logger: createLogger(),
+    setPlatform(target) {
+      activeBackend = target;
+      return { id: target, features: [], limitedFeatures: [] };
+    },
+  };
+
+  const res = await metaModule.invoke("cross_platform_greeting", {
+    platforms: ["vice"],
+    outputPath: dir,
+    verify: true,
+    timeoutMs: 100,
+    pollIntervalMs: 50,
+  }, ctx);
+
+  assert.equal(res.isError, undefined);
+  const result = res.structuredContent?.data?.results?.[0];
+  assert.equal(result?.verification?.screenshotCaptured, true);
+  assert.ok(result?.verification?.screenshotAnalysis);
+  assert.ok(result?.screenshotPath);
+});
