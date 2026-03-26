@@ -362,3 +362,102 @@ test("pollForProgramOutcome detects BASIC error without line number", async () =
   assert.equal(result.message, "OUT OF MEMORY");
   assert.equal(result.line, undefined);
 });
+
+test("loadPollConfig uses production defaults outside test mode", () => {
+  const previousTarget = process.env.C64_TEST_TARGET;
+  const previousEnv = process.env.NODE_ENV;
+  delete process.env.C64_TEST_TARGET;
+  process.env.NODE_ENV = "production";
+  delete process.env.C64BRIDGE_POLL_MAX_MS;
+  delete process.env.C64BRIDGE_POLL_INTERVAL_MS;
+  delete process.env.C64BRIDGE_POLL_STABILIZE_MS;
+
+  const config = loadPollConfig();
+
+  assert.equal(config.maxMs, 2000);
+  assert.equal(config.intervalMs, 200);
+  assert.equal(config.stabilizeMs, 100);
+
+  if (previousTarget === undefined) delete process.env.C64_TEST_TARGET;
+  else process.env.C64_TEST_TARGET = previousTarget;
+  if (previousEnv === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = previousEnv;
+});
+
+test("pollForProgramOutcome BASIC falls back to UNKNOWN ERROR when only ERROR is visible", async () => {
+  const screens = [
+    "READY.\n",
+    "RUN\n",
+    "ERROR\nREADY.\n",
+  ];
+
+  const client = {
+    async readScreen() {
+      const screen = screens.shift();
+      if (!screen) return "READY.\n";
+      return screen;
+    },
+  };
+
+  const result = await pollForProgramOutcome(
+    "BASIC",
+    client,
+    createLogger(),
+    { maxMs: 200, intervalMs: 20, stabilizeMs: 0 },
+  );
+
+  assert.equal(result.status, "error");
+  assert.equal(result.type, "BASIC");
+  assert.equal(result.message, "UNKNOWN ERROR");
+  assert.equal(result.line, undefined);
+});
+
+test("pollForProgramOutcome ASM tolerates screen read failures before RUN and then detects activity", async () => {
+  let screenCalls = 0;
+  let memoryCalls = 0;
+  const client = {
+    async readScreen() {
+      screenCalls += 1;
+      if (screenCalls === 1) {
+        throw new Error("screen offline");
+      }
+      return "RUN\nSYS 2061\n";
+    },
+    async readMemoryRaw(_address, length) {
+      memoryCalls += 1;
+      return new Uint8Array(length).fill(memoryCalls > 2 ? 1 : 0);
+    },
+  };
+
+  const result = await pollForProgramOutcome(
+    "ASM",
+    client,
+    createLogger(),
+    { maxMs: 120, intervalMs: 10, stabilizeMs: 1 },
+  );
+
+  assert.equal(result.status, "ok");
+  assert.equal(result.type, "ASM");
+});
+
+test("pollForProgramOutcome ASM treats repeated memory read failures as crashed", async () => {
+  const client = {
+    async readScreen() {
+      return "RUN\nSYS 2061\n";
+    },
+    async readMemoryRaw() {
+      throw new Error("memory offline");
+    },
+  };
+
+  const result = await pollForProgramOutcome(
+    "ASM",
+    client,
+    createLogger(),
+    { maxMs: 60, intervalMs: 10, stabilizeMs: 0 },
+  );
+
+  assert.equal(result.status, "crashed");
+  assert.equal(result.type, "ASM");
+  assert.equal(result.reason, "no VIC/CIA/TI/screen progression within window");
+});

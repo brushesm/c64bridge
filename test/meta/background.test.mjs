@@ -168,3 +168,81 @@ test("background tasks persist task errors and reuse ids when restarted", async 
     else process.env.C64_TASK_STATE_FILE = previous;
   }
 });
+
+test("background tasks stop active timers and support write_memory alias defaults", async () => {
+  const { file, dir } = tmpPath("background5", "tasks.json");
+  await fs.mkdir(dir, { recursive: true });
+  const previous = process.env.C64_TASK_STATE_FILE;
+  process.env.C64_TASK_STATE_FILE = file;
+  try {
+    const calls = [];
+    const ctx = {
+      client: {
+        async writeMemory(address, bytes) {
+          calls.push([address, bytes]);
+          return { success: true };
+        },
+      },
+      logger: createLogger(),
+    };
+
+    const started = await metaModule.invoke("start_background_task", {
+      name: "alias-writer",
+      operation: "write_memory",
+      intervalMs: 100,
+      maxIterations: 5,
+    }, ctx);
+    assert.equal(started.metadata?.success, true);
+
+    const stopped = await metaModule.invoke("stop_background_task", { name: "alias-writer" }, ctx);
+    assert.equal(stopped.metadata?.success, true);
+    assert.equal(stopped.structuredContent?.data?.status, "stopped");
+
+    const list = await metaModule.invoke("list_background_tasks", {}, ctx);
+    const task = list.structuredContent?.data?.tasks?.find((entry) => entry.name === "alias-writer");
+    assert.equal(task?.status, "stopped");
+
+    const logPath = `${dir}/tasks/background/${task.id}/log.txt`;
+    const logText = await fs.readFile(logPath, "utf8");
+    assert.ok(logText.includes("started"));
+    assert.ok(logText.includes("stopped"));
+    assert.equal(calls.length, 0);
+  } finally {
+    if (previous === undefined) delete process.env.C64_TASK_STATE_FILE;
+    else process.env.C64_TASK_STATE_FILE = previous;
+  }
+});
+
+test("background tasks run write_memory alias with default address and bytes", async () => {
+  const { file, dir } = tmpPath("background6", "tasks.json");
+  await fs.mkdir(dir, { recursive: true });
+  const previous = process.env.C64_TASK_STATE_FILE;
+  process.env.C64_TASK_STATE_FILE = file;
+  try {
+    const calls = [];
+    const ctx = {
+      client: {
+        async writeMemory(address, bytes) {
+          calls.push([address, bytes]);
+          return { success: true };
+        },
+      },
+      logger: createLogger(),
+    };
+
+    const started = await metaModule.invoke("start_background_task", {
+      name: "writer-defaults",
+      operation: "write_memory",
+      intervalMs: 5,
+      maxIterations: 1,
+    }, ctx);
+    assert.equal(started.metadata?.success, true);
+
+    const task = await waitForTaskCompletion(metaModule, "writer-defaults", ctx);
+    assert.equal(task?.status, "completed");
+    assert.deepEqual(calls, [["$0400", "$00"]]);
+  } finally {
+    if (previous === undefined) delete process.env.C64_TASK_STATE_FILE;
+    else process.env.C64_TASK_STATE_FILE = previous;
+  }
+});

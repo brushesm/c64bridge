@@ -82,6 +82,38 @@ afterAll(() => {
 });
 
 describe("audio runtime integration", () => {
+  test("recordAndAnalyzeAudio surfaces missing audio backend dependencies", async () => {
+    await expect(recordAndAnalyzeAudio({ durationSeconds: 0.5 })).rejects.toThrow("Audio backend not available");
+  });
+
+  test("recordAndAnalyzeAudio surfaces missing pitch detection dependencies", async () => {
+    class FakeAudioIO {
+      constructor() {
+        this.handlers = {};
+      }
+
+      on(event, handler) {
+        this.handlers[event] = handler;
+      }
+
+      start() {
+        this.handlers.data?.(Buffer.alloc(2048));
+      }
+
+      quit() {}
+    }
+
+    mock.module("naudiodon", () => ({
+      AudioIO: FakeAudioIO,
+      SampleFormat16Bit: 16,
+    }));
+    mock.module("pitchfinder", () => {
+      throw new Error("missing");
+    });
+
+    await expect(recordAndAnalyzeAudio({ durationSeconds: 0.5 })).rejects.toThrow("Missing dependency: pitchfinder");
+  });
+
   test("recordAndAnalyzeAudio captures PCM and analyzes note content", async () => {
     installAudioRuntimeMocks({ fixedFreq: 440, rms: 0.18 });
 
@@ -114,6 +146,75 @@ describe("audio runtime integration", () => {
     expect(result.analysis.voices[0]?.detected_notes.length).toBeGreaterThan(0);
     expect(instances[0]?.stopCalled).toBe(true);
     expect(instances[0]?.quitCalled).toBeUndefined();
+  });
+
+  test("recordAndAnalyzeAudio falls back to manual RMS and tolerates invalid expected SIDWAVE", async () => {
+    const instances = [];
+    class FakeAudioIO {
+      constructor() {
+        this.handlers = {};
+        instances.push(this);
+      }
+
+      on(event, handler) {
+        this.handlers[event] = handler;
+      }
+
+      start() {
+        const samples = 4096;
+        const pcm = Buffer.alloc(samples * 2);
+        for (let i = 0; i < samples; i += 1) {
+          const value = Math.round(Math.sin((2 * Math.PI * 440 * i) / 44100) * 12000);
+          pcm.writeInt16LE(value, i * 2);
+        }
+        this.handlers.data?.(pcm);
+      }
+
+      quit() {
+        this.quitCalled = true;
+      }
+    }
+
+    mock.module("naudiodon", () => ({
+      AudioIO: FakeAudioIO,
+      SampleFormat16Bit: 16,
+    }));
+    mock.module("pitchfinder", () => ({
+      default: {
+        YIN: () => () => 440,
+      },
+    }));
+
+    const result = await recordAndAnalyzeAudio({
+      durationSeconds: 0.5,
+      expectedSidwave: "{not valid yaml",
+    });
+
+    expect(result.analysis.global_metrics.average_rms).toBeGreaterThan(0);
+    expect(result.analysis.voices[0]?.detected_notes.some((entry) => entry.note === "A4")).toBe(true);
+    expect(instances[0]?.quitCalled).toBe(true);
+  });
+
+  test("recordAndAnalyzeAudio marks quiet captures as uncertain notes", async () => {
+    installAudioRuntimeMocks({ fixedFreq: 440, rms: 0.001 });
+
+    const result = await recordAndAnalyzeAudio({
+      durationSeconds: 0.5,
+      expectedSidwave: {
+        voices: [
+          {
+            patterns: {
+              main: {
+                notes: ["BAD", "C4"],
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    expect(result.analysis.voices[0]?.detected_notes.every((entry) => entry.note === null)).toBe(true);
+    expect(result.analysis.voices[0]?.detected_notes.every((entry) => entry.uncertain === true)).toBe(true);
   });
 
   test("recordAndAnalyzeAudio surfaces input startup failures", async () => {
