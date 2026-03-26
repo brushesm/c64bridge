@@ -130,6 +130,7 @@ export class C64Client {
   private readonly http: HttpClient<unknown>;
   private readonly api: Api<unknown>;
   private readonly allFacades = new Map<DeviceType, Promise<C64Facade>>();
+  private readonly warmupPromises = new Map<DeviceType, Promise<boolean>>();
   private readonly initPromise: Promise<void>;
   private activeType: DeviceType = "c64u";
   private facadePromise: Promise<C64Facade>;
@@ -150,7 +151,10 @@ export class C64Client {
       return;
     }
 
-    const allFacadesPromise = createAllFacades();
+    const allFacadesPromise = createAllFacades(undefined, {
+      preferredC64uBaseUrl: baseUrl,
+      preferredC64uNetworkPassword: options.networkPassword,
+    });
     this.facadePromise = allFacadesPromise.then(({ primary }) => primary.facade);
     this.initPromise = allFacadesPromise.then(({ primary, secondary, secondaryType }) => {
       const primaryPromise = Promise.resolve(primary.facade);
@@ -161,6 +165,11 @@ export class C64Client {
         this.allFacades.set(secondaryType, Promise.resolve(secondary));
       }
     });
+    void this.initPromise.then(async () => {
+      if (this.allFacades.has("vice")) {
+        await this.prewarmBackends(["vice"]);
+      }
+    }).catch(() => {});
   }
 
   private async requireViceBackend(): Promise<ViceBackend> {
@@ -182,6 +191,26 @@ export class C64Client {
 
   getAvailableBackends(): DeviceType[] {
     return Array.from(this.allFacades.keys());
+  }
+
+  async prewarmBackends(types?: readonly DeviceType[]): Promise<Record<string, boolean>> {
+    await this.initPromise;
+    const targets = (types && types.length > 0 ? [...types] : this.getAvailableBackends()).filter(
+      (type, index, all) => all.indexOf(type) === index,
+    );
+    const entries = await Promise.all(targets.map(async (type) => {
+      let warmup = this.warmupPromises.get(type);
+      if (!warmup) {
+        const facadePromise = this.allFacades.get(type);
+        if (!facadePromise) {
+          throw new Error(`Backend '${type}' is not configured`);
+        }
+        warmup = facadePromise.then((facade) => facade.ping()).catch(() => false);
+        this.warmupPromises.set(type, warmup);
+      }
+      return [type, await warmup] as const;
+    }));
+    return Object.fromEntries(entries);
   }
 
   switchBackend(type: DeviceType): void {

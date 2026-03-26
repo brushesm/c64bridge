@@ -160,6 +160,7 @@ test("mcp-server initialises platform state from the active backend", async (t) 
         assert.equal(parsePlatformStatus(text), "vice");
         assert.deepEqual(parseAvailableBackends(text), [
           { backend: "vice", active: true },
+          { backend: "c64u", active: false },
         ]);
         assert.match(text, /c64_select_backend/);
 

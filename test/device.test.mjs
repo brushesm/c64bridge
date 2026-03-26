@@ -3,7 +3,7 @@ import assert from "#test/assert";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { createFacade, ViceBackend } from "../src/device.js";
+import { __resolveViceBinaryForTests, createFacade, ViceBackend } from "../src/device.js";
 import { startViceMockServer } from "../src/vice/mockServer.js";
 import { startMockC64Server } from "../scripts/mockC64Server.mjs";
 
@@ -1093,6 +1093,97 @@ test("device: ViceBackend defaults to visible launches and parses boolean overri
     assert.equal(backend.visible, false);
     assert.equal(backend.warp, false);
   });
+});
+
+test("device: ViceBackend resolves directory and config-driven launch options", async (t) => {
+  const viceDir = fs.mkdtempSync(path.join(os.tmpdir(), "vice-resources-"));
+  fs.mkdirSync(path.join(viceDir, "C64"), { recursive: true });
+  fs.writeFileSync(path.join(viceDir, "C64", "kernal-901227-03.bin"), "kernal", "utf8");
+  fs.writeFileSync(path.join(viceDir, "C64", "basic-901226-01.bin"), "basic", "utf8");
+  fs.writeFileSync(path.join(viceDir, "C64", "chargen-901225-01.bin"), "chargen", "utf8");
+
+  t.after(() => {
+    fs.rmSync(viceDir, { recursive: true, force: true });
+  });
+
+  await withEnv({
+    VICE_TEST_TARGET: "mock",
+    VICE_DIRECTORY: undefined,
+    VICE_VISIBLE: undefined,
+    VICE_WARP: undefined,
+    VICE_ARGS: undefined,
+  }, async () => {
+    const backend = new ViceBackend({
+      host: "127.0.0.1",
+      port: 6510,
+      directory: viceDir,
+      visible: false,
+      warp: true,
+      args: ["-limitcycles", "1234"],
+    });
+
+    assert.equal(backend.directory, viceDir);
+    assert.equal(backend.visible, false);
+    assert.equal(backend.warp, true);
+    assert.deepEqual(backend.extraArgs, ["-limitcycles", "1234"]);
+  });
+});
+
+test("device: VICE binary resolution prefers env override over config", () => {
+  const resolved = __resolveViceBinaryForTests(
+    { envBinary: "/usr/local/bin/x64sc", configBinary: "/usr/bin/x64sc" },
+    (binary) => binary,
+  );
+
+  assert.equal(resolved, "/usr/local/bin/x64sc");
+});
+
+test("device: VICE binary resolution prefers /usr/local/bin/x64sc before PATH fallback", () => {
+  const resolved = __resolveViceBinaryForTests(
+    {},
+    (binary) => {
+      if (binary === "/usr/local/bin/x64sc") {
+        return "/usr/local/bin/x64sc";
+      }
+      if (binary === "x64sc") {
+        return "/usr/bin/x64sc";
+      }
+      return null;
+    },
+  );
+
+  assert.equal(resolved, "/usr/local/bin/x64sc");
+});
+
+test("device: VICE binary resolution falls back to PATH on other systems", () => {
+  const resolved = __resolveViceBinaryForTests(
+    {},
+    (binary) => {
+      if (binary === "x64sc") {
+        return "C:/VICE/x64sc.exe";
+      }
+      return null;
+    },
+  );
+
+  assert.equal(resolved, "C:/VICE/x64sc.exe");
+});
+
+test("device: VICE binary resolution falls back when an explicit path is missing", () => {
+  const resolved = __resolveViceBinaryForTests(
+    { envBinary: "/usr/local/bin/x64sc" },
+    (binary) => {
+      if (binary === "/usr/local/bin/x64sc") {
+        return null;
+      }
+      if (binary === "x64sc") {
+        return "/usr/bin/x64sc";
+      }
+      return null;
+    },
+  );
+
+  assert.equal(resolved, "/usr/bin/x64sc");
 });
 
 test("device: C64u facade exercises runner, machine, config, drive, stream, and file endpoints", async (t) => {

@@ -5,6 +5,7 @@ import { createOutputTailCapture, getDiagnosticsSessionInfo, writeDiagnosticEven
 
 export interface ViceProcessOptions {
   binary: string;
+  directory?: string;
   host: string;
   port: number;
   warp?: boolean;
@@ -142,6 +143,7 @@ export async function startViceProcess(options: ViceProcessOptions): Promise<Vic
 
   writeDiagnosticEvent("vice_process_start_requested", {
     binary: options.binary,
+    directory: options.directory,
     display,
     extraArgs: options.extraArgs ?? [],
     host: options.host,
@@ -184,6 +186,7 @@ export async function startViceProcess(options: ViceProcessOptions): Promise<Vic
     "-binarymonitoraddress", `${options.host}:${options.port}`,
     "-sounddev", "dummy",
     "-config", "/dev/null",
+    ...(options.directory ? ["-directory", options.directory] : []),
     ...(options.extraArgs ?? []),
   ];
   if (options.warp !== false) args.push("-warp");

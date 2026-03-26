@@ -76,7 +76,7 @@ class FakeChild extends EventEmitter {
   }
 }
 
-function createFakeViceBinary(t, mode = "listen") {
+function createFakeViceBinary(t, mode = "listen", options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "c64bridge-vice-process-"));
   t.after(() => {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -84,11 +84,17 @@ function createFakeViceBinary(t, mode = "listen") {
 
   const monitorScript = path.join(dir, "fake-vice.mjs");
   const wrapperScript = path.join(dir, "fake-vice");
+  const argsFile = options.argsFile ? path.resolve(options.argsFile) : null;
   const source = mode === "listen"
     ? `import net from "node:net";
+import fs from "node:fs";
 const args = process.argv.slice(2);
 let host = "127.0.0.1";
 let port = 6502;
+const argsFile = ${JSON.stringify(argsFile)};
+if (argsFile) {
+  fs.writeFileSync(argsFile, JSON.stringify(args), "utf8");
+}
 for (let index = 0; index < args.length; index += 1) {
   if (args[index] === "-binarymonitoraddress" && typeof args[index + 1] === "string") {
     const [nextHost, nextPort] = args[index + 1].split(":");
@@ -548,6 +554,40 @@ test("startViceProcess starts and stops a monitor process without Xvfb", async (
     } else {
       process.env.DISPLAY = previousDisplay;
     }
+  }
+});
+
+test("startViceProcess forwards the VICE resource directory when provided", async (t) => {
+  const argsFile = path.join(os.tmpdir(), `c64bridge-vice-args-${process.pid}-${Date.now()}.json`);
+  const fakeVice = createFakeViceBinary(t, "listen", { argsFile });
+  const previousDisplay = process.env.DISPLAY;
+  process.env.DISPLAY = ":1";
+
+  try {
+    const handle = await startViceProcess({
+      binary: fakeVice,
+      directory: "/tmp/vice-data",
+      host: "127.0.0.1",
+      port: 6518,
+      visible: true,
+      warp: false,
+    });
+
+    t.after(async () => {
+      await handle.stop();
+      fs.rmSync(argsFile, { force: true });
+    });
+
+    const args = JSON.parse(fs.readFileSync(argsFile, "utf8"));
+    assert.ok(args.includes("-directory"));
+    assert.ok(args.includes("/tmp/vice-data"));
+  } finally {
+    if (previousDisplay === undefined) {
+      delete process.env.DISPLAY;
+    } else {
+      process.env.DISPLAY = previousDisplay;
+    }
+    fs.rmSync(argsFile, { force: true });
   }
 });
 

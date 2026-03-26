@@ -85,6 +85,11 @@ async function main() {
   const initialBackendType = await client.getActiveBackendType();
   setPlatform(initialBackendType);
   writeDiagnosticEvent("platform_initialised", { platform: initialBackendType });
+  void client.prewarmBackends(["vice"]).then((results) => {
+    writeDiagnosticEvent("backend_prewarm_complete", { results });
+  }).catch((error) => {
+    writeDiagnosticEvent("backend_prewarm_failed", { error });
+  });
   const rag = await initRag();
 
   const toolLogger = loggerFor("tool");

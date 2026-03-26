@@ -533,11 +533,17 @@ test("C64Client backend selection and switching", async (t) => {
 
         assert.equal(await client.getActiveBackendType(), "vice");
         assert.equal(await client.getBackendType(), "vice");
-        assert.deepEqual(client.getAvailableBackends(), ["vice"]);
+        assert.deepEqual(client.getAvailableBackends().sort(), ["c64u", "vice"]);
 
         const info = await client.info();
         assert.equal(info?.emulator, "vice");
         assert.equal(info?.port, vice.port);
+
+        client.switchBackend("c64u");
+        assert.equal(await client.getActiveBackendType(), "c64u");
+
+        client.switchBackend("vice");
+        assert.equal(await client.getActiveBackendType(), "vice");
       },
     );
   });
@@ -560,6 +566,10 @@ test("C64Client backend selection and switching", async (t) => {
 
         assert.equal(await client.getActiveBackendType(), "vice");
         assert.deepEqual(client.getAvailableBackends().sort(), ["c64u", "vice"]);
+
+        const warmResults = await client.prewarmBackends();
+        assert.equal(warmResults.c64u, true);
+        assert.equal(warmResults.vice, true);
 
         const viceFrames = await client.captureFrames({ count: 1 });
         assert.equal(viceFrames.backend, "vice");

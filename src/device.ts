@@ -81,6 +81,10 @@ export interface ViceConfig {
   exe?: string;
   host?: string;
   port?: number | string;
+  directory?: string;
+  visible?: boolean | string;
+  warp?: boolean | string;
+  args?: string | string[];
 }
 export interface C64BridgeConfigFile { c64u?: C64uConfig; vice?: ViceConfig }
 
@@ -274,6 +278,7 @@ export class ViceBackend implements C64Facade {
   private readonly exe: string;
   private readonly host: string;
   private readonly port: number;
+  private readonly directory?: string;
   private readonly manageProcess: boolean;
   private readonly mockMode: boolean;
   private readonly warp: boolean;
@@ -282,20 +287,27 @@ export class ViceBackend implements C64Facade {
   private static readonly supervisors = new Map<string, ViceProcessHandle>();
   private static cleanupRegistered = false;
   private readonly debugEnabled = process.env.VICE_DEVICE_TEST_DEBUG === "1";
+  private startupPromise: Promise<void> | null = null;
+  private monitorQueue: Promise<void> = Promise.resolve();
   private lastProcessStart = 0;
 
   constructor(config: ViceConfig) {
     ViceBackend.ensureCleanupRegistration();
     const envBinary = configuredString(process.env.VICE_BINARY);
-    const configBinary = config.exe !== undefined && config.exe !== null
+    const configBinary = config.exe !== undefined
       ? configuredString(config.exe) ?? (typeof config.exe === "string" ? config.exe : String(config.exe))
       : undefined;
-    this.exe = configBinary ?? envBinary ?? which("x64sc") ?? which("x64") ?? "x64sc";
+    this.exe = resolveViceBinary({ envBinary, configBinary });
 
     const envHost = normaliseViceHost(process.env.VICE_HOST);
     const envPort = normaliseVicePort(process.env.VICE_PORT);
     this.host = firstDefined(envHost, normaliseViceHost(config.host)) ?? DEFAULT_VICE_HOST;
     this.port = firstDefined(envPort, normaliseVicePort(config.port)) ?? DEFAULT_VICE_PORT;
+    this.directory = firstDefined(
+      resolveViceDirectory(configuredString(process.env.VICE_DIRECTORY)),
+      resolveViceDirectory(configuredString(config.directory)),
+      findViceResourceDirectory(this.exe),
+    );
 
     this.mockMode = (process.env.VICE_TEST_TARGET || "").toLowerCase() === "mock";
     const hostLower = this.host.toLowerCase();
@@ -304,11 +316,10 @@ export class ViceBackend implements C64Facade {
 
     const warpEnv = configuredBoolean(process.env.VICE_WARP);
     const visibleEnv = configuredBoolean(process.env.VICE_VISIBLE);
-    this.visible = visibleEnv ?? true;
-    this.warp = warpEnv ?? !this.visible;
+    this.visible = visibleEnv ?? configuredBoolean(config.visible) ?? true;
+    this.warp = warpEnv ?? configuredBoolean(config.warp) ?? !this.visible;
 
-    const argsEnv = configuredString(process.env.VICE_ARGS);
-    this.extraArgs = argsEnv ? parseArgsList(argsEnv) : [];
+    this.extraArgs = resolveViceArgs(config);
   }
 
   private async tryPingExisting(): Promise<boolean> {
@@ -362,7 +373,7 @@ export class ViceBackend implements C64Facade {
     }
   }
 
-  private async ensureProcess(): Promise<void> {
+  private async ensureProcessInternal(): Promise<void> {
     if (!this.manageProcess) return;
     const key = `${this.host}:${this.port}`;
     const existing = ViceBackend.supervisors.get(key);
@@ -372,7 +383,9 @@ export class ViceBackend implements C64Facade {
       try { await existing.stop(); } catch {}
       ViceBackend.supervisors.delete(key);
     }
-    if (await this.tryPingExisting()) return;
+    if (await this.tryPingExisting()) {
+      return;
+    }
     if (this.debugEnabled) {
       console.error("[vice-backend] starting VICE process", {
         binary: this.exe,
@@ -385,6 +398,7 @@ export class ViceBackend implements C64Facade {
     }
     const handle = await startViceProcess({
       binary: this.exe,
+      directory: this.directory,
       host: this.host,
       port: this.port,
       warp: this.warp,
@@ -403,6 +417,18 @@ export class ViceBackend implements C64Facade {
     await this.waitForUsableMachine(20_000);
   }
 
+  private async ensureProcess(): Promise<void> {
+    if (!this.manageProcess) {
+      return;
+    }
+    if (!this.startupPromise) {
+      this.startupPromise = this.ensureProcessInternal().finally(() => {
+        this.startupPromise = null;
+      });
+    }
+    await this.startupPromise;
+  }
+
   private static ensureCleanupRegistration(): void {
     if (ViceBackend.cleanupRegistered) {
       return;
@@ -417,23 +443,34 @@ export class ViceBackend implements C64Facade {
   }
 
   private async withClient<T>(fn: (client: ViceClient) => Promise<T>): Promise<T> {
-    if (!this.mockMode) await this.ensureProcess();
-    const client = new ViceClient();
-    if (this.debugEnabled) console.error("[vice-backend] connecting to VICE monitor", { host: this.host, port: this.port });
-    await client.connect(this.port, this.host);
-    if (this.manageProcess && this.lastProcessStart > 0) {
-      const sinceStart = Date.now() - this.lastProcessStart;
-      const settleDelay = 500 - sinceStart;
-      if (settleDelay > 0) {
-        await delay(settleDelay);
-      }
-    }
+    const previous = this.monitorQueue;
+    let releaseQueue: () => void = () => {};
+    this.monitorQueue = new Promise<void>((resolve) => {
+      releaseQueue = resolve;
+    });
+
+    await previous;
     try {
-      if (this.debugEnabled) console.error("[vice-backend] connected to VICE monitor");
-      return await fn(client);
+      if (!this.mockMode) await this.ensureProcess();
+      const client = new ViceClient();
+      if (this.debugEnabled) console.error("[vice-backend] connecting to VICE monitor", { host: this.host, port: this.port });
+      await client.connect(this.port, this.host);
+      if (this.manageProcess && this.lastProcessStart > 0) {
+        const sinceStart = Date.now() - this.lastProcessStart;
+        const settleDelay = 500 - sinceStart;
+        if (settleDelay > 0) {
+          await delay(settleDelay);
+        }
+      }
+      try {
+        if (this.debugEnabled) console.error("[vice-backend] connected to VICE monitor");
+        return await fn(client);
+      } finally {
+        if (this.debugEnabled) console.error("[vice-backend] closing VICE monitor connection");
+        client.close();
+      }
     } finally {
-      if (this.debugEnabled) console.error("[vice-backend] closing VICE monitor connection");
-      client.close();
+      releaseQueue();
     }
   }
 
@@ -785,6 +822,34 @@ function which(binary: string): string | null {
   return null;
 }
 
+function resolveViceBinary(
+  options: { envBinary?: string; configBinary?: string },
+  findBinary: (binary: string) => string | null = which,
+): string {
+  const explicit = firstDefined(options.envBinary, options.configBinary);
+  if (explicit) {
+    const resolvedExplicit = findBinary(explicit);
+    if (resolvedExplicit) {
+      return resolvedExplicit;
+    }
+  }
+
+  for (const candidate of ["/usr/local/bin/x64sc", "/usr/local/bin/x64"]) {
+    if (findBinary(candidate)) {
+      return candidate;
+    }
+  }
+
+  return findBinary("x64sc") ?? findBinary("x64") ?? "x64sc";
+}
+
+export function __resolveViceBinaryForTests(
+  options: { envBinary?: string; configBinary?: string },
+  findBinary?: (binary: string) => string | null,
+): string {
+  return resolveViceBinary(options, findBinary ?? which);
+}
+
 export interface FacadeSelection { facade: C64Facade; selected: DeviceType; reason: string; details?: Record<string, unknown> }
 
 export interface FacadeOptions {
@@ -862,14 +927,21 @@ export async function createAllFacades(
   logger?: { info: (...a: any[]) => void },
   options?: FacadeOptions,
 ): Promise<AllFacadesResult> {
-  const primary = await createFacade(logger, options);
+  const primary = await createFacade(logger);
   const config = readConfigFile();
   const secondaryType = primary.selected === "c64u" ? "vice" : "c64u";
 
-  if (secondaryType === "c64u" && config?.c64u) {
+  if (secondaryType === "c64u" && shouldProvisionSecondaryC64u(config, options)) {
+    const secondaryConfig: C64uConfig = {
+      ...(config?.c64u ?? {}),
+      ...(!config?.c64u?.baseUrl && options?.preferredC64uBaseUrl ? { baseUrl: options.preferredC64uBaseUrl } : {}),
+      ...(!config?.c64u?.networkPassword && options?.preferredC64uNetworkPassword
+        ? { networkPassword: options.preferredC64uNetworkPassword }
+        : {}),
+    };
     return {
       primary,
-      secondary: new C64uBackend(config.c64u),
+      secondary: new C64uBackend(secondaryConfig),
       secondaryType,
     };
   }
@@ -887,6 +959,16 @@ export async function createAllFacades(
     secondary: null,
     secondaryType: null,
   };
+}
+
+function shouldProvisionSecondaryC64u(config: C64BridgeConfigFile | null, options?: FacadeOptions): boolean {
+  return Boolean(
+    config?.c64u
+    || options?.preferredC64uBaseUrl
+    || configuredString(process.env.C64U_HOST)
+    || configuredPort(process.env.C64U_PORT)
+    || configuredString(process.env.C64U_PASSWORD),
+  );
 }
 
 function resolveBaseUrl(config: C64uConfig): string {
@@ -928,6 +1010,71 @@ function configuredBoolean(value: unknown): boolean | undefined {
     return false;
   }
   return undefined;
+}
+
+function resolveViceArgs(config: ViceConfig): string[] {
+  const argsEnv = configuredString(process.env.VICE_ARGS);
+  if (argsEnv) {
+    return parseArgsList(argsEnv);
+  }
+  if (Array.isArray(config.args)) {
+    return config.args
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+  }
+  if (typeof config.args === "string") {
+    return parseArgsList(config.args);
+  }
+  return [];
+}
+
+function resolveViceDirectory(value?: string): string | undefined {
+  const input = configuredString(value);
+  if (!input) {
+    return undefined;
+  }
+  return isViceResourceDirectory(input) ? input : undefined;
+}
+
+function findViceResourceDirectory(binaryPath: string): string | undefined {
+  const candidates = new Set<string>();
+  const resolvedBinary = configuredString(binaryPath);
+  if (resolvedBinary) {
+    const binaryDir = path.dirname(resolvedBinary);
+    candidates.add(path.resolve(binaryDir, "..", "share", "vice"));
+    candidates.add(path.resolve(binaryDir, "..", "..", "share", "vice"));
+  }
+  candidates.add("/usr/local/share/vice");
+  candidates.add("/usr/share/vice");
+  candidates.add("/opt/homebrew/share/vice");
+  candidates.add("/opt/local/share/vice");
+
+  for (const candidate of candidates) {
+    if (isViceResourceDirectory(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function isViceResourceDirectory(candidate: string): boolean {
+  const normalized = configuredString(candidate);
+  if (!normalized) {
+    return false;
+  }
+  const requiredFiles = [
+    path.join(normalized, "C64", "kernal-901227-03.bin"),
+    path.join(normalized, "C64", "basic-901226-01.bin"),
+    path.join(normalized, "C64", "chargen-901225-01.bin"),
+  ];
+  return requiredFiles.every((filePath) => {
+    try {
+      return fs.existsSync(filePath);
+    } catch {
+      return false;
+    }
+  });
 }
 
 function configuredPort(value: unknown): number | undefined {

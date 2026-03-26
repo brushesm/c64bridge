@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { readFile, writeFile } from "node:fs/promises";
 import {
+  buildEnvironmentDocumentation,
   buildDocumentation,
+  renderEnvironmentSection,
   renderTable,
   renderPromptsSection,
   renderResourcesSection,
@@ -37,10 +39,13 @@ describe("update-readme grouped operations", () => {
 
   it("renders summary, resources, and prompts sections", () => {
     const summary = renderSummarySection().join("\n");
+    const environment = renderEnvironmentSection().join("\n");
     const resources = renderResourcesSection().join("\n");
     const prompts = renderPromptsSection().join("\n");
 
     expect(summary).toContain("This MCP server exposes");
+    expect(environment).toContain("#### C64 Ultimate");
+    expect(environment).toContain("C64U_HOST");
     expect(resources).toContain("### Resources");
     expect(resources).toContain("c64://specs/basic");
     expect(prompts).toContain("### Prompts");
@@ -49,11 +54,14 @@ describe("update-readme grouped operations", () => {
 
   it("builds complete MCP documentation with all major sections", () => {
     const output = buildDocumentation();
+    const environment = buildEnvironmentDocumentation();
     expect(output).toContain("### Tools");
     expect(output).toContain("#### c64_program");
     expect(output).toContain("### Resources");
     expect(output).toContain("### Prompts");
     expect(output).toContain("| Operation | Description | Required Inputs | Notes | C64U | VICE |");
+    expect(environment).toContain("| Variable | Default | JSON Config Key | Description |");
+    expect(environment).toContain("VICE_DIRECTORY");
   });
 
   it("renders custom grouped tools with platform overrides, verify notes, and empty tools", () => {
@@ -115,6 +123,10 @@ describe("update-readme grouped operations", () => {
     const minimalReadme = [
       "# Test README",
       "",
+      "<!-- AUTO-GENERATED:ENV-VARS-START -->",
+      "stale env",
+      "<!-- AUTO-GENERATED:ENV-VARS-END -->",
+      "",
       "<!-- AUTO-GENERATED:MCP-DOCS-START -->",
       "stale",
       "<!-- AUTO-GENERATED:MCP-DOCS-END -->",
@@ -128,7 +140,9 @@ describe("update-readme grouped operations", () => {
 
     expect(updated).toBe(true);
     expect(nextReadme).toContain("### Tools");
+    expect(nextReadme).toContain("#### C64 Ultimate");
     expect(nextReadme).not.toContain("stale");
+    expect(nextReadme).not.toContain("stale env");
     expect(unchanged).toBe(false);
   });
 

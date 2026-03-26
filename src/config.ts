@@ -61,12 +61,14 @@ export function loadConfig(): C64BridgeConfig {
   const parsedC64uHostname = parseEndpoint(configuredString(c64u?.hostname));
   const parsedLegacyHost = parseEndpoint(configuredString(rawConfig?.c64_host));
   const parsedLegacyIp = parseEndpoint(configuredString(rawConfig?.c64_ip));
+  const parsedEnvHost = parseEndpoint(configuredString(process.env.C64U_HOST));
   const parsedBaseOverrides = [
     parseEndpoint(normaliseBaseUrl(c64u?.baseUrl)),
     parseEndpoint(normaliseBaseUrl(rawConfig?.baseUrl)),
   ];
 
   const hostCandidates = [
+    parsedEnvHost.hostname,
     parsedC64uHost.hostname,
     parsedC64uHostname.hostname,
     parsedLegacyHost.hostname,
@@ -75,6 +77,8 @@ export function loadConfig(): C64BridgeConfig {
   ];
 
   const portCandidates = [
+    configuredPort(process.env.C64U_PORT),
+    parsedEnvHost.port,
     configuredPort(c64u?.port),
     parsedC64uHost.port,
     parsedC64uHostname.port,
@@ -95,6 +99,7 @@ export function loadConfig(): C64BridgeConfig {
     baseUrl,
     c64_port: port,
     networkPassword: firstDefined(
+      configuredString(process.env.C64U_PASSWORD),
       configuredString(c64u?.networkPassword),
       configuredString(rawConfig?.networkPassword),
     ),

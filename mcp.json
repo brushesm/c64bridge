@@ -51,6 +51,30 @@
       "description": "Override the C64 Ultimate network password sent as X-Password",
       "default": ""
     },
+    "C64BRIDGE_DIAGNOSTICS_DIR": {
+      "description": "Override the directory where persistent MCP diagnostics files are written",
+      "default": "~/.c64bridge/diagnostics"
+    },
+    "C64BRIDGE_DISABLE_DIAGNOSTICS": {
+      "description": "Set to 1 to disable persistent diagnostics logging",
+      "default": "0"
+    },
+    "C64BRIDGE_POLL_MAX_MS": {
+      "description": "Maximum time to poll for program-output validation before timing out in normal runtime mode",
+      "default": "2000"
+    },
+    "C64BRIDGE_POLL_INTERVAL_MS": {
+      "description": "Interval between screen polls during program-output validation in normal runtime mode",
+      "default": "200"
+    },
+    "C64BRIDGE_POLL_STABILIZE_MS": {
+      "description": "Extra settle time after a successful poll match before considering output stable",
+      "default": "100"
+    },
+    "C64_TASK_STATE_FILE": {
+      "description": "Override the path used to persist MCP background-task state",
+      "default": "auto"
+    },
     "RAG_EMBEDDINGS_DIR": {
       "description": "Directory containing RAG embedding JSON files",
       "default": "data"
@@ -60,19 +84,24 @@
       "default": "0"
     },
     "RAG_BUILD_ON_START": {
-      "description": "Set to 1 to rebuild embeddings on server start"
+      "description": "Set to 1 to rebuild embeddings on server start",
+      "default": "0"
     },
     "RAG_DOC_FILES": {
-      "description": "Comma-separated extra docs to include in RAG"
+      "description": "Comma-separated extra docs to include in RAG",
+      "default": ""
     },
     "RAG_DISCOVER_FORCE_REFRESH": {
-      "description": "Set to 1 to ignore cached discovery results when fetching external docs"
+      "description": "Set to 1 to ignore cached discovery results when fetching external docs",
+      "default": "0"
     },
     "GITHUB_TOKEN": {
-      "description": "Personal access token used for optional RAG discovery against GitHub"
+      "description": "Personal access token used for optional RAG discovery against GitHub",
+      "default": ""
     },
     "C64_TEST_TARGET": {
-      "description": "Overrides integration tests to hit mock or real hardware (mock|real)"
+      "description": "Overrides integration tests to hit mock or real hardware (mock|real)",
+      "default": ""
     },
     "VICE_MODE": {
       "description": "Default video standard for VICE audio capture (ntsc|pal)",
@@ -83,16 +112,48 @@
       "default": "120000000"
     },
     "VICE_BINARY": {
-      "description": "VICE binary to launch for audio capture",
+      "description": "VICE binary to launch for managed emulator sessions and audio capture",
       "default": "x64sc"
+    },
+    "VICE_DIRECTORY": {
+      "description": "Override the VICE resource directory used for ROM and UI asset discovery",
+      "default": "auto-detect"
+    },
+    "VICE_HOST": {
+      "description": "Override the VICE Binary Monitor host",
+      "default": "127.0.0.1"
+    },
+    "VICE_PORT": {
+      "description": "Override the VICE Binary Monitor port",
+      "default": "6502"
+    },
+    "VICE_VISIBLE": {
+      "description": "Launch VICE visibly on the desktop instead of headless/Xvfb when possible",
+      "default": "true"
+    },
+    "VICE_WARP": {
+      "description": "Enable warp mode for managed VICE sessions",
+      "default": "false when visible, true when headless"
+    },
+    "VICE_ARGS": {
+      "description": "Extra command-line arguments forwarded to managed VICE launches",
+      "default": ""
     },
     "VICE_RUN_TIMEOUT_MS": {
       "description": "Timeout for headless VICE runs in milliseconds",
       "default": "10000"
     },
     "FORCE_XVFB": {
-      "description": "Set to 1 to force xvfb-run when executing VICE",
+      "description": "Set to 1 to force managed VICE launches to run under Xvfb",
       "default": "0"
+    },
+    "DISABLE_XVFB": {
+      "description": "Set to 1 to disable Xvfb fallback and use the current display only",
+      "default": "0"
+    },
+    "VICE_XVFB_DISPLAY": {
+      "description": "Display number to use when managed VICE launches under Xvfb",
+      "default": ":99"
     },
     "SIDPLAY_MODE": {
       "description": "Default SID playback mode (ntsc|pal)",
@@ -107,7 +168,8 @@
       "default": "sidplayfp"
     },
     "SIDPLAYFP_BINARY": {
-      "description": "Legacy alias for SIDPLAY_BINARY (sidplayfp executable name)"
+      "description": "Legacy alias for SIDPLAY_BINARY (sidplayfp executable name)",
+      "default": ""
     }
   },
   "repository": {

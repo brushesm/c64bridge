@@ -126,10 +126,14 @@ Use this for VICE:
 ```json
 {
   "vice": {
-    "exe": "/usr/bin/x64sc"
+    "exe": "/usr/bin/x64sc",
+    "directory": "/usr/local/share/vice"
   }
 }
 ```
+
+- `directory` is optional. When omitted, C64 Bridge auto-detects a VICE resource directory by looking for the standard C64 ROM set near the emulator binary and in common system locations.
+- `VICE_DIRECTORY`, `VICE_HOST`, `VICE_PORT`, `VICE_VISIBLE`, `VICE_WARP`, and `VICE_ARGS` can override managed VICE startup without editing config files.
 
 > [!NOTE]
 > VICE supports only the operations marked with a VICE checkmark in the [MCP API Reference](#mcp-api-reference). All others return `unsupported_platform`.
@@ -208,6 +212,147 @@ You can add `env` entries in `.vscode/mcp.json` to select a config file, overrid
 - `C64U_HOST`, `C64U_PORT`, and `C64U_PASSWORD` override the C64 Ultimate connection from VS Code without editing config files.
 - `C64_MODE` forces `c64u` or `vice`.
 - `LOG_LEVEL=debug` enables verbose logging.
+
+### Environment Variables In MCP Client Configs
+
+Every runtime environment variable documented in the root [mcp.json](./mcp.json) can be supplied by your MCP client configuration, including `.vscode/mcp.json` under `servers.c64bridge.env`.
+
+When an environment variable maps to a JSON config field, the override order is always the same:
+
+1. The explicit environment variable from your MCP client config or shell.
+2. The merged JSON config section loaded from `C64BRIDGE_CONFIG`, the repo `.c64bridge.json`, then `~/.c64bridge.json`.
+3. The built-in default compiled into the server.
+
+When an environment variable has no JSON config equivalent, the order is simply:
+
+1. The explicit environment variable from your MCP client config or shell.
+2. The built-in default.
+
+That rule applies uniformly across the documented runtime env vars below.
+
+Example: visible VICE with a specific ROM/resource directory, plus a hardware fallback that can still be selected instantly at runtime:
+
+```json
+{
+  "servers": {
+    "c64bridge": {
+      "command": "node",
+      "args": ["${workspaceFolder}/scripts/start.mjs"],
+      "type": "stdio",
+      "env": {
+        "C64_MODE": "vice",
+        "C64U_HOST": "c64u",
+        "C64U_PORT": "80",
+        "VICE_BINARY": "/usr/local/bin/x64sc",
+        "VICE_DIRECTORY": "/usr/local/share/vice",
+        "VICE_VISIBLE": "true",
+        "VICE_WARP": "false"
+      }
+    }
+  }
+}
+```
+
+Example: keep JSON config files for backend endpoints, but override only diagnostics, polling, and RAG behavior from VS Code:
+
+```json
+{
+  "servers": {
+    "c64bridge": {
+      "command": "node",
+      "args": ["${workspaceFolder}/scripts/start.mjs"],
+      "type": "stdio",
+      "env": {
+        "C64BRIDGE_CONFIG": "/home/you/.c64bridge.json",
+        "LOG_LEVEL": "debug",
+        "C64BRIDGE_POLL_MAX_MS": "8000",
+        "C64BRIDGE_POLL_INTERVAL_MS": "200",
+        "RAG_BUILD_ON_START": "1",
+        "RAG_EMBEDDINGS_DIR": "/home/you/c64bridge-data"
+      }
+    }
+  }
+}
+```
+
+### Runtime Environment Variable Reference
+
+<!-- AUTO-GENERATED:ENV-VARS-START -->
+
+Every runtime environment variable documented in `mcp.json` can be set in your MCP client configuration, including `.vscode/mcp.json` under `servers.c64bridge.env`.
+
+#### Server Runtime
+
+| Variable | Default | JSON Config Key | Description |
+| --- | --- | --- | --- |
+| `C64_MODE` | c64u | — | Select active backend (c64u for Ultimate hardware, vice for emulator) |
+| `C64_TASK_STATE_FILE` | auto | — | Override the path used to persist MCP background-task state |
+| `C64BRIDGE_CONFIG` | ~/.c64bridge.json | config path | Path to configuration JSON |
+| `C64BRIDGE_DIAGNOSTICS_DIR` | ~/.c64bridge/diagnostics | — | Override the directory where persistent MCP diagnostics files are written |
+| `C64BRIDGE_DISABLE_DIAGNOSTICS` | 0 | — | Set to 1 to disable persistent diagnostics logging |
+| `C64BRIDGE_POLL_INTERVAL_MS` | 200 | — | Interval between screen polls during program-output validation in normal runtime mode |
+| `C64BRIDGE_POLL_MAX_MS` | 2000 | — | Maximum time to poll for program-output validation before timing out in normal runtime mode |
+| `C64BRIDGE_POLL_STABILIZE_MS` | 100 | — | Extra settle time after a successful poll match before considering output stable |
+| `LOG_LEVEL` | info | — | Logger verbosity (debug, info, warn, error) |
+
+#### C64 Ultimate
+
+| Variable | Default | JSON Config Key | Description |
+| --- | --- | --- | --- |
+| `C64U_HOST` | c64u | c64u.host | Override the C64 Ultimate host name or IP address |
+| `C64U_PASSWORD` |  | c64u.networkPassword | Override the C64 Ultimate network password sent as X-Password |
+| `C64U_PORT` | 80 | c64u.port | Override the C64 Ultimate REST port |
+
+#### VICE Runtime
+
+| Variable | Default | JSON Config Key | Description |
+| --- | --- | --- | --- |
+| `DISABLE_XVFB` | 0 | — | Set to 1 to disable Xvfb fallback and use the current display only |
+| `FORCE_XVFB` | 0 | — | Set to 1 to force managed VICE launches to run under Xvfb |
+| `VICE_ARGS` |  | vice.args | Extra command-line arguments forwarded to managed VICE launches |
+| `VICE_BINARY` | x64sc | vice.exe | VICE binary to launch for managed emulator sessions and audio capture |
+| `VICE_DIRECTORY` | auto-detect | vice.directory | Override the VICE resource directory used for ROM and UI asset discovery |
+| `VICE_HOST` | 127.0.0.1 | vice.host | Override the VICE Binary Monitor host |
+| `VICE_PORT` | 6502 | vice.port | Override the VICE Binary Monitor port |
+| `VICE_VISIBLE` | true | vice.visible | Launch VICE visibly on the desktop instead of headless/Xvfb when possible |
+| `VICE_WARP` | false when visible, true when headless | vice.warp | Enable warp mode for managed VICE sessions |
+| `VICE_XVFB_DISPLAY` | :99 | — | Display number to use when managed VICE launches under Xvfb |
+
+#### VICE Audio Capture
+
+| Variable | Default | JSON Config Key | Description |
+| --- | --- | --- | --- |
+| `VICE_LIMIT_CYCLES` | 120000000 | — | Maximum CPU cycles to render when VICE generates audio |
+| `VICE_MODE` | ntsc | — | Default video standard for VICE audio capture (ntsc\|pal) |
+| `VICE_RUN_TIMEOUT_MS` | 10000 | — | Timeout for headless VICE runs in milliseconds |
+
+#### SID Playback
+
+| Variable | Default | JSON Config Key | Description |
+| --- | --- | --- | --- |
+| `SIDPLAY_BINARY` | sidplayfp | — | sidplayfp binary to launch when generating audio |
+| `SIDPLAY_LIMIT_CYCLES` | 120000000 | — | Maximum CPU cycles to render when sidplayfp generates audio |
+| `SIDPLAY_MODE` | ntsc | — | Default SID playback mode (ntsc\|pal) |
+| `SIDPLAYFP_BINARY` |  | — | Legacy alias for SIDPLAY_BINARY (sidplayfp executable name) |
+
+#### RAG
+
+| Variable | Default | JSON Config Key | Description |
+| --- | --- | --- | --- |
+| `GITHUB_TOKEN` |  | — | Personal access token used for optional RAG discovery against GitHub |
+| `RAG_BUILD_ON_START` | 0 | — | Set to 1 to rebuild embeddings on server start |
+| `RAG_DISCOVER_FORCE_REFRESH` | 0 | — | Set to 1 to ignore cached discovery results when fetching external docs |
+| `RAG_DOC_FILES` |  | — | Comma-separated extra docs to include in RAG |
+| `RAG_EMBEDDINGS_DIR` | data | — | Directory containing RAG embedding JSON files |
+| `RAG_REINDEX_INTERVAL_MS` | 0 | — | Periodic reindex interval in ms (0 disables) |
+
+#### Testing
+
+| Variable | Default | JSON Config Key | Description |
+| --- | --- | --- | --- |
+| `C64_TEST_TARGET` |  | — | Overrides integration tests to hit mock or real hardware (mock\|real) |
+
+<!-- AUTO-GENERATED:ENV-VARS-END -->
 
 ## Example
 

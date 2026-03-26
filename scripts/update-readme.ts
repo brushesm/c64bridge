@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -9,11 +10,28 @@ import { createPromptRegistry } from "../src/prompts/registry.js";
 
 const START_MARKER = "<!-- AUTO-GENERATED:MCP-DOCS-START -->";
 const END_MARKER = "<!-- AUTO-GENERATED:MCP-DOCS-END -->";
+const ENV_START_MARKER = "<!-- AUTO-GENERATED:ENV-VARS-START -->";
+const ENV_END_MARKER = "<!-- AUTO-GENERATED:ENV-VARS-END -->";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PROJECT_ROOT = join(__dirname, "..");
 const README_PATH = join(PROJECT_ROOT, "README.md");
+const MCP_MANIFEST_PATH = join(PROJECT_ROOT, "mcp.json");
+
+type ManifestEnvEntry = {
+  readonly description: string;
+  readonly default?: string;
+};
+
+type EnvCategory =
+  | "Server Runtime"
+  | "C64 Ultimate"
+  | "VICE Runtime"
+  | "VICE Audio Capture"
+  | "SID Playback"
+  | "RAG"
+  | "Testing";
 
 function escapeCell(value: string): string {
   return value.replace(/\|/g, "\\|").replace(/\r?\n|\r/g, " ").trim();
@@ -24,6 +42,100 @@ export function renderTable(headers: readonly string[], rows: readonly (readonly
   const separator = `| ${headers.map(() => "---").join(" | ")} |`;
   const body = rows.map((row) => `| ${row.join(" | ")} |`).join("\n");
   return [headerLine, separator, body].filter(Boolean).join("\n");
+}
+
+function loadManifestEnv(): Readonly<Record<string, ManifestEnvEntry>> {
+  const manifest = JSON.parse(readFileSync(MCP_MANIFEST_PATH, "utf8")) as {
+    env?: Record<string, ManifestEnvEntry>;
+  };
+  return manifest.env ?? {};
+}
+
+function classifyEnvVariable(name: string): EnvCategory {
+  if (name.startsWith("C64U_")) {
+    return "C64 Ultimate";
+  }
+  if (name.startsWith("VICE_") || name === "FORCE_XVFB" || name === "DISABLE_XVFB") {
+    if (name === "VICE_MODE" || name === "VICE_LIMIT_CYCLES" || name === "VICE_RUN_TIMEOUT_MS") {
+      return "VICE Audio Capture";
+    }
+    return "VICE Runtime";
+  }
+  if (name.startsWith("SIDPLAY")) {
+    return "SID Playback";
+  }
+  if (name.startsWith("RAG_") || name === "GITHUB_TOKEN") {
+    return "RAG";
+  }
+  if (name === "C64_TEST_TARGET") {
+    return "Testing";
+  }
+  return "Server Runtime";
+}
+
+function resolveJsonConfigKey(name: string): string {
+  const map: Record<string, string> = {
+    C64BRIDGE_CONFIG: "config path",
+    C64U_HOST: "c64u.host",
+    C64U_PORT: "c64u.port",
+    C64U_PASSWORD: "c64u.networkPassword",
+    VICE_BINARY: "vice.exe",
+    VICE_DIRECTORY: "vice.directory",
+    VICE_HOST: "vice.host",
+    VICE_PORT: "vice.port",
+    VICE_VISIBLE: "vice.visible",
+    VICE_WARP: "vice.warp",
+    VICE_ARGS: "vice.args",
+  };
+  return map[name] ?? "—";
+}
+
+export function renderEnvironmentSection(envEntries: Readonly<Record<string, ManifestEnvEntry>> = loadManifestEnv()): string[] {
+  const grouped = new Map<EnvCategory, Array<[string, ManifestEnvEntry]>>();
+
+  for (const entry of Object.entries(envEntries).sort(([left], [right]) => left.localeCompare(right))) {
+    const category = classifyEnvVariable(entry[0]);
+    const rows = grouped.get(category) ?? [];
+    rows.push(entry);
+    grouped.set(category, rows);
+  }
+
+  const orderedCategories: readonly EnvCategory[] = [
+    "Server Runtime",
+    "C64 Ultimate",
+    "VICE Runtime",
+    "VICE Audio Capture",
+    "SID Playback",
+    "RAG",
+    "Testing",
+  ];
+
+  const lines: string[] = [
+    "Every runtime environment variable documented in `mcp.json` can be set in your MCP client configuration, including `.vscode/mcp.json` under `servers.c64bridge.env`.",
+    "",
+  ];
+
+  for (const category of orderedCategories) {
+    const entries = grouped.get(category);
+    if (!entries || entries.length === 0) {
+      continue;
+    }
+
+    lines.push(`#### ${category}`);
+    lines.push("");
+    lines.push(renderTable(
+      ["Variable", "Default", "JSON Config Key", "Description"],
+      entries.map(([name, spec]) => [
+        `\`${name}\``,
+        escapeCell(spec.default ?? "—"),
+        escapeCell(resolveJsonConfigKey(name)),
+        escapeCell(spec.description),
+      ]),
+    ));
+    lines.push("");
+  }
+
+  return lines;
 }
 
 type GroupedOperation = {
@@ -229,19 +341,34 @@ export function buildDocumentation(): string {
   return sections.flat().join("\n").trim();
 }
 
+export function buildEnvironmentDocumentation(): string {
+  return renderEnvironmentSection().join("\n").trim();
+}
+
 export async function updateReadme(): Promise<boolean> {
   const readme = await readFile(README_PATH, "utf8");
-  const pattern = new RegExp(
+  const docsPattern = new RegExp(
     `${START_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([\\s\\S]*?)${END_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
   );
-  if (!pattern.test(readme)) {
+  const envPattern = new RegExp(
+    `${ENV_START_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([\\s\\S]*?)${ENV_END_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+  );
+  if (!docsPattern.test(readme)) {
     throw new Error(
       `Could not find auto-generated section markers (${START_MARKER} / ${END_MARKER}) in README.md`,
     );
   }
+  if (!envPattern.test(readme)) {
+    throw new Error(
+      `Could not find auto-generated section markers (${ENV_START_MARKER} / ${ENV_END_MARKER}) in README.md`,
+    );
+  }
 
-  const generated = `\n\n${buildDocumentation()}\n\n`;
-  const nextReadme = readme.replace(pattern, `${START_MARKER}${generated}${END_MARKER}`);
+  const generatedDocs = `\n\n${buildDocumentation()}\n\n`;
+  const generatedEnv = `\n\n${buildEnvironmentDocumentation()}\n\n`;
+  const nextReadme = readme
+    .replace(docsPattern, `${START_MARKER}${generatedDocs}${END_MARKER}`)
+    .replace(envPattern, `${ENV_START_MARKER}${generatedEnv}${ENV_END_MARKER}`);
 
   if (nextReadme === readme) {
     return false;
