@@ -9,6 +9,7 @@ import {
   createOperationDispatcher,
   defineToolModule,
 } from "../src/tools/types.ts";
+import { getPlatformStatus, setPlatform } from "../src/platform.ts";
 import { ToolUnsupportedPlatformError, ToolValidationError } from "../src/tools/errors.ts";
 
 const stubStatus = Object.freeze({ id: "c64u", features: [], limitedFeatures: [] });
@@ -104,6 +105,15 @@ test("discriminatedUnionSchema requires at least one variant", () => {
     () => discriminatedUnionSchema({ variants: [] }),
     /at least one variant/,
   );
+});
+
+test("discriminatedUnionSchema supports custom discriminator names", () => {
+  const union = discriminatedUnionSchema({
+    discriminator: "mode",
+    variants: [{ type: "object", properties: { mode: { const: "x" } } }],
+  });
+
+  assert.equal(union.discriminator.propertyName, "mode");
 });
 
 test("createOperationDispatcher routes to matching handlers", async () => {
@@ -461,4 +471,41 @@ test("defineToolModule reports operation name when op-specific platforms block a
       return true;
     },
   );
+});
+
+test("defineToolModule falls back to global platform state when ctx omits platform helpers", async () => {
+  const previous = getPlatformStatus().id;
+  setPlatform("c64u");
+
+  try {
+    let seenPlatform = null;
+    let seenSetter = null;
+    const module = defineToolModule({
+      domain: "test",
+      summary: "test module",
+      tools: [
+        {
+          name: "c64_test",
+          description: "test grouped tool",
+          execute: async (_args, ctx) => {
+            seenPlatform = ctx.platform.id;
+            seenSetter = ctx.setPlatform;
+            return { content: [{ type: "text", text: "ok" }] };
+          },
+        },
+      ],
+    });
+
+    const result = await module.invoke("c64_test", {}, {
+      client: {},
+      rag: {},
+      logger: stubCtx.logger,
+    });
+
+    assert.equal(result.content[0].text, "ok");
+    assert.equal(seenPlatform, "c64u");
+    assert.equal(typeof seenSetter, "function");
+  } finally {
+    setPlatform(previous);
+  }
 });

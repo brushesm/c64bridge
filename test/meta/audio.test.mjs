@@ -108,6 +108,42 @@ describe("meta/audio", () => {
     expect(result.metadata.error?.kind).toBe("execution");
   });
 
+  test("silence_and_verify requires sidSilenceAll support on the client", async () => {
+    delete ctx.client.sidSilenceAll;
+
+    const result = await metaModule.invoke(
+      "silence_and_verify",
+      { waitBeforeCaptureMs: 0, durationSeconds: 0.5 },
+      ctx,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.metadata.error?.kind).toBe("execution");
+    expect(String(result.metadata.error?.message ?? result.content?.[0]?.text ?? "")).toContain("sidSilenceAll");
+  });
+
+  test("silence_and_verify falls back to alternate RMS metric fields", async () => {
+    ctx.client.recordAndAnalyzeAudio = mock(async () => ({
+      analysis: {
+        global_metrics: {
+          average_rms: null,
+          max_rms: 0.009,
+        },
+      },
+    }));
+
+    const result = await metaModule.invoke(
+      "silence_and_verify",
+      { waitBeforeCaptureMs: 1, durationSeconds: 0.5, rmsThreshold: 0.01 },
+      ctx,
+    );
+
+    expect(result.metadata.success).toBe(true);
+    expect(result.structuredContent?.data?.durationSeconds).toBe(0.5);
+    expect(result.structuredContent?.data?.metrics?.averageRms).toBeCloseTo(0.009);
+    expect(result.structuredContent?.data?.metrics?.maxRms).toBeCloseTo(0.009);
+  });
+
   test("music_compile_play_analyze compiles, plays, analyzes, and verifies silence", async () => {
     const responses = [
       createAnalysis({ averageRms: 0.003, maxRms: 0.004 }),
@@ -161,6 +197,18 @@ describe("meta/audio", () => {
     expect(result.metadata.error?.details?.response?.error).toBe("playback");
   });
 
+  test("music_compile_play_analyze rejects blank source input after trimming", async () => {
+    const result = await metaModule.invoke(
+      "music_compile_play_analyze",
+      { sidwave: "   " },
+      ctx,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.metadata.error?.kind).toBe("execution");
+    expect(String(result.metadata.error?.message ?? result.content?.[0]?.text ?? "")).toContain("Provide sidwave or cpg source");
+  });
+
   test("music_compile_play_analyze fails when post-silence check detects residual audio", async () => {
     const responses = [
       createAnalysis({ averageRms: 0.003, maxRms: 0.004 }),
@@ -184,6 +232,35 @@ describe("meta/audio", () => {
     expect(result.isError).toBe(true);
     expect(result.metadata.error?.kind).toBe("execution");
     expect(result.metadata.error?.details?.metrics?.maxRms).toBeGreaterThan(0.02);
+  });
+
+  test("music_compile_play_analyze forwards expected SIDWAVE and normalises scalar playback details", async () => {
+    const analyzerCalls = [];
+    ctx.client.runPrg = mock(async () => ({ success: true, details: "ran" }));
+    ctx.client.recordAndAnalyzeAudio = mock(async (args) => {
+      analyzerCalls.push(args);
+      return createAnalysis({ averageRms: null, maxRms: 0.03 });
+    });
+
+    const result = await metaModule.invoke(
+      "music_compile_play_analyze",
+      {
+        sidwave: SAMPLE_SIDWAVE,
+        expectedSidwave: "expected",
+        waitBeforeCaptureMs: 1,
+        verifySilenceBefore: false,
+        verifySilenceAfter: false,
+        analysisDurationSeconds: 1,
+        silenceWaitMs: 0,
+      },
+      ctx,
+    );
+
+    expect(result.metadata.success).toBe(true);
+    expect(result.structuredContent?.data?.playback?.details).toEqual({ value: "ran" });
+    expect(result.structuredContent?.data?.analysisMetrics?.averageRms).toBeNull();
+    expect(result.structuredContent?.data?.analysisMetrics?.maxRms).toBeCloseTo(0.03);
+    expect(analyzerCalls).toEqual([{ durationSeconds: 1, expectedSidwave: "expected" }]);
   });
 
   test("music_compile_play_analyze uses SID playback path", async () => {
@@ -263,6 +340,42 @@ describe("meta/audio", () => {
       average_rms: null,
       max_rms: null,
     });
+  });
+
+  test("music_compile_play_analyze falls back to the playback response when details are missing", async () => {
+    ctx.client.runPrg = mock(async () => ({ success: false }));
+    ctx.client.recordAndAnalyzeAudio = mock(async () => createAnalysis({ averageRms: 0.003, maxRms: 0.004 }));
+
+    const result = await metaModule.invoke(
+      "music_compile_play_analyze",
+      {
+        sidwave: SAMPLE_SIDWAVE,
+        waitBeforeCaptureMs: 0,
+        verifySilenceBefore: false,
+        verifySilenceAfter: false,
+        silenceWaitMs: 0,
+      },
+      ctx,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.metadata.error?.kind).toBe("execution");
+    expect(result.metadata.error?.details?.response).toEqual({ success: false });
+  });
+
+  test("music_compile_play_analyze returns unknown errors for invalid SIDWAVE input", async () => {
+    const result = await metaModule.invoke(
+      "music_compile_play_analyze",
+      {
+        sidwave: "not valid yaml: [",
+        verifySilenceBefore: false,
+        verifySilenceAfter: false,
+      },
+      ctx,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.metadata.error?.kind).toBe("unknown");
   });
 
   test("music_compile_play_analyze disables post verification by silencing directly", async () => {

@@ -96,6 +96,22 @@ test("optional schema defaults", () => {
   assert.equal(optional.parse(null), 5);
 });
 
+test("primitive schemas report required-value errors with explicit paths", async () => {
+  await assertThrowsValidation(() => stringSchema().parse(undefined, "$.name"), /Value is required/);
+  await assertThrowsValidation(() => numberSchema().parse(null, "$.count"), /Value is required/);
+  await assertThrowsValidation(() => booleanSchema().parse(undefined, "$.enabled"), /Value is required/);
+});
+
+test("optional schema exposes null-aware json schema and inherits defaults", () => {
+  const base = stringSchema({ default: "READY" });
+  const optional = optionalSchema(base);
+
+  assert.deepEqual(optional.jsonSchema.type, ["string", "null"]);
+  assert.equal(optional.jsonSchema.default, "READY");
+  assert.equal(optional.parse(undefined), "READY");
+  assert.equal(optional.parse(null), "READY");
+});
+
 test("object schema validation", async () => {
   const schema = objectSchema({
     description: "Example payload",
@@ -137,6 +153,18 @@ test("object schema applies defaults when optional provided", () => {
 
   const parsed = schema.parse({});
   assert.deepEqual(parsed, { title: "Untitled" });
+});
+
+test("object schema preserves explicit undefined-returning optional properties", () => {
+  const schema = objectSchema({
+    properties: {
+      maybe: optionalSchema(stringSchema()),
+    },
+    additionalProperties: false,
+  });
+
+  const parsed = schema.parse({});
+  assert.deepEqual(parsed, {});
 });
 
 test("merge schemas combines structures", () => {

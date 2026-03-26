@@ -359,8 +359,8 @@ test("C64Client MCP tool coverage", async (t) => {
       const largeWrite = await mockClient.writeMemory("$0400", `$${"AA".repeat(129)}`);
       expectSuccess(largeWrite, "mock write large");
 
-      assert.deepEqual(await mockClient.version(), { version: "1.2.3" });
-      assert.deepEqual(await mockClient.info(), { product: "ultimate" });
+      assert.deepEqual(await mockClient.version(), { version: "stub" });
+      assert.deepEqual(await mockClient.info(), { product: "stub" });
       assert.equal((await mockClient.pause()).success, true);
       assert.equal((await mockClient.resume()).success, true);
       assert.equal((await mockClient.menuButton()).success, true);

@@ -22,6 +22,7 @@ test("grouped tools appear in registry list", () => {
   assert.ok(toolNames.includes("c64_memory"), "c64_memory should be registered");
   assert.ok(toolNames.includes("c64_sound"), "c64_sound should be registered");
   assert.ok(toolNames.includes("c64_system"), "c64_system should be registered");
+  assert.ok(toolNames.includes("c64_select_backend"), "c64_select_backend should be registered");
   assert.ok(toolNames.includes("c64_debug"), "c64_debug should be registered");
   assert.ok(toolNames.includes("c64_graphics"), "c64_graphics should be registered");
   assert.ok(toolNames.includes("c64_rag"), "c64_rag should be registered");

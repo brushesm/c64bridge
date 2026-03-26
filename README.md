@@ -95,6 +95,12 @@ The server reads configuration in this order:
 2. `.c64bridge.json` in the project root
 3. `~/.c64bridge.json` in your home directory
 
+Configuration is merged per backend section while scanning those files in order:
+
+- The first file that contains a `c64u` section supplies the C64 Ultimate config.
+- The first file that contains a `vice` section supplies the VICE config.
+- This means a project-local `.c64bridge.json` can provide `c64u` while `~/.c64bridge.json` provides `vice`, and both backends will be available at runtime.
+
 ### C64 Ultimate
 
 Use this for a C64 Ultimate:
@@ -111,6 +117,7 @@ Use this for a C64 Ultimate:
 
 - If no file is found, it defaults to `c64u:80` and no network password.
 - A `networkPassword` is only required if you specified one in the C64 Ultimate menu under `Network Settings`.
+- The `C64U_HOST`, `C64U_PORT`, and `C64U_PASSWORD` environment variables override the configured host, port, and network password.
 
 ### VICE
 
@@ -126,6 +133,14 @@ Use this for VICE:
 
 > [!NOTE]
 > VICE supports only the operations marked with a VICE checkmark in the [MCP API Reference](#mcp-api-reference). All others return `unsupported_platform`.
+
+### Runtime Backend Switching
+
+When both `c64u` and `vice` are configured, C64 Bridge starts with one active backend and keeps the other ready for runtime switching.
+
+- `C64_MODE` still chooses the initial backend (`c64u` or `vice`).
+- `c64_select_backend` switches between configured backends without restarting the MCP server.
+- `c64://platform/status` reports both the active backend and the full configured backend set.
 
 ## VS Code MCP Setup
 
@@ -163,7 +178,7 @@ This agent is useful because it is preconfigured for Commodore 64 tasks. It stee
 
 ### Optional Overrides
 
-You can add `env` entries in `.vscode/mcp.json` to select a config file or force a backend:
+You can add `env` entries in `.vscode/mcp.json` to select a config file, override C64 Ultimate connection details, or force an initial backend:
 
 ```json
 {
@@ -176,8 +191,11 @@ You can add `env` entries in `.vscode/mcp.json` to select a config file or force
       ],
       "env": {
         "C64BRIDGE_CONFIG": "/home/you/.c64bridge.json",
+        "C64U_HOST": "192.168.1.99",
+        "C64U_PORT": "80",
+        "C64U_PASSWORD": "secret",
         "C64_MODE": "c64u",
-        "LOG_LEVEL": "debug",
+        "LOG_LEVEL": "debug"
       }
     }
   }
@@ -185,6 +203,7 @@ You can add `env` entries in `.vscode/mcp.json` to select a config file or force
 ```
 
 - `C64BRIDGE_CONFIG` points to a specific config file.
+- `C64U_HOST`, `C64U_PORT`, and `C64U_PASSWORD` override the C64 Ultimate connection from VS Code without editing config files.
 - `C64_MODE` forces `c64u` or `vice`.
 - `LOG_LEVEL=debug` enables verbose logging.
 

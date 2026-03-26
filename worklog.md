@@ -35,3 +35,57 @@ Documented the new vars in `mcp.json` and added explicit regression coverage for
 ## 2026-03-26 09:03 — Phase 3 start
 
 Starting the dual-facade client work. The next step is to thread `createAllFacades()` through `src/device.ts` and `src/c64Client.ts` while preserving the existing delegate-method surface so the new backend-switch pointer swap stays synchronous and low-risk.
+
+## 2026-03-26 09:14 — Phase 3 complete
+
+Added `createAllFacades()` to `src/device.ts` and updated `C64Client` so non-forced construction now initialises all configured backends, tracks the active backend type, exposes `getActiveBackendType()`, `getAvailableBackends()`, and supports synchronous `switchBackend()` pointer swaps. While doing that I also fixed two paths that would have ignored a later backend switch: `version()` / `info()` now follow the active facade, and VICE frame capture no longer re-resolves a separate backend from config.
+
+Phase 3 tests now cover single-backend c64u, single-backend vice, dual-backend initialisation, active-backend switching, the unconfigured-backend throw path, VICE-only guard behaviour on c64u, and active VICE frame capture. The targeted coverage run still shows the legacy file as a whole below threshold because `src/c64Client.ts` is large, but the modified constructor/switching/version-info/capture paths are covered and no longer appear in the uncovered-line report. Full `./build test` now passes again after updating one stale expectation in `test/toolsCoverage.test.mjs` that still assumed the pre-switch direct-HTTP `version()` / `info()` behavior.
+
+## 2026-03-26 09:14 — Phase 4 start
+
+Starting platform-state sync work in `src/mcp-server.ts`. The next changes are to set the global platform from the client’s resolved active backend before MCP handlers are registered, emit a `platform_initialised` diagnostics event, and cover both c64u-only and vice-only startup cases with integration tests.
+
+## 2026-03-26 09:20 — Phase 4 complete
+
+Updated `src/mcp-server.ts` so startup now awaits `client.getActiveBackendType()`, calls `setPlatform()` immediately after client construction, and records a `platform_initialised` diagnostics event before MCP handlers are registered. That closes the stale-platform gap where `platform.ts` could remain on its hardcoded `c64u` default even when the selected backend was VICE.
+
+Added `test/mcpServerPlatformInit.test.mjs` to start the MCP server under isolated temp configs and assert both startup modes: c64u-only and vice-only. The new test also verifies that the diagnostics NDJSON stream contains the `platform_initialised` event with the matching backend, and it explicitly clears inherited `C64_MODE` from the test matrix so config-driven startup is what gets exercised. Full `./build test` passes with the new startup coverage in place.
+
+## 2026-03-26 09:21 — Phase 5 start
+
+Starting the runtime backend switch tool work. The next step is to add a grouped registry module for backend selection, register it, and cover the success, unavailable-backend, and round-trip switch cases.
+
+## 2026-03-26 09:25 — Phase 5 complete
+
+Added `src/tools/registry/platform.ts` with the new `c64_select_backend` grouped tool and registered it in `src/tools/registry/index.ts`. The tool now validates configured backends without throwing, swaps the active client backend synchronously, updates platform state via `ctx.setPlatform()`, and returns the active backend plus available/unavailable tool lists and a switch-back hint derived from the registered tool descriptors.
+
+Added focused coverage in `test/platformRegistry.test.mjs` and updated the grouped-registry presence assertion in `test/groupedToolsShims.test.mjs`. Targeted coverage for `src/tools/registry/platform.ts` is `100%` lines/functions. Full `./build test` passes again after regenerating the checked-in MCP interface snapshot so the new `c64_select_backend` schema is reflected under `mcp/`.
+
+## 2026-03-26 09:26 — Phase 6 start
+
+Starting the LLM routing instruction updates. The next changes are in bootstrap guidance and AGENTS usage notes, followed by a quick check that bootstrap content is still indexed into the RAG layer.
+
+## 2026-03-26 09:27 — Phase 6 deviation: fix stale RAG context watch path
+
+The verification step showed that `src/rag/indexer.ts` already indexes `data/context/bootstrap.md`, but `src/rag/init.ts` was still watching `doc/context/bootstrap.md` for rebuild decisions. I corrected the init path as part of Phase 6 so the updated backend-routing guidance is not only documented but also picked up by the RAG rebuild trigger.
+
+## 2026-03-26 09:29 — Phase 6 complete
+
+Added the required `Backend Selection` routing rules to `data/context/bootstrap.md` and documented runtime backend switching in `AGENTS.md`, including the `c64_select_backend` tool and the `c64://platform/status` resource. I also verified that bootstrap content is part of the RAG source set: `src/rag/indexer.ts`, `src/context.ts`, and now `src/rag/init.ts` all point at `data/context/bootstrap.md`.
+
+Phase validation is complete. A focused coverage run over the RAG and MCP startup paths passed, and the required full `./build test` phase gate also passed cleanly.
+
+## 2026-03-26 09:30 — Phase 7 start
+
+Starting the platform-status resource update. The next change is to render both the active backend and the full configured backend set in `c64://platform/status`, then cover that output in the existing MCP startup/resource tests.
+
+## 2026-03-26 09:32 — Phase 7 complete
+
+Updated `renderPlatformStatusMarkdown()` so the platform status resource now lists every configured backend and marks the active one, while the footer now points callers at `c64_select_backend` instead of telling them to restart the server. The renderer now receives the live `C64Client`, which keeps the resource aligned with runtime backend switches and the dual-facade client state.
+
+Extended `test/mcpServerPlatformInit.test.mjs` to assert the rendered markdown for c64u-only, vice-only, and dual-backend startup with `C64_MODE=vice`, including the active marker and the switch-tool hint. Focused MCP startup/resource tests passed, and the full `./build test` phase gate passed afterward.
+
+## 2026-03-26 09:32 — Phase 8 start
+
+Starting final validation and README cleanup. The remaining work is to document the merged-config and runtime-switching behavior in `README.md`, then run the full mock suite, test matrix, and merged coverage before checking the final plan/worklog gates.

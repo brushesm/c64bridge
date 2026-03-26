@@ -29,44 +29,44 @@
 
 ### Phase 3 — Dual-Facade Support in `C64Client`
 
-- [ ] Add `createAllFacades()` to `src/device.ts`.
-- [ ] Modify `C64Client` constructor and add the three new methods.
-- [ ] Write unit tests for `C64Client`: single c64u, single vice, both configured (verify both facades initialised), `switchBackend()` swaps the active facade, `switchBackend()` to unconfigured type throws.
-- [ ] Run `./build test` — all tests pass.
-- [ ] Coverage ≥ 91% on modified `c64Client.ts` paths.
-- [ ] Append Phase 3 completion entry to `worklog.md`.
+- [x] Add `createAllFacades()` to `src/device.ts`.
+- [x] Modify `C64Client` constructor and add the three new methods.
+- [x] Write unit tests for `C64Client`: single c64u, single vice, both configured (verify both facades initialised), `switchBackend()` swaps the active facade, `switchBackend()` to unconfigured type throws.
+- [x] Run `./build test` — all tests pass.
+- [x] Coverage ≥ 91% on modified `c64Client.ts` paths.
+- [x] Append Phase 3 completion entry to `worklog.md`.
 
 ### Phase 4 — Sync Platform State on Init and Switch
 
-- [ ] Add the `setPlatform()` call in `mcp-server.ts` after client construction.
-- [ ] Add the `writeDiagnosticEvent` call.
-- [ ] Write/update integration or unit tests that assert the platform matches the backend that was selected from config at startup (both the c64u-only and vice-only cases).
-- [ ] Run `./build test` — all tests pass.
-- [ ] Append Phase 4 completion entry to `worklog.md`.
+- [x] Add the `setPlatform()` call in `mcp-server.ts` after client construction.
+- [x] Add the `writeDiagnosticEvent` call.
+- [x] Write/update integration or unit tests that assert the platform matches the backend that was selected from config at startup (both the c64u-only and vice-only cases).
+- [x] Run `./build test` — all tests pass.
+- [x] Append Phase 4 completion entry to `worklog.md`.
 
 ### Phase 5 — `c64_select_backend` Tool
 
-- [ ] Create `src/tools/registry/platform.ts` with the `c64_select_backend` tool.
-- [ ] Register the module in `src/tools/registry/index.ts`.
-- [ ] Write unit tests: select available backend succeeds and updates platform, select unavailable backend returns error result (not throw), both backends configured round-trip switch.
-- [ ] Run `./build test` — all tests pass.
-- [ ] Coverage ≥ 91% on `src/tools/registry/platform.ts`.
-- [ ] Append Phase 5 completion entry to `worklog.md`.
+- [x] Create `src/tools/registry/platform.ts` with the `c64_select_backend` tool.
+- [x] Register the module in `src/tools/registry/index.ts`.
+- [x] Write unit tests: select available backend succeeds and updates platform, select unavailable backend returns error result (not throw), both backends configured round-trip switch.
+- [x] Run `./build test` — all tests pass.
+- [x] Coverage ≥ 91% on `src/tools/registry/platform.ts`.
+- [x] Append Phase 5 completion entry to `worklog.md`.
 
 ### Phase 6 — LLM Routing Instructions
 
-- [ ] Add backend routing rules to `data/context/bootstrap.md`.
-- [ ] Add "Runtime Backend Switching" subsection to `AGENTS.md`.
-- [ ] Verify that the bootstrap content is included in RAG (check `src/rag/init.ts` or equivalent to confirm `bootstrap.md` is indexed).
-- [ ] Append Phase 6 completion entry to `worklog.md`.
+- [x] Add backend routing rules to `data/context/bootstrap.md`.
+- [x] Add "Runtime Backend Switching" subsection to `AGENTS.md`.
+- [x] Verify that the bootstrap content is included in RAG (check `src/rag/init.ts` or equivalent to confirm `bootstrap.md` is indexed).
+- [x] Append Phase 6 completion entry to `worklog.md`.
 
 ### Phase 7 — Update Platform Status Resource
 
-- [ ] Update `renderPlatformStatusMarkdown()`.
-- [ ] Pass `client` into the function (or use a closure — follow the existing style in `mcp-server.ts`).
-- [ ] Write/update tests for the rendered markdown output.
-- [ ] Run `./build test` — all tests pass.
-- [ ] Append Phase 7 completion entry to `worklog.md`.
+- [x] Update `renderPlatformStatusMarkdown()`.
+- [x] Pass `client` into the function (or use a closure — follow the existing style in `mcp-server.ts`).
+- [x] Write/update tests for the rendered markdown output.
+- [x] Run `./build test` — all tests pass.
+- [x] Append Phase 7 completion entry to `worklog.md`.
 
 ### Phase 8 — Final Validation
 

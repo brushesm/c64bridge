@@ -4,6 +4,7 @@ import { programModule } from "./program.js";
 import { memoryModuleGroup as memoryModule } from "./memory.js";
 import { soundModuleGroup as soundModule } from "./sound.js";
 import { systemModuleGroup as systemModule } from "./system.js";
+import { platformModuleGroup } from "./platform.js";
 import { graphicsModuleGroup as graphicsModule } from "./graphics.js";
 import { ragModuleGroup as ragModule } from "./rag.js";
 import { diskModuleGroup as diskModule } from "./disk.js";
@@ -33,6 +34,7 @@ const modules: readonly ToolModule[] = [
   memoryModule,
   soundModule,
   systemModule,
+  platformModuleGroup,
   graphicsModule,
   ragModule,
   diskModule,

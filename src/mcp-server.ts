@@ -82,6 +82,9 @@ async function main() {
     networkPassword: config.networkPassword,
     forceC64uFacade: false,
   });
+  const initialBackendType = await client.getActiveBackendType();
+  setPlatform(initialBackendType);
+  writeDiagnosticEvent("platform_initialised", { platform: initialBackendType });
   const rag = await initRag();
 
   const toolLogger = loggerFor("tool");
@@ -159,7 +162,7 @@ async function main() {
             {
               uri: PLATFORM_RESOURCE_URI,
               mimeType: "text/markdown",
-              text: renderPlatformStatusMarkdown(),
+              text: renderPlatformStatusMarkdown(client),
             },
           ],
         };
@@ -476,14 +479,19 @@ function createPlatformResourceDescriptor() {
   };
 }
 
-function renderPlatformStatusMarkdown(): string {
+function renderPlatformStatusMarkdown(client: C64Client): string {
   const status = getPlatformStatus();
+  const availableBackends = client.getAvailableBackends();
   const capabilities = describePlatformCapabilities(toolRegistry.list());
 
   const lines: string[] = [
     "# MCP Platform Status",
     "",
     `Current platform: \`${status.id}\``,
+    "",
+    "## Available Backends",
+    "",
+    ...availableBackends.map((backend) => `- \`${backend}\`${backend === status.id ? " (active)" : ""}`),
     "",
     status.features.length > 0
       ? ["## Active Features", "", ...status.features.map((feature) => `- ${feature}`)].join("\n")
@@ -514,7 +522,7 @@ function renderPlatformStatusMarkdown(): string {
   }
 
   lines.push(
-    "> Switching platforms currently requires restarting the MCP server with an updated configuration.",
+    "> Use `c64_select_backend` to switch to another available backend without restarting the MCP server.",
   );
 
   return lines.join("\n");

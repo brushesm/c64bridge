@@ -25,6 +25,12 @@ Example:
 
 When Ultimate firmware network protection is enabled, `networkPassword` is sent as the `X-Password` header on every REST request.
 
+### Runtime Backend Switching
+
+When both `c64u` and `vice` are configured, the server can keep both backends live at the same time.
+Use `c64_select_backend` to switch the active backend without restarting the MCP server.
+The `c64://platform/status` resource always reports the currently active backend and the configured backend set.
+
 3) VS Code Copilot Chat (MCP)
 
 Add to Settings (JSON):

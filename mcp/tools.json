@@ -1460,6 +1460,76 @@
       }
     },
     {
+      "name": "c64_select_backend",
+      "title": "Changes the active backend without restarting the MCP server and reports resulting tool availability.",
+      "description": "Switch the active backend between C64U hardware and the VICE emulator at runtime.",
+      "inputSchema": {
+        "type": "object",
+        "description": "Runtime backend selection operations.",
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Switch the active runtime backend without restarting the MCP server.",
+            "properties": {
+              "op": {
+                "const": "select",
+                "description": "Selects the select operation."
+              },
+              "backend": {
+                "type": "string",
+                "enum": [
+                  "c64u",
+                  "vice"
+                ],
+                "description": "Backend to activate for subsequent tool calls."
+              }
+            },
+            "required": [
+              "op",
+              "backend"
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "discriminator": {
+          "propertyName": "op"
+        }
+      },
+      "_meta": {
+        "domain": "platform",
+        "summary": "Changes the active backend without restarting the MCP server and reports resulting tool availability.",
+        "lifecycle": "request-response",
+        "resources": [
+          "c64://platform/status",
+          "c64://context/bootstrap"
+        ],
+        "prompts": [],
+        "examples": [
+          {
+            "name": "Switch to VICE",
+            "description": "Move subsequent tool calls to the emulator backend",
+            "arguments": {
+              "op": "select",
+              "backend": "vice"
+            }
+          }
+        ],
+        "tags": [
+          "platform",
+          "backend",
+          "grouped",
+          "switch"
+        ],
+        "workflowHints": [
+          "Switch backends before invoking backend-specific tools so platform gating stays accurate."
+        ],
+        "platforms": [
+          "c64u",
+          "vice"
+        ]
+      }
+    },
+    {
       "name": "c64_graphics",
       "title": "Captures frames, renders PETSCII text or art, previews sprites, and displays bitmap images from one tool.",
       "description": "Grouped entry point for frame capture and graphics rendering workflows.",

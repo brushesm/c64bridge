@@ -421,6 +421,20 @@ test("sid_reset soft and hard", async () => {
   assert.equal(hard, 1);
 });
 
+test("sid_reset reports firmware failure and unexpected errors", async () => {
+  const failure = await audioModule.invoke("sid_reset", { hard: true }, {
+    client: { sidReset: async () => ({ success: false, details: "denied" }) },
+    logger: createLogger(),
+  });
+  assert.equal(failure.isError, true);
+
+  const unexpected = await audioModule.invoke("sid_reset", {}, {
+    client: { sidReset: async () => { throw new Error("boom"); } },
+    logger: createLogger(),
+  });
+  assert.equal(unexpected.isError, true);
+});
+
 test("sid_note_on passes parameters and returns metadata", async () => {
   const calls = [];
   const ctx = {
@@ -442,6 +456,20 @@ test("sid_note_on surfaces firmware failure", async () => {
   assert.equal(res.isError, true);
 });
 
+test("sid_note_on uses default PAL reminder when system is omitted", async () => {
+  const res = await audioModule.invoke("sid_note_on", {
+    voice: 1,
+    note: "C4",
+  }, {
+    client: { sidNoteOn: async () => ({ success: true, details: { address: "d400" } }) },
+    logger: createLogger(),
+  });
+
+  assert.equal(res.isError, undefined);
+  assert.equal(res.metadata.system, "PAL");
+  assert.ok(String(res.content[0].text).includes("Using PAL timing"));
+});
+
 test("sid_note_off and silence_all", async () => {
   const ctx = {
     client: {
@@ -454,6 +482,15 @@ test("sid_note_off and silence_all", async () => {
   const silence = await audioModule.invoke("sid_silence_all", {}, ctx);
   assert.equal(off.isError, undefined);
   assert.equal(silence.isError, undefined);
+});
+
+test("sid_note_off reports firmware failure", async () => {
+  const res = await audioModule.invoke("sid_note_off", { voice: 2 }, {
+    client: { sidNoteOff: async () => ({ success: false, details: "busy" }) },
+    logger: createLogger(),
+  });
+
+  assert.equal(res.isError, true);
 });
 
 test("sid_silence_all verify reports silence metrics", async () => {
@@ -506,6 +543,42 @@ test("sid_silence_all verify fails when residual audio remains", async () => {
   assert.ok(result.content[0].text.includes("residual audio"));
 });
 
+test("sid_silence_all verify fails when analyzer omits RMS metrics", async () => {
+  const result = await audioModule.invoke("sid_silence_all", { verify: true }, {
+    client: {
+      sidSilenceAll: async () => ({ success: true }),
+      recordAndAnalyzeAudio: async () => ({
+        analysis: {
+          durationSeconds: 1.5,
+          global_metrics: {},
+        },
+      }),
+    },
+    logger: createLogger(),
+  });
+
+  assert.equal(result.isError, true);
+  assert.ok(String(result.content[0].text).includes("RMS metrics"));
+});
+
+test("sidplay_file and modplay_file surface execution failures", async () => {
+  const sidResult = await audioModule.invoke("sidplay_file", { path: "/music/bad.sid" }, {
+    client: {
+      sidplayFile: async () => ({ success: false, details: "offline" }),
+    },
+    logger: createLogger(),
+  });
+  assert.equal(sidResult.isError, true);
+
+  const modResult = await audioModule.invoke("modplay_file", { path: "/music/bad.mod" }, {
+    client: {
+      modplayFile: async () => { throw new Error("mod boom"); },
+    },
+    logger: createLogger(),
+  });
+  assert.equal(modResult.isError, true);
+});
+
 test("analyze_audio returns guidance when no keywords detected", async () => {
   const res = await audioModule.invoke("analyze_audio", { request: "just print status" }, { client: {} });
   assert.equal(res.isError, undefined);
@@ -525,4 +598,40 @@ test("record_and_analyze_audio returns error when backend missing", async () => 
 test("music_generate validates pattern input", async () => {
   const res = await audioModule.invoke("music_generate", { root: "C4", pattern: "", steps: 1, tempoMs: 50, waveform: "pulse" }, { client: {} });
   assert.equal(res.isError, true);
+});
+
+test("music_compile_and_play accepts cpg text input on dry run", async () => {
+  const sidwaveText = `
+song:
+  title: Test Song
+  tempo: 110
+  mode: PAL
+  length_bars: 1
+voices:
+  - id: 1
+    name: Lead
+    waveform: triangle
+    adsr: [2, 2, 10, 3]
+    pulse_width: 2048
+    patterns:
+      main:
+        type: arpeggio
+        notes: [C4, E4, G4]
+timeline:
+  - section: A
+    bars: 1
+    layers:
+      v1: main
+`;
+  const result = await audioModule.invoke("music_compile_and_play", {
+    cpg: sidwaveText,
+    dryRun: true,
+  }, {
+    client: {},
+    logger: createLogger(),
+  });
+
+  assert.equal(result.isError, undefined);
+  assert.equal(result.metadata.dryRun, true);
+  assert.equal(result.metadata.ranOnC64, false);
 });

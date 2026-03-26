@@ -2,6 +2,19 @@
 
 High-level overview for C64 development. For more details, see linked spec documents.
 
+## Backend Selection
+
+Two backends may be available: `c64u` (physical C64 Ultimate hardware) and `vice`
+(VICE emulator). Use `c64_select_backend` to switch.
+
+**Routing rules — call `c64_select_backend` first when the user:**
+- Says "use vice", "on vice", "in the emulator", "via vice", or similar
+- Says "use c64u", "on hardware", "on the Ultimate", "on the real machine", or similar
+- Prefixes a request with a backend name, e.g. "vice: run this program"
+
+Do not assume the current backend is correct without checking
+`c64://platform/status` if the user has expressed a preference.
+
 ## Device & Services
 
 - MCP server controls Ultimate 64/C64 via REST: upload/run BASIC or ASM, screen/memory I/O, drives, SID music, audio analysis, local RAG.

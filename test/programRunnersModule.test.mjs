@@ -1,6 +1,6 @@
 import test from "#test/runner";
 import assert from "#test/assert";
-import { programRunnersModule } from "../src/tools/programRunners.js";
+import { programOperationHandlers, programRunnersModule } from "../src/tools/programRunners.js";
 import { ToolUnsupportedPlatformError } from "../src/tools/errors.js";
 
 function createLogger() {
@@ -219,6 +219,43 @@ test("run_crt reports firmware failure", async () => {
   assert.deepEqual(result.metadata.error.details, { code: "FAIL" });
 });
 
+test("program operation handlers accept op-tagged args and use shared CRT helper path", async () => {
+  const calls = [];
+  const ctx = {
+    client: {
+      async loadPrgFile(path) {
+        calls.push(["load", path]);
+        return { success: true };
+      },
+      async runPrgFile(path) {
+        calls.push(["run", path]);
+        return { success: true };
+      },
+      async runCrtFile(path) {
+        calls.push(["crt", path]);
+        return { success: true, details: { mounted: true } };
+      },
+    },
+    logger: createLogger(),
+    platform: createPlatformStatus("c64u"),
+    setPlatform: () => createPlatformStatus("c64u"),
+  };
+
+  const loadResult = await programOperationHandlers.load_prg({ op: "load_prg", path: "//USB0/handler.prg" }, ctx);
+  const runResult = await programOperationHandlers.run_prg({ op: "run_prg", path: "//USB0/handler.prg" }, ctx);
+  const crtResult = await programOperationHandlers.run_crt({ op: "run_crt", path: "//USB0/handler.crt" }, ctx);
+
+  assert.equal(loadResult.isError, undefined);
+  assert.equal(runResult.isError, undefined);
+  assert.equal(crtResult.isError, undefined);
+  assert.ok(String(crtResult.content[0].text).includes("loaded and executed"));
+  assert.deepEqual(calls, [
+    ["load", "//USB0/handler.prg"],
+    ["run", "//USB0/handler.prg"],
+    ["crt", "//USB0/handler.crt"],
+  ]);
+});
+
 test("run_prg reports firmware failure", async () => {
   const ctx = {
     client: {
@@ -259,6 +296,33 @@ test("load_prg reports firmware failure", async () => {
 
   assert.equal(result.isError, true);
   assert.ok(result.content[0].text.includes("firmware reported failure"));
+});
+
+test("program runners wrap unexpected file execution errors", async () => {
+  const ctx = {
+    client: {
+      async loadPrgFile() {
+        throw new Error("load exploded");
+      },
+      async runPrgFile() {
+        throw new Error("run exploded");
+      },
+      async runCrtFile() {
+        throw new Error("crt exploded");
+      },
+    },
+    logger: createLogger(),
+    platform: createPlatformStatus("c64u"),
+    setPlatform: () => createPlatformStatus("c64u"),
+  };
+
+  const load = await programRunnersModule.invoke("load_prg", { path: "//USB0/a.prg" }, ctx);
+  const run = await programRunnersModule.invoke("run_prg", { path: "//USB0/b.prg" }, ctx);
+  const crt = await programRunnersModule.invoke("run_crt", { path: "//USB0/c.crt" }, ctx);
+
+  assert.equal(load.isError, true);
+  assert.equal(run.isError, true);
+  assert.equal(crt.isError, true);
 });
 
 test("upload_run_basic validates program input", async () => {

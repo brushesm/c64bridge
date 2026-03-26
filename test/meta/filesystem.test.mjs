@@ -227,6 +227,137 @@ test("filesystem_stats_by_extension handles entries without size", async () => {
   assert.equal(noneStats.unknownSizes, 1);
 });
 
+test("filesystem_stats_by_extension parses nested collections, deduplicates entries, and warns on failed patterns", async () => {
+  const warnings = [];
+  const ctx = {
+    client: {
+      async filesInfo(pattern) {
+        if (pattern === "/**/*.txt") {
+          throw new Error("txt lookup failed");
+        }
+        return {
+          entries: [
+            { path: "/games/demo.prg", size: "1024" },
+            { fullPath: "/games/demo.prg", bytes: "1024" },
+            { path: "/games/second.prg", length: "512" },
+            { fullPath: "/games/folder/", type: "directory" },
+            {
+              path: "/games/archive.d64",
+              format: "D64",
+              size: "174848",
+              contents: [
+                { fullPath: "/games/archive.d64#INNER.PRG", byteLength: "2048" },
+                { path: "/games/archive.d64#docs/readme.txt", bytes: "256" },
+                { path: "/games/archive.d64#skip/", kind: "folder" },
+              ],
+            },
+          ],
+        };
+      },
+    },
+    logger: {
+      ...createLogger(),
+      warn(message, details) {
+        warnings.push({ message, details });
+      },
+    },
+  };
+
+  const res = await metaModule.invoke("filesystem_stats_by_extension", {
+    root: "/",
+    extensions: ["prg", "txt"],
+    maxSamplesPerExtension: 1,
+  }, ctx);
+
+  assert.equal(res.metadata?.success, true);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].message, "filesInfo pattern failed");
+
+  const data = res.structuredContent?.data ?? {};
+  assert.equal(data.totals.files, 4);
+  assert.equal(data.insideContainerEntries, 2);
+
+  const prgStats = (data.extensions ?? []).find((entry) => entry.extension === "prg");
+  assert.ok(prgStats, "expected prg stats");
+  assert.equal(prgStats.count, 3);
+  assert.equal(prgStats.totalBytes, 1024 + 512 + 2048);
+  assert.equal(prgStats.samples.length, 1);
+
+  const txtStats = (data.extensions ?? []).find((entry) => entry.extension === "txt");
+  assert.ok(txtStats, "expected txt stats");
+  assert.equal(txtStats.totalBytes, 256);
+
+  const folderStats = (data.folders ?? []).find((entry) => entry.folder === "/games");
+  assert.ok(folderStats, "expected /games folder stats");
+  assert.equal(folderStats.count, 4);
+
+  const containerStats = (data.containers ?? []).find((entry) => entry.container === "/games/archive.d64");
+  assert.ok(containerStats, "expected container stats");
+  assert.equal(containerStats.totalBytes, 2048 + 256);
+});
+
+test("find_and_run_program_by_name rewrites malformed state and tolerates one failing extension scan", async () => {
+  const { file, dir } = tmpPath("findrun-bad-state", "tasks.json");
+  await fs.mkdir(dir, { recursive: true });
+  const previous = process.env.C64_TASK_STATE_FILE;
+  process.env.C64_TASK_STATE_FILE = file;
+
+  try {
+    await fs.mkdir(path.join(dir, "meta"), { recursive: true });
+    await fs.writeFile(path.join(dir, "meta", "find_and_run_program_by_name.json"), "{broken", "utf8");
+
+    const warnings = [];
+    const runs = [];
+    const ctx = {
+      client: {
+        async filesInfo(pattern) {
+          if (pattern.endsWith(".crt")) {
+            throw new Error("crt scan failed");
+          }
+          return {
+            paths: ["/games/ignore.prg"],
+            entries: [
+              { path: "/games/Demo.PRG" },
+              { paths: ["/games/demo.prg", "/games/Demo.PRG"] },
+            ],
+          };
+        },
+        async runPrgFile(programPath) {
+          runs.push(programPath);
+          return { success: true };
+        },
+      },
+      logger: {
+        ...createLogger(),
+        warn(message, details) {
+          warnings.push({ message, details });
+        },
+      },
+    };
+
+    const res = await metaModule.invoke("find_and_run_program_by_name", {
+      root: "/games",
+      nameContains: "Demo",
+      caseInsensitive: false,
+      waitMs: 1,
+      captureCandidates: 1,
+    }, ctx);
+
+    assert.equal(res.metadata?.success, true);
+    assert.deepEqual(runs, ["/games/Demo.PRG"]);
+    assert.equal(warnings.some((entry) => entry.message === "filesInfo pattern failed"), true);
+    assert.deepEqual(res.structuredContent?.data?.candidates, ["/games/Demo.PRG"]);
+
+    const statePath = path.join(dir, "meta", "find_and_run_program_by_name.json");
+    const state = JSON.parse(await fs.readFile(statePath, "utf8"));
+    assert.equal(state.lastRunPath, "/games/Demo.PRG");
+    assert.equal(state.recentSearches[0].matched, "/games/Demo.PRG");
+  } finally {
+    if (previous === undefined) delete process.env.C64_TASK_STATE_FILE;
+    else process.env.C64_TASK_STATE_FILE = previous;
+  }
+});
+
 test("drive_mount_and_verify mounts image successfully with defaults", async () => {
   let powerOnCalled = false;
   let mountCalled = false;
