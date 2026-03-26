@@ -5,37 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const DEFAULT_TARGET = "mock";
+export const DEFAULT_TARGET = "mock";
 
-let target = DEFAULT_TARGET;
-let explicitBaseUrl = null;
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const registerDataUri = "data:text/javascript,import { register } from \"node:module\"; import { pathToFileURL } from \"node:url\"; register(\"ts-node/esm\", pathToFileURL(\"./\"));";
-const nodeArgs = ["--import", registerDataUri, "--test"];
-
-for (const arg of process.argv.slice(2)) {
-  if (arg === "--mock") {
-    target = "mock";
-    continue;
-  }
-
-  if (arg === "--real") {
-    target = "real";
-    continue;
-  }
-
-  if (arg.startsWith("--target=")) {
-    target = arg.split("=", 2)[1] ?? DEFAULT_TARGET;
-    continue;
-  }
-
-  if (arg.startsWith("--base-url=")) {
-    explicitBaseUrl = arg.split("=", 2)[1] ?? null;
-    continue;
-  }
-
-  nodeArgs.push(arg);
-}
+const { nodeArgs, target, explicitBaseUrl } = buildNodeTestArgs(process.argv.slice(2));
 const defaultEmbeddingsDir = path.join(repoRoot, "artifacts", "test-embeddings");
 if (!fs.existsSync(defaultEmbeddingsDir)) {
   fs.mkdirSync(defaultEmbeddingsDir, { recursive: true });
@@ -62,18 +36,20 @@ if (target === "real" && !env.C64_TEST_BASE_URL) {
   env.C64_TEST_BASE_URL = resolveBaseUrlFromConfig() ?? "http://c64u";
 }
 
-const child = spawn(process.execPath, nodeArgs, {
-  stdio: "inherit",
-  env,
-});
+if (isMainModule(import.meta.url)) {
+  const child = spawn(process.execPath, nodeArgs, {
+    stdio: "inherit",
+    env,
+  });
 
-child.on("close", (code, signal) => {
-  if (signal) {
-    process.kill(process.pid, signal);
-    return;
-  }
-  process.exit(code ?? 1);
-});
+  child.on("close", (code, signal) => {
+    if (signal) {
+      process.kill(process.pid, signal);
+      return;
+    }
+    process.exit(code ?? 1);
+  });
+}
 
 function resolveBaseUrlFromConfig() {
   const configPathEnv = process.env.C64BRIDGE_CONFIG;
@@ -192,4 +168,84 @@ function firstDefined(...values) {
     }
   }
   return undefined;
+}
+
+function isMainModule(moduleUrl) {
+  const entry = process.argv[1];
+  if (!entry) {
+    return false;
+  }
+  return fileURLToPath(moduleUrl) === path.resolve(entry);
+}
+
+export function buildNodeTestArgs(args, root = repoRoot) {
+  const defaultTestFiles = listRepoTestFiles(path.join(root, "test"), root);
+  const nodeArgs = ["--import", registerDataUri, "--test"];
+  let target = DEFAULT_TARGET;
+  let explicitBaseUrl = null;
+  let hasExplicitTestFiles = false;
+
+  for (const arg of args) {
+    if (arg === "--mock") {
+      target = "mock";
+      continue;
+    }
+
+    if (arg === "--real") {
+      target = "real";
+      continue;
+    }
+
+    if (arg.startsWith("--target=")) {
+      target = arg.split("=", 2)[1] ?? DEFAULT_TARGET;
+      continue;
+    }
+
+    if (arg.startsWith("--base-url=")) {
+      explicitBaseUrl = arg.split("=", 2)[1] ?? null;
+      continue;
+    }
+
+    if (looksLikeTestFileArg(arg)) {
+      hasExplicitTestFiles = true;
+    }
+    nodeArgs.push(arg);
+  }
+
+  if (!hasExplicitTestFiles) {
+    nodeArgs.push(...defaultTestFiles);
+  }
+
+  return { nodeArgs, target, explicitBaseUrl };
+}
+
+export function looksLikeTestFileArg(arg) {
+  return typeof arg === "string" && /\.(c|m)?(j|t)sx?$/.test(arg) && !arg.startsWith("--");
+}
+
+export function listRepoTestFiles(root, base = repoRoot) {
+  if (!fs.existsSync(root)) {
+    return [];
+  }
+
+  const files = [];
+  walkDirectory(root, files);
+  return files
+    .filter((file) => looksLikeTestFileArg(file))
+    .map((file) => path.relative(base, file).split(path.sep).join("/"))
+    .sort();
+}
+
+function walkDirectory(dir, files) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      walkDirectory(fullPath, files);
+      continue;
+    }
+    if (entry.isFile()) {
+      files.push(fullPath);
+    }
+  }
 }

@@ -38,7 +38,10 @@ test("getPlatformStatus returns vice status when set", () => {
   const status = getPlatformStatus();
   assert.equal(status.id, "vice");
   assert.ok(status.features.includes("software-emulation"));
+  assert.ok(status.features.includes("drive-management"));
   assert.ok(status.limitedFeatures.includes("no-rest-api"));
+  assert.ok(status.limitedFeatures.includes("no-firmware-filesystem"));
+  assert.ok(!status.limitedFeatures.includes("no-drive-management"));
 });
 
 // --- setPlatform ---
@@ -168,6 +171,7 @@ test("getAllPlatformStatuses includes features and limitations", () => {
   assert.ok(c64u);
   assert.ok(vice);
   assert.ok(c64u.features.length > 0);
+  assert.ok(vice.features.includes("runtime-config"));
   assert.ok(vice.limitedFeatures.length > 0);
   assert.equal(c64u.limitedFeatures.length, 0);
 });

@@ -2,6 +2,9 @@ import test from "#test/runner";
 import assert from "#test/assert";
 import { memoryModule } from "../src/tools/memory.js";
 
+const isVice = (process.env.C64_MODE ?? "").toLowerCase() === "vice";
+const testC64uOnly = isVice ? test.skip : test;
+
 function createLogger() {
   return { debug() {}, info() {}, warn() {}, error() {} };
 }
@@ -256,7 +259,7 @@ test("write handles response without length in details", async () => {
   assert.equal(res.metadata?.length, null);
 });
 
-test("write verifies written bytes when verify flag is set", async () => {
+testC64uOnly("write verifies written bytes when verify flag is set", async () => {
   const events = [];
   const ctx = {
     client: createMockClient({
@@ -306,7 +309,7 @@ test("write verifies written bytes when verify flag is set", async () => {
   assert.ok(events.includes("resume"));
 });
 
-test("write aborts when expected bytes mismatch and abortOnMismatch is true", async () => {
+testC64uOnly("write aborts when expected bytes mismatch and abortOnMismatch is true", async () => {
   const events = [];
   const ctx = {
     client: createMockClient({

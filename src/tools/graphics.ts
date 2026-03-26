@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { createPetsciiArt, type Bitmap } from "../petsciiArt.js";
+import { importImageAsVicBitmap, type VicBitmapMode } from "../vicBitmap.js";
 import {
   defineToolModule,
   OPERATION_DISCRIMINATOR,
@@ -44,6 +45,16 @@ interface PetsciiImageArgs extends Record<string, unknown> {
   foregroundColor?: number;
   dryRun: boolean;
   bitmap?: Bitmap;
+}
+
+interface GenerateBitmapArgs extends Record<string, unknown> {
+  imagePath: string;
+  format: VicBitmapMode;
+  bitmapAddress?: number;
+  screenAddress?: number;
+  borderColor?: number;
+  backgroundColor?: number;
+  preserveAspect: boolean;
 }
 
 function toRecord(details: unknown): Record<string, unknown> | undefined {
@@ -95,6 +106,39 @@ function decodeSpriteString(value: string, path: string): Uint8Array {
   }
 }
 
+function parseAddressValue(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const normalised = trimmed.startsWith("$") ? `0x${trimmed.slice(1)}` : trimmed;
+  const parsed = Number(normalised);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 0xFFFF) {
+    return null;
+  }
+  return parsed;
+}
+
+const addressSchema: Schema<number> = {
+  jsonSchema: {
+    description: "Absolute C64 memory address, provided as an integer or hex string such as $2000.",
+    type: ["integer", "string"],
+  },
+  parse(value: unknown, path?: string): number {
+    const resolvedPath = path ?? "$";
+    if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 0xFFFF) {
+      return value;
+    }
+    if (typeof value === "string") {
+      const parsed = parseAddressValue(value);
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+    throw new ToolValidationError("Address must be an integer or hex string within $0000-$FFFF", { path: resolvedPath });
+  },
+};
+
 const spriteBytesSchema: Schema<Uint8Array> = {
   jsonSchema: {
     description: "63-byte sprite definition provided as base64/hex string or array of bytes.",
@@ -137,7 +181,7 @@ const spriteBytesSchema: Schema<Uint8Array> = {
 };
 
 const spriteArgsSchema = objectSchema<SpriteArgs>({
-  description: "Generate a PRG that displays a single sprite using raw sprite data.",
+  description: "Display a single sprite by writing supplied sprite data into RAM and patching the relevant VIC-II registers.",
   properties: {
     sprite: spriteBytesSchema,
     index: numberSchema({
@@ -270,7 +314,7 @@ const petsciiImageArgsSchema = objectSchema<PetsciiImageArgs>({
       maximum: 15,
     })),
     dryRun: booleanSchema({
-      description: "When true, skip uploading the BASIC program to the C64.",
+      description: "When true, skip uploading the generated BASIC program to the C64.",
       default: false,
     }),
     bitmap: optionalSchema(bitmapSchema),
@@ -306,6 +350,51 @@ const renderPetsciiScreenArgsSchema = objectSchema<{
   additionalProperties: false,
 });
 
+const vicBitmapModeSchema: Schema<VicBitmapMode> = {
+  jsonSchema: {
+    description: "Bitmap encoding mode to generate for the VIC-II display.",
+    type: "string",
+    enum: ["hires", "multicolor"],
+  },
+  parse(value: unknown, path?: string): VicBitmapMode {
+    if (value === "hires" || value === "multicolor") {
+      return value;
+    }
+    throw new ToolValidationError("Bitmap format must be either hires or multicolor", { path: path ?? "$" });
+  },
+};
+
+const generateBitmapArgsSchema = objectSchema<GenerateBitmapArgs>({
+  description: "Import an image file, convert it to a VIC-II bitmap, write it into RAM, and enable bitmap mode.",
+  properties: {
+    imagePath: stringSchema({
+      description: "Filesystem path of the source image (PNG, JPEG, BMP, GIF, TIFF, and other Jimp-supported formats).",
+      minLength: 1,
+    }),
+    format: vicBitmapModeSchema,
+    bitmapAddress: optionalSchema(addressSchema, 0x2000),
+    screenAddress: optionalSchema(addressSchema, 0x0400),
+    borderColor: optionalSchema(numberSchema({
+      description: "Border colour index (0-15).",
+      integer: true,
+      minimum: 0,
+      maximum: 15,
+    }), 0),
+    backgroundColor: optionalSchema(numberSchema({
+      description: "Background colour index (0-15). Used for multicolor mode and aspect-ratio padding.",
+      integer: true,
+      minimum: 0,
+      maximum: 15,
+    }), 0),
+    preserveAspect: booleanSchema({
+      description: "Preserve the source image aspect ratio and pad with the background colour.",
+      default: true,
+    }),
+  },
+  required: ["imagePath", "format"],
+  additionalProperties: false,
+});
+
 type OperationlessArgs<T extends Record<string, unknown>> = Omit<T, typeof OPERATION_DISCRIMINATOR>;
 
 function stripOperationDiscriminator<T extends Record<string, unknown>>(
@@ -318,7 +407,7 @@ function stripOperationDiscriminator<T extends Record<string, unknown>>(
 async function executeGenerateSprite(rawArgs: unknown, ctx: ToolExecutionContext): Promise<ToolRunResult> {
   try {
     const parsed = spriteArgsSchema.parse(rawArgs ?? {});
-    ctx.logger.info("Generating sprite PRG", {
+    ctx.logger.info("Rendering sprite", {
       index: parsed.index,
       x: parsed.x,
       y: parsed.y,
@@ -336,12 +425,12 @@ async function executeGenerateSprite(rawArgs: unknown, ctx: ToolExecutionContext
     });
 
     if (!result.success) {
-      throw new ToolExecutionError("C64 firmware reported failure while running sprite PRG", {
+      throw new ToolExecutionError("C64 firmware reported failure while rendering sprite", {
         details: normaliseFailure(result.details),
       });
     }
 
-    return textResult("Sprite PRG generated and executed successfully.", {
+    return textResult("Sprite rendered successfully.", {
       success: true,
       index: parsed.index,
       x: parsed.x,
@@ -355,7 +444,9 @@ async function executeGenerateSprite(rawArgs: unknown, ctx: ToolExecutionContext
     if (error instanceof ToolError) {
       return toolErrorResult(error);
     }
-    return unknownErrorResult(error);
+    return toolErrorResult(new ToolExecutionError("Unable to render sprite", {
+      details: normaliseFailure(error instanceof Error ? { message: error.message } : error),
+    }));
   }
 }
 
@@ -386,7 +477,79 @@ async function executeRenderPetscii(rawArgs: unknown, ctx: ToolExecutionContext)
     if (error instanceof ToolError) {
       return toolErrorResult(error);
     }
-    return unknownErrorResult(error);
+    return toolErrorResult(new ToolExecutionError("Unable to render PETSCII screen", {
+      details: normaliseFailure(error instanceof Error ? { message: error.message } : error),
+    }));
+  }
+}
+
+async function executeGenerateBitmap(rawArgs: unknown, ctx: ToolExecutionContext): Promise<ToolRunResult> {
+  try {
+    const parsed = generateBitmapArgsSchema.parse(rawArgs ?? {});
+    ctx.logger.info("Rendering bitmap", {
+      imagePath: parsed.imagePath,
+      format: parsed.format,
+      bitmapAddress: parsed.bitmapAddress,
+      screenAddress: parsed.screenAddress,
+      preserveAspect: parsed.preserveAspect,
+    });
+
+    const prepared = await importImageAsVicBitmap({
+      imagePath: parsed.imagePath,
+      mode: parsed.format,
+      preserveAspect: parsed.preserveAspect,
+      backgroundColor: parsed.backgroundColor,
+      borderColor: parsed.borderColor,
+    });
+
+    const result = await ctx.client.displayBitmap(prepared, {
+      bitmapAddress: parsed.bitmapAddress,
+      screenAddress: parsed.screenAddress,
+    });
+    if (!result.success) {
+      throw new ToolExecutionError("C64 firmware reported failure while displaying bitmap image", {
+        details: normaliseFailure(result.details),
+      });
+    }
+
+    const details = toRecord(result.details) ?? {};
+    const data = {
+      mode: prepared.mode,
+      imagePath: parsed.imagePath,
+      sourceWidth: prepared.sourceWidth,
+      sourceHeight: prepared.sourceHeight,
+      logicalWidth: prepared.logicalWidth,
+      logicalHeight: prepared.logicalHeight,
+      displayWidth: prepared.displayWidth,
+      displayHeight: prepared.displayHeight,
+      backgroundColor: prepared.backgroundColor,
+      borderColor: prepared.borderColor,
+      bitmapAddress: details.bitmapAddress ?? null,
+      screenAddress: details.screenAddress ?? null,
+      colorRamAddress: details.colorRamAddress ?? null,
+      bank: details.bank ?? null,
+      registers: details.registers ?? null,
+      bitmapBytes: prepared.bitmapData.length,
+      screenBytes: prepared.screenRam.length,
+      colorRamBytes: prepared.colorRam.length,
+    };
+
+    return jsonResult(data, {
+      success: true,
+      mode: prepared.mode,
+      bank: details.bank ?? null,
+      bitmapAddress: details.bitmapAddress ?? null,
+      screenAddress: details.screenAddress ?? null,
+      sourceWidth: prepared.sourceWidth,
+      sourceHeight: prepared.sourceHeight,
+    });
+  } catch (error) {
+    if (error instanceof ToolError) {
+      return toolErrorResult(error);
+    }
+    return toolErrorResult(new ToolExecutionError("Unable to import or display bitmap image", {
+      details: normaliseFailure(error instanceof Error ? { message: error.message } : error),
+    }));
   }
 }
 
@@ -462,19 +625,21 @@ async function executeCreatePetscii(rawArgs: unknown, ctx: ToolExecutionContext)
 }
 
 export interface GraphicsOperationMap extends OperationMap {
-  readonly create_petscii: PetsciiImageArgs;
-  readonly render_petscii: {
+  readonly render_petscii_art: PetsciiImageArgs;
+  readonly render_bitmap: GenerateBitmapArgs;
+  readonly render_petscii_text: {
     readonly text: string;
     readonly borderColor?: number;
     readonly backgroundColor?: number;
   };
-  readonly generate_sprite: SpriteArgs;
+  readonly render_sprite: SpriteArgs;
 }
 
 export const graphicsOperationHandlers: OperationHandlerMap<GraphicsOperationMap> = {
-  create_petscii: async (args, ctx) => executeCreatePetscii(stripOperationDiscriminator(args), ctx),
-  render_petscii: async (args, ctx) => executeRenderPetscii(stripOperationDiscriminator(args), ctx),
-  generate_sprite: async (args, ctx) => executeGenerateSprite(stripOperationDiscriminator(args), ctx),
+  render_petscii_art: async (args, ctx) => executeCreatePetscii(stripOperationDiscriminator(args), ctx),
+  render_bitmap: async (args, ctx) => executeGenerateBitmap(stripOperationDiscriminator(args), ctx),
+  render_petscii_text: async (args, ctx) => executeRenderPetscii(stripOperationDiscriminator(args), ctx),
+  render_sprite: async (args, ctx) => executeGenerateSprite(stripOperationDiscriminator(args), ctx),
 };
 
 export const graphicsModule = defineToolModule({
@@ -493,9 +658,9 @@ export const graphicsModule = defineToolModule({
   ],
   tools: [
     {
-      name: "generate_sprite",
-      description: "Generate and execute a PRG that displays a sprite from raw 63-byte data. See c64://specs/vic for registers.",
-      summary: "Uploads minimal machine code to copy sprite data, configure VIC-II, and render a sprite.",
+      name: "render_sprite",
+      description: "Display supplied 63-byte sprite data at the requested position and colour by writing memory and patching VIC-II registers directly. See c64://specs/vic for registers.",
+      summary: "Writes sprite data into RAM, updates the sprite pointer table, and patches VIC-II registers to render a sprite preview.",
       inputSchema: spriteArgsSchema.jsonSchema,
       relatedResources: ["c64://specs/vic"],
       relatedPrompts: ["graphics-demo", "assembly-program"],
@@ -512,13 +677,31 @@ export const graphicsModule = defineToolModule({
         "Use when the user supplies sprite bytes or asks to preview graphics quickly; describe resulting coordinates and colours.",
         "Remind the user that sprites live in banked memory so further tweaks may require write_memory calls.",
       ],
+      supportedPlatforms: ["c64u", "vice"] as const,
       async execute(args, ctx) {
         return executeGenerateSprite(args, ctx);
       },
     },
     {
-      name: "render_petscii",
-      description: "Render PETSCII text to the screen with optional border/background colours. See c64://specs/basic.",
+      name: "render_bitmap",
+      description: "Import an image file, convert it to a VIC-II bitmap, write it into RAM, and display it.",
+      summary: "Decodes a source image, quantizes it into C64 colours, writes bitmap/screen/color RAM, and displays it in hires or multicolor bitmap mode.",
+      inputSchema: generateBitmapArgsSchema.jsonSchema,
+      relatedResources: ["c64://specs/vic", "c64://context/bootstrap"],
+      relatedPrompts: ["graphics-demo"],
+      tags: ["bitmap", "vic", "image"],
+      workflowHints: [
+        "Use when the user wants to display an external image on screen rather than generate PETSCII art.",
+        "Call out the selected bitmap and screen RAM addresses so follow-up memory inspection or raster work stays grounded.",
+      ],
+      supportedPlatforms: ["c64u", "vice"] as const,
+      async execute(args, ctx) {
+        return executeGenerateBitmap(args, ctx);
+      },
+    },
+    {
+      name: "render_petscii_text",
+      description: "Display PETSCII text with optional border and background colours. See c64://specs/basic.",
       summary: "Generates a BASIC program that clears the screen, sets colours, and prints text.",
       inputSchema: renderPetsciiScreenArgsSchema.jsonSchema,
       relatedResources: ["c64://specs/basic", "c64://context/bootstrap"],
@@ -536,13 +719,14 @@ export const graphicsModule = defineToolModule({
         "Call after generating PETSCII text or when the user wants border/background colour changes applied.",
         "Echo the colour indices and mention CLEAR + PRINT so the user knows what ran.",
       ],
+      supportedPlatforms: ["c64u", "vice"] as const,
       async execute(args, ctx) {
         return executeRenderPetscii(args, ctx);
       },
     },
     {
-      name: "create_petscii",
-      description: "Create PETSCII art from prompts or text, optionally run it on the C64, and return metadata including PETSCII codes and glyphs. See c64://specs/basic, c64://specs/vic, and c64://specs/charset.",
+      name: "render_petscii_art",
+      description: "Create PETSCII art from prompts, text, or bitmap input, and optionally display it on the C64. Returns metadata including PETSCII codes and glyphs. See c64://specs/basic, c64://specs/vic, and c64://specs/charset.",
       summary: "Synthesises PETSCII art, generates a BASIC program with preview metadata (petsciiCodes, glyphs, dimensions), and uploads it unless dry-run is requested.",
       inputSchema: petsciiImageArgsSchema.jsonSchema,
       relatedResources: ["c64://specs/basic", "c64://specs/vic", "c64://specs/charset"],
@@ -561,6 +745,7 @@ export const graphicsModule = defineToolModule({
         "Response includes petsciiCodes array and glyphs for character-level inspection.",
         "Provide follow-up suggestions like saving the PRG or capturing the screen after rendering.",
       ],
+      supportedPlatforms: ["c64u", "vice"] as const,
       async execute(args, ctx) {
         return executeCreatePetscii(args, ctx);
       },

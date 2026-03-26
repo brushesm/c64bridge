@@ -24,7 +24,7 @@ const systemOperations: GroupedOperationConfig[] = [
     schema: extendSchemaWithOp(
       "pause",
       ensureDescriptor(machineDescriptorIndex, "pause").inputSchema,
-      { description: "Pause the machine using DMA halt until resumed." },
+      { description: "Pause the machine until resumed." },
     ),
     handler: async (rawArgs, ctx) => invokeModuleTool(machineControlModule, "pause", rawArgs, ctx),
   },
@@ -33,7 +33,7 @@ const systemOperations: GroupedOperationConfig[] = [
     schema: extendSchemaWithOp(
       "resume",
       ensureDescriptor(machineDescriptorIndex, "resume").inputSchema,
-      { description: "Resume CPU execution after a DMA pause." },
+      { description: "Resume CPU execution after a pause." },
     ),
     handler: async (rawArgs, ctx) => invokeModuleTool(machineControlModule, "resume", rawArgs, ctx),
   },
@@ -109,6 +109,15 @@ const systemOperations: GroupedOperationConfig[] = [
     ),
     handler: async (rawArgs, ctx) => invokeModuleTool(metaModule, "list_background_tasks", rawArgs, ctx),
   },
+  {
+    op: "performance_report",
+    schema: extendSchemaWithOp(
+      "performance_report",
+      ensureDescriptor(metaDescriptorIndex, "performance_report").inputSchema,
+      { description: "Summarize diagnostics spans and tool latencies from the current or latest MCP session." },
+    ),
+    handler: async (rawArgs, ctx) => invokeModuleTool(metaModule, "performance_report", rawArgs, ctx),
+  },
 ];
 
 const systemOperationHandlers = createOperationHandlers(systemOperations);
@@ -116,6 +125,7 @@ const systemOperationHandlers = createOperationHandlers(systemOperations);
 export const systemModuleGroup = defineToolModule({
   domain: "system",
   summary: "Grouped machine control and background task orchestration.",
+  supportedPlatforms: ["c64u", "vice"],
   resources: ["c64://context/bootstrap"],
   prompts: ["memory-debug"],
   defaultTags: ["system", "control"],
@@ -133,6 +143,8 @@ export const systemModuleGroup = defineToolModule({
         variants: systemOperations.map((operation) => operation.schema),
       }),
       tags: ["system", "control", "grouped"],
+      operationPlatforms: { pause: ["c64u"], resume: ["c64u"], menu: ["c64u"] },
+      operationToolNames: { pause: "pause", resume: "resume", menu: "menu_button" },
       examples: [
         {
           name: "Soft reset",
@@ -148,6 +160,11 @@ export const systemModuleGroup = defineToolModule({
             operation: "read_screen",
             intervalMs: 2000,
           },
+        },
+        {
+          name: "Inspect performance trace",
+          description: "Summarize the current session diagnostics for profiling",
+          arguments: { op: "performance_report", scope: "current" },
         },
       ],
       execute: createOperationDispatcher<GenericOperationMap>(

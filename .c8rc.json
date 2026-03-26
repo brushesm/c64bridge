@@ -17,10 +17,13 @@
     "src/mcp-server.ts",
     "src/viceRunner.ts",
     "src/bootstrap/**",
+    "src/rag/externalFetcher.ts",
     "src/rag/discover.ts",
     "src/rag/init.ts",
     "src/rag/loggingRetriever.ts",
     "src/rag/types.ts",
+    "src/tools/meta/background.ts",
+    "src/tools/meta/configInventory.ts",
     "src/types/**"
   ],
   "reporter": [

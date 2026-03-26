@@ -7,14 +7,39 @@ See <https://www.gnu.org/licenses/> for details.
 */
 
 import { Buffer } from "node:buffer";
+import { createSocket, type Socket } from "node:dgram";
 import axios from "axios";
 import { basicToPrg } from "./basicConverter.js";
 import { assemblyToPrg } from "./assemblyConverter.js";
 import { screenCodesToAscii } from "./petscii.js";
 import { resolveAddressSymbol } from "./knowledge.js";
-import { C64Facade, createFacade } from "./device.js";
+import { C64Facade, createAllFacades, createFacade, type DeviceType, ViceBackend } from "./device.js";
 import { Api, HttpClient } from "../generated/c64/index.js";
 import { createLoggingHttpClient } from "./loggingHttpClient.js";
+import { withDiagnosticSpan, writeDiagnosticEvent } from "./diagnostics.js";
+import type {
+  ViceClient,
+  ViceCheckpoint,
+  ViceCheckpointCreateOptions,
+  ViceMemspace,
+  ViceRegisterMetadata,
+  ViceRegisterValue,
+  ViceRegisterWrite,
+  ViceResourceValue,
+} from "./vice/viceClient.js";
+import {
+  C64U_NTSC_AUDIO_SAMPLE_RATE,
+  C64U_PAL_AUDIO_SAMPLE_RATE,
+  collectCompleteVideoFrames,
+  parseAudioPacket,
+  parseVideoPacket,
+  type CapturedFrame,
+} from "./streamCapture.js";
+import {
+  buildVicBitmapRegisters,
+  resolveVicBitmapMemoryLayout,
+  type PreparedVicBitmap,
+} from "./vicBitmap.js";
 
 export interface RunBasicResult {
   success: boolean;
@@ -29,22 +54,212 @@ export interface MemoryReadResult {
 
 export interface C64ClientOptions {
   networkPassword?: string;
+  forceC64uFacade?: boolean;
 }
 
+export interface FrameCaptureResult {
+  readonly backend: "c64u" | "vice";
+  readonly frames: readonly CapturedFrame[];
+}
+
+export interface SampleCaptureResult {
+  readonly backend: "c64u";
+  readonly channels: 2;
+  readonly sampleRateHz: number;
+  readonly samplePairs: number;
+  readonly samples: Int16Array;
+}
+
+interface C64uVideoCaptureSession {
+  readonly facade: C64Facade;
+  readonly socket: Socket;
+  readonly bindAddress: string;
+  readonly target: string;
+  readonly packets: Array<ReturnType<typeof parseVideoPacket>>;
+  readonly waiters: Array<{
+    count: number;
+    startIndex: number;
+    resolve: (frames: readonly CapturedFrame[]) => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>;
+  stopTimer: ReturnType<typeof setTimeout> | null;
+  closed: boolean;
+  error: Error | null;
+}
+
+export interface BitmapDisplayResult {
+  readonly mode: "hires" | "multicolor";
+  readonly bank: number;
+  readonly bitmapAddress: string;
+  readonly screenAddress: string;
+  readonly colorRamAddress: string;
+  readonly registers: {
+    readonly dd00: number;
+    readonly d011: number;
+    readonly d016: number;
+    readonly d018: number;
+    readonly d020: number;
+    readonly d021: number;
+  };
+  readonly bitmapBytes: number;
+  readonly screenBytes: number;
+  readonly colorRamBytes: number;
+}
+
+export interface SpriteDisplayResult {
+  readonly bank: number;
+  readonly spriteAddress: string;
+  readonly screenAddress: string;
+  readonly colorRamAddress: string;
+  readonly pointerAddress: string;
+  readonly pointerValue: number;
+  readonly registers: {
+    readonly dd00: number;
+    readonly d011: number;
+    readonly d016: number;
+    readonly d018: number;
+    readonly d020: number;
+    readonly d021: number;
+    readonly d010: number;
+    readonly d015: number;
+    readonly d01c: number;
+  };
+  readonly index: number;
+  readonly x: number;
+  readonly y: number;
+  readonly color: number;
+  readonly multicolour: boolean;
+  readonly spriteByteLength: number;
+}
+
+const TEXT_SCREEN_COLUMNS = 40;
+const TEXT_SCREEN_ROWS = 25;
+const TEXT_SCREEN_SIZE = TEXT_SCREEN_COLUMNS * TEXT_SCREEN_ROWS;
+const TEXT_SCREEN_ADDRESS = 0x0400;
+const TEXT_COLOR_RAM_ADDRESS = 0xD800;
+const SPRITE_DATA_BASE_ADDRESS = 0x2000;
+const DEFAULT_TEXT_FOREGROUND = 1;
+const DEFAULT_BORDER_COLOR = 6;
+const DEFAULT_BACKGROUND_COLOR = 0;
+const SPACE_SCREEN_CODE = 0x20;
+
 export class C64Client {
+  private readonly baseUrl: string;
   private readonly http: HttpClient<unknown>;
   private readonly api: Api<unknown>;
-  private readonly facadePromise: Promise<C64Facade>;
+  private readonly allFacades = new Map<DeviceType, Promise<C64Facade>>();
+  private readonly warmupPromises = new Map<DeviceType, Promise<boolean>>();
+  private readonly greetingDd00Cache = new Map<DeviceType, number>();
+  private readonly greetingDd00Warmups = new Map<DeviceType, Promise<number>>();
+  private c64uVideoCaptureSession: C64uVideoCaptureSession | null = null;
+  private readonly initPromise: Promise<void>;
+  private activeType: DeviceType = "c64u";
+  private facadePromise: Promise<C64Facade>;
 
   constructor(baseUrl: string, options: C64ClientOptions = {}) {
+    this.baseUrl = baseUrl;
     const headers = options.networkPassword ? { "X-Password": options.networkPassword } : undefined;
     this.http = createLoggingHttpClient({ baseURL: baseUrl, timeout: 10_000, headers });
     this.api = new Api(this.http);
-    // Select backend once lazily; keep REST for hardware-specific fallbacks
-    this.facadePromise = createFacade(undefined, {
+    const forceC64uFacade = options.forceC64uFacade ?? true;
+    if (forceC64uFacade) {
+      this.facadePromise = createFacade(undefined, {
+        preferredC64uBaseUrl: baseUrl,
+        preferredC64uNetworkPassword: options.networkPassword,
+      }).then((sel) => sel.facade);
+      this.allFacades.set("c64u", this.facadePromise);
+      this.initPromise = Promise.resolve();
+      void this.primeGreetingDd00Cache(["c64u"]);
+      return;
+    }
+
+    const allFacadesPromise = createAllFacades(undefined, {
       preferredC64uBaseUrl: baseUrl,
       preferredC64uNetworkPassword: options.networkPassword,
-    }).then((sel) => sel.facade);
+    });
+    this.facadePromise = allFacadesPromise.then(({ primary }) => primary.facade);
+    this.initPromise = allFacadesPromise.then(({ primary, secondary, secondaryType }) => {
+      const primaryPromise = Promise.resolve(primary.facade);
+      this.activeType = primary.selected;
+      this.facadePromise = primaryPromise;
+      this.allFacades.set(primary.selected, primaryPromise);
+      if (secondary && secondaryType) {
+        this.allFacades.set(secondaryType, Promise.resolve(secondary));
+      }
+    });
+    void this.initPromise.then(async () => {
+      if (this.allFacades.has("vice")) {
+        await this.prewarmBackends(["vice"]);
+      }
+      void this.primeGreetingDd00Cache();
+    }).catch(() => {});
+  }
+
+  private async requireViceBackend(): Promise<ViceBackend> {
+    const facade = await this.facadePromise;
+    if (facade.type !== "vice") {
+      throw new Error("VICE-specific operation requested while connected to Ultimate hardware");
+    }
+    return facade as ViceBackend;
+  }
+
+  async getBackendType(): Promise<DeviceType> {
+    return this.getActiveBackendType();
+  }
+
+  async getActiveBackendType(): Promise<DeviceType> {
+    await this.initPromise;
+    return this.activeType;
+  }
+
+  getAvailableBackends(): DeviceType[] {
+    return Array.from(this.allFacades.keys());
+  }
+
+  async prewarmBackends(types?: readonly DeviceType[]): Promise<Record<string, boolean>> {
+    return withDiagnosticSpan("client", "prewarm_backends", { types: types ?? null }, async () => {
+      await this.initPromise;
+      const targets = (types && types.length > 0 ? [...types] : this.getAvailableBackends()).filter(
+        (type, index, all) => all.indexOf(type) === index,
+      );
+      const entries = await Promise.all(targets.map(async (type) => {
+        let warmup = this.warmupPromises.get(type);
+        if (!warmup) {
+          const facadePromise = this.allFacades.get(type);
+          if (!facadePromise) {
+            throw new Error(`Backend '${type}' is not configured`);
+          }
+          warmup = facadePromise.then((facade) => facade.ping()).catch(() => false);
+          this.warmupPromises.set(type, warmup);
+        }
+        return [type, await warmup] as const;
+      }));
+      return Object.fromEntries(entries);
+    });
+  }
+
+  switchBackend(type: DeviceType): void {
+    const nextFacade = this.allFacades.get(type);
+    if (!nextFacade) {
+      throw new Error(`Backend '${type}' is not configured`);
+    }
+    // Platform state is owned by the caller so tool-level flows can update global routing explicitly.
+    this.facadePromise = nextFacade;
+    this.activeType = type;
+    if (type !== "c64u" && this.c64uVideoCaptureSession) {
+      void this.releaseVideoCapture().catch(() => {});
+    }
+    writeDiagnosticEvent("client_switch_backend", { backend: type });
+  }
+
+  private async shouldUseC64uMockBypass(): Promise<boolean> {
+    return process.env.C64_TEST_TARGET === "mock" && (await this.getBackendType()) === "c64u";
+  }
+
+  private async withViceMonitor<T>(fn: (client: ViceClient) => Promise<T>): Promise<T> {
+    const backend = await this.requireViceBackend();
+    return backend.withMonitor(fn);
   }
 
   /**
@@ -104,13 +319,14 @@ export class C64Client {
   }
 
   async uploadAndRunBasic(program: string): Promise<RunBasicResult> {
-    const prg = basicToPrg(program);
-    return this.runPrg(prg);
+    return withDiagnosticSpan("client", "upload_run_basic", { programLength: program.length }, async () => {
+      const prg = basicToPrg(program);
+      return this.runPrg(prg);
+    });
   }
 
   /**
-   * Build a simple sprite PRG from raw 63-byte sprite data and position/color attributes.
-   * Returns the REST result after uploading and running the generated PRG.
+   * Render a sprite directly by writing sprite data, screen memory, and VIC-II registers.
    */
   async generateAndRunSpritePrg(options: {
     spriteBytes: Uint8Array | Buffer;
@@ -120,8 +336,7 @@ export class C64Client {
     color?: number;
     multicolour?: boolean;
   }): Promise<RunBasicResult> {
-    const prg = buildSingleSpriteProgram(options);
-    return this.runPrg(prg);
+    return this.displaySprite(options);
   }
 
   /**
@@ -137,6 +352,213 @@ export class C64Client {
     return this.uploadAndRunBasic(program);
   }
 
+  async renderGreetingScreen(options: {
+    readonly message: string;
+    readonly borderColor?: number;
+    readonly backgroundColor?: number;
+  }): Promise<RunBasicResult> {
+    return withDiagnosticSpan("client", "render_greeting_screen", { messageLength: options.message.length }, async () => {
+      try {
+        const facade = await this.facadePromise;
+        const currentDd00 = await this.getGreetingDd00(facade.type, facade);
+        const textRegisters = buildVicTextRegisters({
+          currentDd00,
+          borderColor: options.borderColor ?? DEFAULT_BORDER_COLOR,
+          backgroundColor: options.backgroundColor ?? DEFAULT_BACKGROUND_COLOR,
+        });
+        const screenRam = buildGreetingScreenRam(options.message);
+        const colorRam = new Uint8Array(TEXT_SCREEN_SIZE).fill(DEFAULT_TEXT_FOREGROUND);
+
+        const writes = [
+          { address: TEXT_SCREEN_ADDRESS, bytes: screenRam },
+          { address: TEXT_COLOR_RAM_ADDRESS, bytes: colorRam },
+          { address: 0xDD00, bytes: Uint8Array.of(textRegisters.dd00) },
+          { address: 0xD011, bytes: Uint8Array.of(textRegisters.d011) },
+          { address: 0xD016, bytes: Uint8Array.of(textRegisters.d016) },
+          { address: 0xD018, bytes: Uint8Array.of(textRegisters.d018) },
+          { address: 0xD020, bytes: Uint8Array.of(textRegisters.d020) },
+          { address: 0xD021, bytes: Uint8Array.of(textRegisters.d021) },
+        ] as const;
+
+        if (typeof facade.writeMemoryBlocks === "function") {
+          await facade.writeMemoryBlocks(writes);
+        } else {
+          for (const write of writes) {
+            await facade.writeMemory(write.address, write.bytes);
+          }
+        }
+
+        return {
+          success: true,
+          details: {
+            mode: "direct_screen_write",
+            screenAddress: this.formatAddress(TEXT_SCREEN_ADDRESS),
+            colorRamAddress: this.formatAddress(TEXT_COLOR_RAM_ADDRESS),
+            registers: textRegisters,
+            message: options.message,
+          },
+        };
+      } catch (error) {
+        return {
+          success: false,
+          details: this.normaliseError(error),
+        };
+      }
+    });
+  }
+
+  async displaySprite(options: {
+    readonly spriteBytes: Uint8Array | Buffer;
+    readonly spriteIndex?: number;
+    readonly x?: number;
+    readonly y?: number;
+    readonly color?: number;
+    readonly multicolour?: boolean;
+  }): Promise<RunBasicResult & { details?: SpriteDisplayResult | unknown }> {
+    try {
+      const index = Math.max(0, Math.min(7, Math.floor(options.spriteIndex ?? 0)));
+      const x = Math.max(0, Math.min(511, Math.floor(options.x ?? 100)));
+      const y = Math.max(0, Math.min(255, Math.floor(options.y ?? 100)));
+      const color = normaliseColorNibble(options.color ?? 1);
+      const multicolour = options.multicolour === true;
+      const spriteBytes = Buffer.from(options.spriteBytes);
+      if (spriteBytes.length !== 63) {
+        throw new Error("spriteBytes must be exactly 63 bytes");
+      }
+
+      const spriteSlot = Buffer.alloc(64, 0x00);
+      spriteBytes.copy(spriteSlot, 0, 0, 63);
+
+      const spriteAddress = SPRITE_DATA_BASE_ADDRESS + index * 0x40;
+      const pointerAddress = TEXT_SCREEN_ADDRESS + 0x03F8 + index;
+      const pointerValue = (spriteAddress & 0x3FFF) >> 6;
+      const bitMask = 1 << index;
+
+      const screenRam = new Uint8Array(TEXT_SCREEN_SIZE).fill(SPACE_SCREEN_CODE);
+      screenRam[0x03F8 + index] = pointerValue & 0xFF;
+      const colorRam = new Uint8Array(TEXT_SCREEN_SIZE).fill(DEFAULT_TEXT_FOREGROUND);
+
+      const facade = await this.facadePromise;
+      const currentDd00 = await this.readByteOrDefault(facade, 0xDD00, 0);
+      const currentBorder = await this.readByteOrDefault(facade, 0xD020, DEFAULT_BORDER_COLOR);
+      const currentBackground = await this.readByteOrDefault(facade, 0xD021, DEFAULT_BACKGROUND_COLOR);
+      const currentD010 = await this.readByteOrDefault(facade, 0xD010, 0);
+      const currentD015 = await this.readByteOrDefault(facade, 0xD015, 0);
+      const currentD01C = await this.readByteOrDefault(facade, 0xD01C, 0);
+      const textRegisters = buildVicTextRegisters({
+        currentDd00,
+        borderColor: currentBorder,
+        backgroundColor: currentBackground,
+      });
+      const d010 = (currentD010 & ~bitMask) | (x > 0xFF ? bitMask : 0);
+      const d015 = currentD015 | bitMask;
+      const d01c = (currentD01C & ~bitMask) | (multicolour ? bitMask : 0);
+
+      await facade.writeMemory(spriteAddress, spriteSlot);
+      await facade.writeMemory(TEXT_SCREEN_ADDRESS, screenRam);
+      await facade.writeMemory(TEXT_COLOR_RAM_ADDRESS, colorRam);
+      await facade.writeMemory(0xDD00, Uint8Array.of(textRegisters.dd00));
+      await facade.writeMemory(0xD011, Uint8Array.of(textRegisters.d011));
+      await facade.writeMemory(0xD016, Uint8Array.of(textRegisters.d016));
+      await facade.writeMemory(0xD018, Uint8Array.of(textRegisters.d018));
+      await facade.writeMemory(0xD020, Uint8Array.of(textRegisters.d020));
+      await facade.writeMemory(0xD021, Uint8Array.of(textRegisters.d021));
+      await facade.writeMemory(0xD000 + index * 2, Uint8Array.of(x & 0xFF));
+      await facade.writeMemory(0xD001 + index * 2, Uint8Array.of(y & 0xFF));
+      await facade.writeMemory(0xD010, Uint8Array.of(d010));
+      await facade.writeMemory(0xD015, Uint8Array.of(d015));
+      await facade.writeMemory(0xD01C, Uint8Array.of(d01c));
+      await facade.writeMemory(0xD027 + index, Uint8Array.of(color));
+
+      return {
+        success: true,
+        details: {
+          bank: 0,
+          spriteAddress: this.formatAddress(spriteAddress),
+          screenAddress: this.formatAddress(TEXT_SCREEN_ADDRESS),
+          colorRamAddress: this.formatAddress(TEXT_COLOR_RAM_ADDRESS),
+          pointerAddress: this.formatAddress(pointerAddress),
+          pointerValue,
+          registers: {
+            ...textRegisters,
+            d010,
+            d015,
+            d01c,
+          },
+          index,
+          x,
+          y,
+          color,
+          multicolour,
+          spriteByteLength: spriteBytes.length,
+        } satisfies SpriteDisplayResult,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        details: this.normaliseError(error),
+      };
+    }
+  }
+
+  async displayBitmap(bitmap: PreparedVicBitmap, options?: {
+    readonly bitmapAddress?: number;
+    readonly screenAddress?: number;
+  }): Promise<RunBasicResult & { details?: BitmapDisplayResult | unknown }> {
+    try {
+      const layout = resolveVicBitmapMemoryLayout(
+        options?.bitmapAddress ?? 0x2000,
+        options?.screenAddress ?? 0x0400,
+      );
+      const facade = await this.facadePromise;
+      await facade.writeMemory(layout.bitmapAddress, bitmap.bitmapData);
+      await facade.writeMemory(layout.screenAddress, bitmap.screenRam);
+      await facade.writeMemory(layout.colorRamAddress, bitmap.colorRam);
+
+      let currentDd00 = 0;
+      try {
+        const dd00 = await facade.readMemory(0xDD00, 1);
+        currentDd00 = dd00[0] ?? 0;
+      } catch {
+        currentDd00 = 0;
+      }
+
+      const registers = buildVicBitmapRegisters(layout, {
+        mode: bitmap.mode,
+        backgroundColor: bitmap.backgroundColor,
+        borderColor: bitmap.borderColor,
+        currentDd00,
+      });
+
+      await facade.writeMemory(0xDD00, Uint8Array.of(registers.dd00));
+      await facade.writeMemory(0xD011, Uint8Array.of(registers.d011));
+      await facade.writeMemory(0xD016, Uint8Array.of(registers.d016));
+      await facade.writeMemory(0xD018, Uint8Array.of(registers.d018));
+      await facade.writeMemory(0xD020, Uint8Array.of(registers.d020));
+      await facade.writeMemory(0xD021, Uint8Array.of(registers.d021));
+
+      return {
+        success: true,
+        details: {
+          mode: bitmap.mode,
+          bank: layout.bank,
+          bitmapAddress: this.formatAddress(layout.bitmapAddress),
+          screenAddress: this.formatAddress(layout.screenAddress),
+          colorRamAddress: this.formatAddress(layout.colorRamAddress),
+          registers,
+          bitmapBytes: bitmap.bitmapData.length,
+          screenBytes: bitmap.screenRam.length,
+          colorRamBytes: bitmap.colorRam.length,
+        } satisfies BitmapDisplayResult,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        details: this.normaliseError(error),
+      };
+    }
+  }
+
   async uploadAndRunAsm(program: string): Promise<RunBasicResult> {
     const prg = assemblyToPrg(program);
     return this.runPrg(prg);
@@ -144,7 +566,7 @@ export class C64Client {
 
   async runPrg(prg: Uint8Array | Buffer): Promise<RunBasicResult> {
     try {
-      if (process.env.C64_TEST_TARGET === "mock") {
+      if (await this.shouldUseC64uMockBypass()) {
         const payload = Buffer.isBuffer(prg) ? prg : Buffer.from(prg);
         const response = await this.api.v1.runnersRunPrgCreate(":run_prg", payload as any, {
           headers: { "Content-Type": "application/octet-stream" },
@@ -222,14 +644,15 @@ export class C64Client {
   }
 
   async readScreen(): Promise<string> {
-    // Exposed as MCP tool: read_screen
-    const bytes = await this.readMemoryRaw(0x0400, 0x03e8);
-    return screenCodesToAscii(bytes, { columns: 40, rows: 25 });
+    return withDiagnosticSpan("client", "read_screen", {}, async () => {
+      const bytes = await this.readMemoryRaw(0x0400, 0x03e8);
+      return screenCodesToAscii(bytes, { columns: 40, rows: 25 });
+    });
   }
 
   async reset(): Promise<{ success: boolean; details?: unknown }> {
     try {
-      if (process.env.C64_TEST_TARGET === "mock") {
+      if (await this.shouldUseC64uMockBypass()) {
         const response = await this.api.v1.machineResetUpdate(":reset");
         return { success: true, details: response.data };
       }
@@ -243,7 +666,7 @@ export class C64Client {
 
   async reboot(): Promise<{ success: boolean; details?: unknown }> {
     try {
-      if (process.env.C64_TEST_TARGET === "mock") {
+      if (await this.shouldUseC64uMockBypass()) {
         const response = await this.api.v1.machineRebootUpdate(":reboot");
         return { success: true, details: response.data };
       }
@@ -445,18 +868,18 @@ export class C64Client {
   // --- Additional API wrappers to cover full REST surface ---
 
   async version(): Promise<unknown> {
-    const res = await this.api.v1.versionList();
-    return res.data;
+    const facade = await this.facadePromise;
+    return facade.version();
   }
 
   async info(): Promise<unknown> {
-    const res = await this.api.v1.infoList();
-    return res.data;
+    const facade = await this.facadePromise;
+    return facade.info();
   }
 
   async pause(): Promise<RunBasicResult> {
     try {
-      if (process.env.C64_TEST_TARGET === "mock") {
+      if (await this.shouldUseC64uMockBypass()) {
         const res = await this.api.v1.machinePauseUpdate(":pause");
         return { success: true, details: res.data };
       }
@@ -467,7 +890,7 @@ export class C64Client {
 
   async resume(): Promise<RunBasicResult> {
     try {
-      if (process.env.C64_TEST_TARGET === "mock") {
+      if (await this.shouldUseC64uMockBypass()) {
         const res = await this.api.v1.machineResumeUpdate(":resume");
         return { success: true, details: res.data };
       }
@@ -481,7 +904,7 @@ export class C64Client {
 
   async menuButton(): Promise<RunBasicResult> {
     try {
-      if (process.env.C64_TEST_TARGET === "mock") {
+      if (await this.shouldUseC64uMockBypass()) {
         const res = await this.api.v1.machineMenuButtonUpdate(":menu_button");
         return { success: true, details: res.data };
       }
@@ -491,7 +914,7 @@ export class C64Client {
 
   async debugregRead(): Promise<{ success: boolean; value?: string; details?: unknown }> {
     try {
-      if (process.env.C64_TEST_TARGET === "mock") {
+      if (await this.shouldUseC64uMockBypass()) {
         const res = await this.api.v1.machineDebugregList(":debugreg");
         return { success: true, value: (res.data as any).value, details: res.data };
       }
@@ -501,7 +924,7 @@ export class C64Client {
 
   async debugregWrite(value: string): Promise<{ success: boolean; value?: string; details?: unknown }> {
     try {
-      if (process.env.C64_TEST_TARGET === "mock") {
+      if (await this.shouldUseC64uMockBypass()) {
         const res = await this.api.v1.machineDebugregUpdate(":debugreg", { value });
         return { success: true, value: (res.data as any).value, details: res.data };
       }
@@ -540,7 +963,7 @@ export class C64Client {
   async driveLoadRom(drive: string, path: string): Promise<RunBasicResult> {
     try {
       if (!drive || !path) throw new Error("Drive and path are required");
-      if (process.env.C64_TEST_TARGET === "mock") {
+      if (await this.shouldUseC64uMockBypass()) {
         const res = await this.api.v1.drivesLoadRomUpdate(drive, ":load_rom", { file: path });
         return { success: true, details: res.data };
       }
@@ -564,12 +987,52 @@ export class C64Client {
     try { const facade = await this.facadePromise; return await facade.streamStop(stream); } catch (error) { return { success: false, details: this.normaliseError(error) }; }
   }
 
+  async prepareVideoCapture(options?: { readonly keepAliveMs?: number }): Promise<void> {
+    const keepAliveMs = Math.max(0, Math.trunc(options?.keepAliveMs ?? 1_000));
+    const facade = await this.facadePromise;
+    if (facade.type !== "c64u") {
+      throw new Error("Reusable video capture is only available on C64 Ultimate");
+    }
+    await this.ensureC64uVideoCaptureSession(facade);
+    this.scheduleC64uVideoCaptureStop(keepAliveMs);
+  }
+
+  async releaseVideoCapture(): Promise<void> {
+    await this.stopC64uVideoCaptureSession();
+  }
+
+  async captureFrames(options?: { readonly count?: number; readonly reuseSession?: boolean; readonly keepAliveMs?: number }): Promise<FrameCaptureResult> {
+    return withDiagnosticSpan("client", "capture_frames", { count: options?.count ?? 1, reuseSession: options?.reuseSession === true }, async () => {
+      const requestedCount = Math.max(1, Math.min(32, Math.trunc(options?.count ?? 1)));
+      const facade = await this.facadePromise;
+      if (facade.type === "vice") {
+        return this.captureViceFrames(requestedCount);
+      }
+
+      return this.captureC64uVideoFrames(facade, requestedCount, {
+        reuseSession: options?.reuseSession === true,
+        keepAliveMs: Math.max(0, Math.trunc(options?.keepAliveMs ?? 0)),
+      });
+    });
+  }
+
+  async captureSamples(options?: { readonly count?: number }): Promise<SampleCaptureResult> {
+    const requestedPairs = Math.max(1, Math.min(65_536, Math.trunc(options?.count ?? 256)));
+    const facade = await this.facadePromise;
+    if (facade.type !== "c64u") {
+      throw new Error("Audio sample capture is only available on C64 Ultimate");
+    }
+    return this.captureC64uAudioSamples(facade, requestedPairs);
+  }
+
   async configsList(): Promise<unknown> {
-    const facade = await this.facadePromise; return facade.configsList();
+    const facade = await this.facadePromise;
+    return facade.configsList();
   }
 
   async configGet(category: string, item?: string): Promise<unknown> {
-    const facade = await this.facadePromise; return facade.configGet(category, item);
+    const facade = await this.facadePromise;
+    return facade.configGet(category, item);
   }
 
   async configSet(category: string, item: string, value: string): Promise<RunBasicResult> {
@@ -661,6 +1124,554 @@ export class C64Client {
     return new Uint8Array();
   }
 
+  private async captureC64uVideoFrames(
+    facade: C64Facade,
+    count: number,
+    options: { readonly reuseSession?: boolean; readonly keepAliveMs?: number } = {},
+  ): Promise<FrameCaptureResult> {
+    if (options.reuseSession) {
+      const session = await this.ensureC64uVideoCaptureSession(facade);
+      const frames = await this.collectFramesFromC64uVideoCaptureSession(session, count, { fresh: true });
+      this.scheduleC64uVideoCaptureStop(options.keepAliveMs ?? 0);
+      return { backend: "c64u", frames };
+    }
+
+    const host = new URL(this.baseUrl).hostname;
+    const bindAddress = await this.resolveLocalCaptureAddress(host);
+    const socket = createSocket("udp4");
+    const packets: ReturnType<typeof parseVideoPacket>[] = [];
+    let stopError: Error | null = null;
+
+    try {
+      await this.bindCaptureSocket(socket, bindAddress);
+      const target = this.socketEndpoint(socket, bindAddress);
+      await this.ensureStreamSuccess(await facade.streamStart("video", target), "start video stream");
+
+      const frames = await new Promise<readonly CapturedFrame[]>((resolve, reject) => {
+        const timeoutMs = Math.max(1_500, count * 750);
+        const timer = setTimeout(() => {
+          reject(new Error(`Timed out after ${timeoutMs}ms while capturing ${count} video frame(s)`));
+        }, timeoutMs);
+
+        socket.on("message", (msg) => {
+          try {
+            const packet = this.parseVideoPacketOrNull(Buffer.from(msg));
+            if (!packet) {
+              return;
+            }
+            packets.push(packet);
+            const frames = collectCompleteVideoFrames(packets, count);
+            if (frames.length >= count) {
+              clearTimeout(timer);
+              resolve(frames);
+            }
+          } catch (error) {
+            clearTimeout(timer);
+            reject(error);
+          }
+        });
+
+        socket.once("error", (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+      });
+
+      return { backend: "c64u", frames };
+    } finally {
+      try {
+        await this.ensureStreamSuccess(await facade.streamStop("video"), "stop video stream");
+      } catch (error) {
+        stopError = error instanceof Error ? error : new Error(String(error));
+      }
+      socket.close();
+      if (stopError) {
+        throw stopError;
+      }
+    }
+  }
+
+  private async ensureC64uVideoCaptureSession(facade: C64Facade): Promise<C64uVideoCaptureSession> {
+    const existing = this.c64uVideoCaptureSession;
+    if (existing && !existing.closed && existing.facade === facade) {
+      if (existing.stopTimer) {
+        clearTimeout(existing.stopTimer);
+        existing.stopTimer = null;
+      }
+      if (existing.error) {
+        throw existing.error;
+      }
+      return existing;
+    }
+
+    await this.stopC64uVideoCaptureSession();
+
+    const host = new URL(this.baseUrl).hostname;
+    const bindAddress = await this.resolveLocalCaptureAddress(host);
+    const socket = createSocket("udp4");
+    await this.bindCaptureSocket(socket, bindAddress);
+    const target = this.socketEndpoint(socket, bindAddress);
+
+    const session: C64uVideoCaptureSession = {
+      facade,
+      socket,
+      bindAddress,
+      target,
+      packets: [],
+      waiters: [],
+      stopTimer: null,
+      closed: false,
+      error: null,
+    };
+
+    socket.on("message", (msg) => {
+      if (session.closed) {
+        return;
+      }
+      const packet = this.parseVideoPacketOrNull(Buffer.from(msg));
+      if (!packet) {
+        return;
+      }
+      session.packets.push(packet);
+      this.flushC64uVideoCaptureWaiters(session);
+    });
+
+    socket.on("error", (error) => {
+      const err = error instanceof Error ? error : new Error(String(error));
+      session.error = err;
+      this.rejectC64uVideoCaptureWaiters(session, err);
+    });
+
+    try {
+      await this.ensureStreamSuccess(await facade.streamStart("video", target), "start video stream");
+    } catch (error) {
+      session.closed = true;
+      socket.close();
+      throw error;
+    }
+
+    this.c64uVideoCaptureSession = session;
+    return session;
+  }
+
+  private async collectFramesFromC64uVideoCaptureSession(
+    session: C64uVideoCaptureSession,
+    count: number,
+    options: { readonly fresh?: boolean } = {},
+  ): Promise<readonly CapturedFrame[]> {
+    if (session.error) {
+      throw session.error;
+    }
+    const startIndex = options.fresh ? session.packets.length : 0;
+    const existingFrames = collectCompleteVideoFrames(session.packets.slice(startIndex), count);
+    if (existingFrames.length >= count) {
+      return existingFrames;
+    }
+
+    return await new Promise<readonly CapturedFrame[]>((resolve, reject) => {
+      const timeoutMs = Math.max(1_500, count * 750);
+      const timer = setTimeout(() => {
+        const waiterIndex = session.waiters.indexOf(waiter);
+        if (waiterIndex >= 0) {
+          session.waiters.splice(waiterIndex, 1);
+        }
+        reject(new Error(`Timed out after ${timeoutMs}ms while capturing ${count} video frame(s)`));
+      }, timeoutMs);
+
+      const waiter = {
+        count,
+        startIndex,
+        resolve: (frames: readonly CapturedFrame[]) => {
+          clearTimeout(timer);
+          resolve(frames);
+        },
+        reject: (error: Error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+        timer,
+      };
+
+      session.waiters.push(waiter);
+      this.flushC64uVideoCaptureWaiters(session);
+    });
+  }
+
+  private flushC64uVideoCaptureWaiters(session: C64uVideoCaptureSession): void {
+    for (let index = session.waiters.length - 1; index >= 0; index -= 1) {
+      const waiter = session.waiters[index];
+      const frames = collectCompleteVideoFrames(session.packets.slice(waiter.startIndex), waiter.count);
+      if (frames.length >= waiter.count) {
+        session.waiters.splice(index, 1);
+        waiter.resolve(frames);
+      }
+    }
+  }
+
+  private rejectC64uVideoCaptureWaiters(session: C64uVideoCaptureSession, error: Error): void {
+    while (session.waiters.length > 0) {
+      const waiter = session.waiters.pop();
+      if (waiter) {
+        waiter.reject(error);
+      }
+    }
+  }
+
+  private scheduleC64uVideoCaptureStop(keepAliveMs: number): void {
+    const session = this.c64uVideoCaptureSession;
+    if (!session || session.closed) {
+      return;
+    }
+    if (session.stopTimer) {
+      clearTimeout(session.stopTimer);
+      session.stopTimer = null;
+    }
+    if (keepAliveMs <= 0) {
+      void this.stopC64uVideoCaptureSession().catch(() => {});
+      return;
+    }
+    session.stopTimer = setTimeout(() => {
+      void this.stopC64uVideoCaptureSession().catch(() => {});
+    }, keepAliveMs);
+  }
+
+  private async stopC64uVideoCaptureSession(): Promise<void> {
+    const session = this.c64uVideoCaptureSession;
+    if (!session) {
+      return;
+    }
+    this.c64uVideoCaptureSession = null;
+    session.closed = true;
+    if (session.stopTimer) {
+      clearTimeout(session.stopTimer);
+      session.stopTimer = null;
+    }
+
+    let stopError: Error | null = null;
+    try {
+      await this.ensureStreamSuccess(await session.facade.streamStop("video"), "stop video stream");
+    } catch (error) {
+      stopError = error instanceof Error ? error : new Error(String(error));
+    } finally {
+      session.socket.close();
+      this.rejectC64uVideoCaptureWaiters(session, stopError ?? new Error("Video capture session closed"));
+    }
+
+    if (stopError) {
+      throw stopError;
+    }
+  }
+
+  private async captureViceFrames(count: number): Promise<FrameCaptureResult> {
+    const viceFacade = await this.requireViceBackend();
+
+    const frames: CapturedFrame[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const snapshot = await this.captureViceDisplaySnapshot(viceFacade);
+      frames.push(this.normaliseViceDisplaySnapshot(snapshot));
+    }
+
+    return { backend: "vice", frames };
+  }
+
+  private async captureViceDisplaySnapshot(viceFacade: ViceBackend): Promise<{
+    readonly debugWidth: number;
+    readonly debugHeight: number;
+    readonly offsetX?: number;
+    readonly offsetY?: number;
+    readonly innerWidth?: number;
+    readonly innerHeight?: number;
+    readonly bitsPerPixel: number;
+    readonly pixels: Uint8Array | Buffer;
+  }> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 8; attempt += 1) {
+      try {
+        const snapshot = await viceFacade.withMonitor((client) => client.displayGet({}));
+        if (snapshot.pixels.length > 0) {
+          return snapshot;
+        }
+        lastError = new Error("VICE display capture returned an empty frame");
+      } catch (error) {
+        lastError = error;
+      }
+      if (attempt < 8) {
+        await new Promise((resolve) => setTimeout(resolve, Math.min(1_000, 150 * attempt)));
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError ?? "VICE display capture failed"));
+  }
+
+  private async captureC64uAudioSamples(
+    facade: C64Facade,
+    samplePairs: number,
+  ): Promise<SampleCaptureResult> {
+    const host = new URL(this.baseUrl).hostname;
+    const bindAddress = await this.resolveLocalCaptureAddress(host);
+    const socket = createSocket("udp4");
+    const chunks: Int16Array[] = [];
+    let collectedValues = 0;
+    let stopError: Error | null = null;
+
+    try {
+      await this.bindCaptureSocket(socket, bindAddress);
+      const target = this.socketEndpoint(socket, bindAddress);
+      await this.ensureStreamSuccess(await facade.streamStart("audio", target), "start audio stream");
+
+      const neededValues = samplePairs * 2;
+      await new Promise<void>((resolve, reject) => {
+        const timeoutMs = Math.max(1_000, Math.ceil(samplePairs / 192) * 500);
+        const timer = setTimeout(() => {
+          reject(new Error(`Timed out after ${timeoutMs}ms while capturing ${samplePairs} audio sample pair(s)`));
+        }, timeoutMs);
+
+        socket.on("message", (msg) => {
+          try {
+            const packet = parseAudioPacket(Buffer.from(msg));
+            chunks.push(packet.samples);
+            collectedValues += packet.samples.length;
+            if (collectedValues >= neededValues) {
+              clearTimeout(timer);
+              resolve();
+            }
+          } catch (error) {
+            clearTimeout(timer);
+            reject(error);
+          }
+        });
+
+        socket.once("error", (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+      });
+
+      const samples = new Int16Array(samplePairs * 2);
+      let offset = 0;
+      for (const chunk of chunks) {
+        const remaining = samples.length - offset;
+        if (remaining <= 0) {
+          break;
+        }
+        samples.set(chunk.subarray(0, remaining), offset);
+        offset += Math.min(chunk.length, remaining);
+      }
+
+      return {
+        backend: "c64u",
+        channels: 2,
+        sampleRateHz: await this.getC64uAudioSampleRate(facade),
+        samplePairs,
+        samples,
+      };
+    } finally {
+      try {
+        await this.ensureStreamSuccess(await facade.streamStop("audio"), "stop audio stream");
+      } catch (error) {
+        stopError = error instanceof Error ? error : new Error(String(error));
+      }
+      socket.close();
+      if (stopError) {
+        throw stopError;
+      }
+    }
+  }
+
+  private async getC64uAudioSampleRate(facade: C64Facade): Promise<number> {
+    try {
+      const response = await facade.configGet("Video", "Mode");
+      const raw = (response as { value?: unknown })?.value ?? response;
+      const mode = typeof raw === "string" ? raw.trim().toUpperCase() : "";
+      if (mode.includes("NTSC")) {
+        return C64U_NTSC_AUDIO_SAMPLE_RATE;
+      }
+    } catch {
+      // Fall back to PAL below.
+    }
+    return C64U_PAL_AUDIO_SAMPLE_RATE;
+  }
+
+  private async resolveLocalCaptureAddress(remoteHost: string): Promise<string> {
+    const socket = createSocket("udp4");
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once("error", reject);
+        socket.connect(64, remoteHost, () => {
+          socket.off("error", reject);
+          resolve();
+        });
+      });
+      const address = socket.address();
+      if (typeof address === "object" && address.address) {
+        return address.address;
+      }
+    } catch {
+      // Fall back below.
+    } finally {
+      socket.close();
+    }
+    return "127.0.0.1";
+  }
+
+  private async bindCaptureSocket(socket: Socket, bindAddress: string): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      socket.once("error", reject);
+      socket.bind(0, bindAddress, () => {
+        socket.off("error", reject);
+        resolve();
+      });
+    });
+  }
+
+  private socketEndpoint(socket: Socket, bindAddress: string): string {
+    const address = socket.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Unable to determine UDP capture socket endpoint");
+    }
+    return `${bindAddress}:${address.port}`;
+  }
+
+  private async ensureStreamSuccess(result: RunBasicResult, action: string): Promise<void> {
+    if (result.success) {
+      return;
+    }
+    throw new Error(`Failed to ${action}: ${JSON.stringify(result.details ?? null)}`);
+  }
+
+  private parseVideoPacketOrNull(payload: Buffer): ReturnType<typeof parseVideoPacket> | null {
+    try {
+      return parseVideoPacket(payload);
+    } catch (error) {
+      writeDiagnosticEvent("capture_video_packet_ignored", {
+        message: error instanceof Error ? error.message : String(error),
+        bytes: payload.length,
+      });
+      return null;
+    }
+  }
+
+  private normaliseViceDisplaySnapshot(snapshot: {
+    readonly debugWidth: number;
+    readonly debugHeight: number;
+    readonly offsetX?: number;
+    readonly offsetY?: number;
+    readonly innerWidth?: number;
+    readonly innerHeight?: number;
+    readonly bitsPerPixel: number;
+    readonly pixels: Uint8Array | Buffer;
+  }): CapturedFrame {
+    const bytesPerPixel = snapshot.bitsPerPixel > 0 && snapshot.bitsPerPixel % 8 === 0
+      ? snapshot.bitsPerPixel / 8
+      : 0;
+    const pixels = Uint8Array.from(snapshot.pixels);
+    const canCrop = bytesPerPixel > 0
+      && snapshot.debugWidth > 0
+      && snapshot.debugHeight > 0
+      && pixels.length >= snapshot.debugWidth * snapshot.debugHeight * bytesPerPixel;
+
+    if (!canCrop) {
+      return {
+        frameNumber: null,
+        width: snapshot.debugWidth,
+        height: snapshot.debugHeight,
+        bitsPerPixel: snapshot.bitsPerPixel,
+        pixels,
+        complete: true,
+      };
+    }
+
+    const innerWidth = typeof snapshot.innerWidth === "number" && snapshot.innerWidth > 0
+      ? snapshot.innerWidth
+      : snapshot.debugWidth;
+    const innerHeight = typeof snapshot.innerHeight === "number" && snapshot.innerHeight > 0
+      ? snapshot.innerHeight
+      : snapshot.debugHeight;
+    const rowThreshold = Math.max(1, Math.min(innerWidth, snapshot.debugWidth, 32));
+    const columnThreshold = Math.max(1, Math.min(innerHeight, snapshot.debugHeight, 32));
+
+    const isPixelVisible = (pixelIndex: number): boolean => {
+      const offset = pixelIndex * bytesPerPixel;
+      for (let byteIndex = 0; byteIndex < bytesPerPixel; byteIndex += 1) {
+        if ((pixels[offset + byteIndex] ?? 0) !== 0) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    const rowVisibleCounts = new Array<number>(snapshot.debugHeight).fill(0);
+    for (let row = 0; row < snapshot.debugHeight; row += 1) {
+      let visiblePixels = 0;
+      const rowStart = row * snapshot.debugWidth;
+      for (let column = 0; column < snapshot.debugWidth; column += 1) {
+        if (isPixelVisible(rowStart + column)) {
+          visiblePixels += 1;
+        }
+      }
+      rowVisibleCounts[row] = visiblePixels;
+    }
+
+    const top = rowVisibleCounts.findIndex((count) => count >= rowThreshold);
+    const bottom = rowVisibleCounts.length - 1 - [...rowVisibleCounts].reverse().findIndex((count) => count >= rowThreshold);
+
+    if (top < 0 || bottom < top) {
+      return {
+        frameNumber: null,
+        width: snapshot.debugWidth,
+        height: snapshot.debugHeight,
+        bitsPerPixel: snapshot.bitsPerPixel,
+        pixels,
+        complete: true,
+      };
+    }
+
+    const columnVisibleCounts = new Array<number>(snapshot.debugWidth).fill(0);
+    for (let column = 0; column < snapshot.debugWidth; column += 1) {
+      let visiblePixels = 0;
+      for (let row = top; row <= bottom; row += 1) {
+        if (isPixelVisible((row * snapshot.debugWidth) + column)) {
+          visiblePixels += 1;
+        }
+      }
+      columnVisibleCounts[column] = visiblePixels;
+    }
+
+    const left = columnVisibleCounts.findIndex((count) => count >= columnThreshold);
+    const right = columnVisibleCounts.length - 1 - [...columnVisibleCounts].reverse().findIndex((count) => count >= columnThreshold);
+
+    if (left < 0 || right < left) {
+      return {
+        frameNumber: null,
+        width: snapshot.debugWidth,
+        height: snapshot.debugHeight,
+        bitsPerPixel: snapshot.bitsPerPixel,
+        pixels,
+        complete: true,
+      };
+    }
+
+    const croppedWidth = right - left + 1;
+    const croppedHeight = bottom - top + 1;
+
+    const rowStride = snapshot.debugWidth * bytesPerPixel;
+    const croppedRowStride = croppedWidth * bytesPerPixel;
+    const cropped = new Uint8Array(croppedRowStride * croppedHeight);
+    for (let row = 0; row < croppedHeight; row += 1) {
+      const sourceStart = ((top + row) * rowStride) + (left * bytesPerPixel);
+      const sourceEnd = sourceStart + croppedRowStride;
+      cropped.set(pixels.subarray(sourceStart, sourceEnd), row * croppedRowStride);
+    }
+
+    return {
+      frameNumber: null,
+      width: croppedWidth,
+      height: croppedHeight,
+      bitsPerPixel: snapshot.bitsPerPixel,
+      pixels: cropped,
+      complete: true,
+    };
+  }
+
   /**
    * Low-level memory read that transparently handles devices returning either
    * raw binary bytes or JSON with a base64 payload.
@@ -696,6 +1707,86 @@ export class C64Client {
     return body instanceof ArrayBuffer ? new Uint8Array(body) : this.extractBytes(body);
   }
 
+    async viceCheckpointList(): Promise<ViceCheckpoint[]> {
+      return this.withViceMonitor((client) => client.checkpointList());
+    }
+
+    async viceCheckpointGet(id: number): Promise<ViceCheckpoint> {
+      return this.withViceMonitor((client) => client.checkpointGet(id));
+    }
+
+    async viceCheckpointCreate(options: ViceCheckpointCreateOptions): Promise<ViceCheckpoint> {
+      const payload: ViceCheckpointCreateOptions =
+        options.memspace === undefined
+          ? options
+          : { ...options, memspace: this.normaliseMemspace(options.memspace) };
+      return this.withViceMonitor((client) => client.checkpointCreate(payload));
+    }
+
+    async viceCheckpointDelete(id: number): Promise<void> {
+      await this.withViceMonitor((client) => client.checkpointDelete(id));
+    }
+
+    async viceCheckpointToggle(id: number, enabled: boolean): Promise<void> {
+      await this.withViceMonitor((client) => client.checkpointToggle(id, enabled));
+    }
+
+    async viceCheckpointSetCondition(id: number, expression: string): Promise<void> {
+      await this.withViceMonitor((client) => client.checkpointSetCondition(id, expression));
+    }
+
+    async viceRegistersAvailable(memspace: number = 0): Promise<ViceRegisterMetadata[]> {
+      const space = this.normaliseMemspace(memspace);
+      return this.withViceMonitor((client) => client.registersAvailable(space));
+    }
+
+    async viceRegistersGet(memspace: number = 0): Promise<ViceRegisterValue[]> {
+      const space = this.normaliseMemspace(memspace);
+      return this.withViceMonitor((client) => client.registersGet(space));
+    }
+
+    async viceRegistersSet(
+      writes: readonly ViceRegisterWrite[],
+      options?: { readonly memspace?: number; readonly metadata?: readonly ViceRegisterMetadata[] },
+    ): Promise<ViceRegisterValue[]> {
+      let payload: { readonly memspace?: ViceMemspace; readonly metadata?: readonly ViceRegisterMetadata[] } | undefined;
+      if (options) {
+        payload = {
+          ...(options.metadata ? { metadata: options.metadata } : {}),
+          ...(options.memspace !== undefined ? { memspace: this.normaliseMemspace(options.memspace) } : {}),
+        };
+      }
+      return this.withViceMonitor((client) => client.registersSet(writes, payload));
+    }
+
+    async viceStepInstructions(count = 1, options?: { readonly stepOver?: boolean }): Promise<void> {
+      await this.withViceMonitor((client) => client.stepInstructions(count, options));
+    }
+
+    async viceStepReturn(): Promise<void> {
+      await this.withViceMonitor((client) => client.stepReturn());
+    }
+
+    async viceResourceGet(name: string): Promise<ViceResourceValue> {
+      return this.withViceMonitor((client) => client.resourceGet(name));
+    }
+
+    async viceResourceSet(name: string, value: string | number): Promise<void> {
+      await this.withViceMonitor((client) => client.resourceSet(name, value));
+    }
+
+    private normaliseMemspace(value: number | undefined): ViceMemspace {
+      const allowed: readonly ViceMemspace[] = [0, 1, 2, 3, 4];
+      if (value === undefined) {
+        return 0;
+      }
+      const numeric = Number(value);
+      if (allowed.includes(numeric as ViceMemspace)) {
+        return numeric as ViceMemspace;
+      }
+      return 0;
+    }
+
   private normaliseError(error: unknown): unknown {
     if (axios.isAxiosError(error)) {
       return {
@@ -710,6 +1801,54 @@ export class C64Client {
     }
 
     return error;
+  }
+
+  private async readByteOrDefault(facade: C64Facade, address: number, fallback: number): Promise<number> {
+    try {
+      const bytes = await facade.readMemory(address, 1);
+      return bytes[0] ?? fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  private async getGreetingDd00(type: DeviceType, facade: C64Facade): Promise<number> {
+    const cached = this.greetingDd00Cache.get(type);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    let warmup = this.greetingDd00Warmups.get(type);
+    if (!warmup) {
+      warmup = this.readByteOrDefault(facade, 0xDD00, 0).then((value) => {
+        this.greetingDd00Cache.set(type, value);
+        return value;
+      }).finally(() => {
+        this.greetingDd00Warmups.delete(type);
+      });
+      this.greetingDd00Warmups.set(type, warmup);
+    }
+
+    return warmup;
+  }
+
+  private async primeGreetingDd00Cache(types?: readonly DeviceType[]): Promise<void> {
+    await this.initPromise;
+    const targets = (types && types.length > 0 ? [...types] : this.getAvailableBackends()).filter(
+      (type, index, all) => all.indexOf(type) === index,
+    );
+    await Promise.all(targets.map(async (type) => {
+      const facadePromise = this.allFacades.get(type);
+      if (!facadePromise) {
+        return;
+      }
+      try {
+        const facade = await facadePromise;
+        await this.getGreetingDd00(type, facade);
+      } catch {
+        // Keep greeting prewarm best-effort; renderGreetingScreen still falls back safely.
+      }
+    }));
   }
 
   private parseNumeric(value: string): number {
@@ -816,6 +1955,91 @@ export class C64Client {
 function toByte(value: number | undefined, fallback = 0): number {
   const v = value ?? fallback;
   return Math.max(0, Math.min(255, v)) & 0xff;
+}
+
+function normaliseColorNibble(value: number): number {
+  return Math.max(0, Math.min(0x0F, Math.floor(value))) & 0x0F;
+}
+
+function buildVicTextRegisters(options: {
+  readonly currentDd00?: number;
+  readonly borderColor?: number;
+  readonly backgroundColor?: number;
+}): {
+  readonly dd00: number;
+  readonly d011: number;
+  readonly d016: number;
+  readonly d018: number;
+  readonly d020: number;
+  readonly d021: number;
+} {
+  return {
+    dd00: ((options.currentDd00 ?? 0) & 0xFC) | 0x03,
+    d011: 0x1B,
+    d016: 0x08,
+    d018: 0x14,
+    d020: normaliseColorNibble(options.borderColor ?? DEFAULT_BORDER_COLOR),
+    d021: normaliseColorNibble(options.backgroundColor ?? DEFAULT_BACKGROUND_COLOR),
+  };
+}
+
+function asciiCharToScreenCode(char: string): number {
+  if (char.length !== 1) {
+    return SPACE_SCREEN_CODE;
+  }
+
+  const upper = char.toUpperCase();
+  if (upper >= "A" && upper <= "Z") {
+    return upper.charCodeAt(0) - 64;
+  }
+
+  if (upper >= "0" && upper <= "9") {
+    return upper.charCodeAt(0);
+  }
+
+  switch (upper) {
+    case " ":
+      return SPACE_SCREEN_CODE;
+    case ".":
+      return 0x2E;
+    case ",":
+      return 0x2C;
+    case "!":
+      return 0x21;
+    case ":":
+      return 0x3A;
+    case ";":
+      return 0x3B;
+    case "-":
+      return 0x2D;
+    case "'":
+      return 0x27;
+    case "/":
+      return 0x2F;
+    case "?":
+      return 0x3F;
+    default:
+      return SPACE_SCREEN_CODE;
+  }
+}
+
+function writeScreenLine(screenRam: Uint8Array, row: number, text: string): void {
+  if (row < 0 || row >= TEXT_SCREEN_ROWS) {
+    return;
+  }
+
+  const offset = row * TEXT_SCREEN_COLUMNS;
+  const clipped = text.slice(0, TEXT_SCREEN_COLUMNS);
+  for (let index = 0; index < clipped.length; index += 1) {
+    screenRam[offset + index] = asciiCharToScreenCode(clipped[index] ?? " ");
+  }
+}
+
+function buildGreetingScreenRam(message: string): Uint8Array {
+  const screenRam = new Uint8Array(TEXT_SCREEN_SIZE).fill(SPACE_SCREEN_CODE);
+  writeScreenLine(screenRam, 1, message);
+  writeScreenLine(screenRam, 3, "READY.");
+  return screenRam;
 }
 
 function buildSingleSpriteProgram(opts: {

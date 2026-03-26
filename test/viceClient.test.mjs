@@ -34,6 +34,15 @@ function parseRequest(packet) {
 }
 
 async function listen(server) {
+  const sockets = new Set();
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.once("close", () => {
+      sockets.delete(socket);
+    });
+  });
+  server.__testSockets = sockets;
+
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);
@@ -45,6 +54,10 @@ async function listen(server) {
 }
 
 async function closeServer(server) {
+  server.closeAllConnections?.();
+  for (const socket of server.__testSockets ?? []) {
+    socket.destroy();
+  }
   await new Promise((resolve) => server.close(resolve));
 }
 
@@ -75,6 +88,9 @@ test("ViceClient encodes requests and decodes protocol responses", async (t) => 
           : Buffer.alloc(0);
 
         socket.write(buildResponse(request.reqId, request.cmd, responseBody));
+        if (request.cmd === 0xBB) {
+          queueMicrotask(() => socket.end());
+        }
       }
     });
   });
@@ -219,6 +235,20 @@ test("ViceClient rejects pending requests on socket errors and close is defensiv
 
   await assert.rejects(pending, /socket boom/);
   assert.equal(client.pending.size, 0);
+
+  let closeError = null;
+  client.pending.set(99, {
+    cmd: 0x85,
+    resolve: () => assert.fail("close should reject pending requests"),
+    reject: (error) => {
+      closeError = error;
+    },
+  });
+  client.buffer = Buffer.from([0x01, 0x02]);
+  client.close();
+  assert.match(closeError?.message ?? "", /connection closed/i);
+  assert.equal(client.pending.size, 0);
+  assert.equal(client.buffer.length, 0);
 
   const closingClient = new ViceClient();
   closingClient.socket = {

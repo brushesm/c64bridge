@@ -1,6 +1,6 @@
 import test from "#test/runner";
 import assert from "#test/assert";
-import { programRunnersModule } from "../src/tools/programRunners.js";
+import { programOperationHandlers, programRunnersModule } from "../src/tools/programRunners.js";
 import { ToolUnsupportedPlatformError } from "../src/tools/errors.js";
 
 function createLogger() {
@@ -10,6 +10,10 @@ function createLogger() {
     warn() {},
     error() {},
   };
+}
+
+function createPlatformStatus(id) {
+  return { id, features: [], limitedFeatures: [] };
 }
 
 test("run_prg executes via client", async () => {
@@ -47,6 +51,8 @@ test("load_prg returns structured content with path", async () => {
       },
     },
     logger: createLogger(),
+    platform: createPlatformStatus("c64u"),
+    setPlatform: () => createPlatformStatus("c64u"),
   };
 
   const result = await programRunnersModule.invoke(
@@ -101,6 +107,8 @@ test("run_crt returns structured content with path", async () => {
       },
     },
     logger: createLogger(),
+    platform: createPlatformStatus("c64u"),
+    setPlatform: () => createPlatformStatus("c64u"),
   };
 
   const result = await programRunnersModule.invoke(
@@ -131,8 +139,8 @@ test("upload_run_basic is available on vice", async () => {
       },
     },
     logger: createLogger(),
-    platform: { id: "vice", features: [], limitedFeatures: [] },
-    setPlatform: () => ({ id: "vice", features: [], limitedFeatures: [] }),
+    platform: createPlatformStatus("vice"),
+    setPlatform: () => createPlatformStatus("vice"),
   };
 
   const result = await programRunnersModule.invoke(
@@ -161,8 +169,8 @@ test("load_prg rejects vice platform", async () => {
       },
     },
     logger: createLogger(),
-    platform: { id: "vice", features: [], limitedFeatures: [] },
-    setPlatform: () => ({ id: "vice", features: [], limitedFeatures: [] }),
+    platform: createPlatformStatus("vice"),
+    setPlatform: () => createPlatformStatus("vice"),
   };
 
   await assert.rejects(
@@ -179,6 +187,8 @@ test("load_prg validates path", async () => {
       },
     },
     logger: createLogger(),
+    platform: createPlatformStatus("c64u"),
+    setPlatform: () => createPlatformStatus("c64u"),
   };
 
   const result = await programRunnersModule.invoke("load_prg", {}, ctx);
@@ -194,6 +204,8 @@ test("run_crt reports firmware failure", async () => {
       },
     },
     logger: createLogger(),
+    platform: createPlatformStatus("c64u"),
+    setPlatform: () => createPlatformStatus("c64u"),
   };
 
   const result = await programRunnersModule.invoke(
@@ -205,6 +217,43 @@ test("run_crt reports firmware failure", async () => {
   assert.equal(result.isError, true);
   assert.equal(result.metadata.error.kind, "execution");
   assert.deepEqual(result.metadata.error.details, { code: "FAIL" });
+});
+
+test("program operation handlers accept op-tagged args and use shared CRT helper path", async () => {
+  const calls = [];
+  const ctx = {
+    client: {
+      async loadPrgFile(path) {
+        calls.push(["load", path]);
+        return { success: true };
+      },
+      async runPrgFile(path) {
+        calls.push(["run", path]);
+        return { success: true };
+      },
+      async runCrtFile(path) {
+        calls.push(["crt", path]);
+        return { success: true, details: { mounted: true } };
+      },
+    },
+    logger: createLogger(),
+    platform: createPlatformStatus("c64u"),
+    setPlatform: () => createPlatformStatus("c64u"),
+  };
+
+  const loadResult = await programOperationHandlers.load_prg({ op: "load_prg", path: "//USB0/handler.prg" }, ctx);
+  const runResult = await programOperationHandlers.run_prg({ op: "run_prg", path: "//USB0/handler.prg" }, ctx);
+  const crtResult = await programOperationHandlers.run_crt({ op: "run_crt", path: "//USB0/handler.crt" }, ctx);
+
+  assert.equal(loadResult.isError, undefined);
+  assert.equal(runResult.isError, undefined);
+  assert.equal(crtResult.isError, undefined);
+  assert.ok(String(crtResult.content[0].text).includes("loaded and executed"));
+  assert.deepEqual(calls, [
+    ["load", "//USB0/handler.prg"],
+    ["run", "//USB0/handler.prg"],
+    ["crt", "//USB0/handler.crt"],
+  ]);
 });
 
 test("run_prg reports firmware failure", async () => {
@@ -235,6 +284,8 @@ test("load_prg reports firmware failure", async () => {
       },
     },
     logger: createLogger(),
+    platform: createPlatformStatus("c64u"),
+    setPlatform: () => createPlatformStatus("c64u"),
   };
 
   const result = await programRunnersModule.invoke(
@@ -245,6 +296,33 @@ test("load_prg reports firmware failure", async () => {
 
   assert.equal(result.isError, true);
   assert.ok(result.content[0].text.includes("firmware reported failure"));
+});
+
+test("program runners wrap unexpected file execution errors", async () => {
+  const ctx = {
+    client: {
+      async loadPrgFile() {
+        throw new Error("load exploded");
+      },
+      async runPrgFile() {
+        throw new Error("run exploded");
+      },
+      async runCrtFile() {
+        throw new Error("crt exploded");
+      },
+    },
+    logger: createLogger(),
+    platform: createPlatformStatus("c64u"),
+    setPlatform: () => createPlatformStatus("c64u"),
+  };
+
+  const load = await programRunnersModule.invoke("load_prg", { path: "//USB0/a.prg" }, ctx);
+  const run = await programRunnersModule.invoke("run_prg", { path: "//USB0/b.prg" }, ctx);
+  const crt = await programRunnersModule.invoke("run_crt", { path: "//USB0/c.crt" }, ctx);
+
+  assert.equal(load.isError, true);
+  assert.equal(run.isError, true);
+  assert.equal(crt.isError, true);
 });
 
 test("upload_run_basic validates program input", async () => {
@@ -377,6 +455,83 @@ test("upload_run_basic verify true annotates metadata", async () => {
   }
 });
 
+test("upload_run_basic verify reports BASIC runtime error details", async () => {
+  const originalMax = process.env.C64BRIDGE_POLL_MAX_MS;
+  const originalInterval = process.env.C64BRIDGE_POLL_INTERVAL_MS;
+  process.env.C64BRIDGE_POLL_MAX_MS = "40";
+  process.env.C64BRIDGE_POLL_INTERVAL_MS = "1";
+
+  try {
+    let screenReads = 0;
+    const ctx = {
+      client: {
+        async uploadAndRunBasic() {
+          return { success: true, details: { ok: true } };
+        },
+        async readScreen() {
+          screenReads += 1;
+          if (screenReads === 1) {
+            return "RUN\n";
+          }
+          return "?TYPE MISMATCH ERROR IN 30\nREADY.\n";
+        },
+      },
+      logger: createLogger(),
+    };
+
+    const result = await programRunnersModule.invoke(
+      "upload_run_basic",
+      { program: '10 PRINT "HI"\n20 PRINT 2\n30 PRINT "A"+1', verify: true },
+      ctx,
+    );
+
+    assert.equal(result.isError, true);
+    assert.equal(result.metadata.error.kind, "execution");
+    assert.equal(result.metadata.error.details.message, "TYPE MISMATCH");
+    assert.equal(result.metadata.error.details.line, 30);
+  } finally {
+    if (originalMax === undefined) delete process.env.C64BRIDGE_POLL_MAX_MS;
+    else process.env.C64BRIDGE_POLL_MAX_MS = originalMax;
+    if (originalInterval === undefined) delete process.env.C64BRIDGE_POLL_INTERVAL_MS;
+    else process.env.C64BRIDGE_POLL_INTERVAL_MS = originalInterval;
+  }
+});
+
+test("upload_run_basic verify tolerates repeated screen read failures", async () => {
+  const originalMax = process.env.C64BRIDGE_POLL_MAX_MS;
+  const originalInterval = process.env.C64BRIDGE_POLL_INTERVAL_MS;
+  process.env.C64BRIDGE_POLL_MAX_MS = "20";
+  process.env.C64BRIDGE_POLL_INTERVAL_MS = "1";
+
+  try {
+    const ctx = {
+      client: {
+        async uploadAndRunBasic() {
+          return { success: true };
+        },
+        async readScreen() {
+          throw new Error("screen transport offline");
+        },
+      },
+      logger: createLogger(),
+    };
+
+    const result = await programRunnersModule.invoke(
+      "upload_run_basic",
+      { program: '10 PRINT "HI"\n20 END', verify: true },
+      ctx,
+    );
+
+    assert.equal(result.isError, undefined);
+    assert.equal(result.metadata.verified, true);
+  } finally {
+    if (originalMax === undefined) delete process.env.C64BRIDGE_POLL_MAX_MS;
+    else process.env.C64BRIDGE_POLL_MAX_MS = originalMax;
+    if (originalInterval === undefined) delete process.env.C64BRIDGE_POLL_INTERVAL_MS;
+    else process.env.C64BRIDGE_POLL_INTERVAL_MS = originalInterval;
+  }
+});
+
 test("upload_run_basic reports failure when auto-fix not possible", async () => {
   const ctx = {
     client: {
@@ -484,6 +639,39 @@ test("upload_run_basic reports remaining errors after auto-fix retry", async () 
   assert.ok(Array.isArray(data.autoFix.resultingErrors));
   assert.equal(data.autoFix.resultingErrors[0].line, 10);
   assert.equal(uploads.length, 2);
+});
+
+test("upload_run_basic auto-fixes missing closing parenthesis while ignoring REM text", async () => {
+  const uploads = [];
+  const screens = [
+    "?SYNTAX ERROR IN 10\nREADY.\n",
+    "READY.\n",
+  ];
+  const ctx = {
+    client: {
+      async uploadAndRunBasic(program) {
+        uploads.push(program);
+        return { success: true };
+      },
+      async readScreen() {
+        return screens.shift() ?? "READY.\n";
+      },
+    },
+    logger: createLogger(),
+  };
+
+  const result = await programRunnersModule.invoke(
+    "upload_run_basic",
+    { program: '10 PRINT ("DUCKS":REM ")"\n20 END' },
+    ctx,
+  );
+
+  assert.equal(result.isError, undefined);
+  assert.equal(uploads.length, 2);
+  assert.ok(uploads[1] !== uploads[0]);
+  assert.ok(uploads[1].includes('REM ")"'));
+  assert.equal(result.metadata.autoFix.applied, true);
+  assert.ok(result.metadata.autoFix.changes[0].notes.some((note) => note.includes("closing parenthesis")));
 });
 
 test("upload_run_basic handles screen read failures without errors", async () => {
@@ -636,4 +824,103 @@ test("upload_run_asm verify true annotates metadata", async () => {
       process.env.C64BRIDGE_POLL_INTERVAL_MS = originalInterval;
     }
   }
+});
+
+test("upload_run_asm reports crashed programs when verification detects no progress", async () => {
+  const originalMax = process.env.C64BRIDGE_POLL_MAX_MS;
+  const originalInterval = process.env.C64BRIDGE_POLL_INTERVAL_MS;
+  process.env.C64BRIDGE_POLL_MAX_MS = "40";
+  process.env.C64BRIDGE_POLL_INTERVAL_MS = "1";
+
+  try {
+    const ctx = {
+      client: {
+        async uploadAndRunAsm() {
+          return { success: true };
+        },
+        async readScreen() {
+          return "RUN\n";
+        },
+        async readMemoryRaw(address, length) {
+          if (address === 0xD000 || address === 0x0000) {
+            return new Uint8Array(length);
+          }
+          throw new Error(`unexpected address ${address}`);
+        },
+      },
+      logger: createLogger(),
+    };
+
+    const result = await programRunnersModule.invoke(
+      "upload_run_asm",
+      { program: ".org $0801\nstart: rts", verify: true },
+      ctx,
+    );
+
+    assert.equal(result.isError, true);
+    assert.equal(result.metadata.error.kind, "execution");
+    assert.equal(result.metadata.error.details.reason, "no VIC/CIA/TI/screen progression within window");
+  } finally {
+    if (originalMax === undefined) delete process.env.C64BRIDGE_POLL_MAX_MS;
+    else process.env.C64BRIDGE_POLL_MAX_MS = originalMax;
+    if (originalInterval === undefined) delete process.env.C64BRIDGE_POLL_INTERVAL_MS;
+    else process.env.C64BRIDGE_POLL_INTERVAL_MS = originalInterval;
+  }
+});
+
+test("upload_run_asm verify treats repeated screen read failures as instant execution", async () => {
+  const originalMax = process.env.C64BRIDGE_POLL_MAX_MS;
+  const originalInterval = process.env.C64BRIDGE_POLL_INTERVAL_MS;
+  process.env.C64BRIDGE_POLL_MAX_MS = "20";
+  process.env.C64BRIDGE_POLL_INTERVAL_MS = "1";
+
+  try {
+    const ctx = {
+      client: {
+        async uploadAndRunAsm() {
+          return { success: true };
+        },
+        async readScreen() {
+          throw new Error("monitor unavailable");
+        },
+      },
+      logger: createLogger(),
+    };
+
+    const result = await programRunnersModule.invoke(
+      "upload_run_asm",
+      { program: ".org $0801\nstart: rts", verify: true },
+      ctx,
+    );
+
+    assert.equal(result.isError, undefined);
+    assert.equal(result.metadata.verified, true);
+  } finally {
+    if (originalMax === undefined) delete process.env.C64BRIDGE_POLL_MAX_MS;
+    else process.env.C64BRIDGE_POLL_MAX_MS = originalMax;
+    if (originalInterval === undefined) delete process.env.C64BRIDGE_POLL_INTERVAL_MS;
+    else process.env.C64BRIDGE_POLL_INTERVAL_MS = originalInterval;
+  }
+});
+
+test("upload_run_asm reports assembly diagnostics with file and line", async () => {
+  const ctx = {
+    client: {
+      async uploadAndRunAsm() {
+        throw new Error("should not run");
+      },
+    },
+    logger: createLogger(),
+  };
+
+  const result = await programRunnersModule.invoke(
+    "upload_run_asm",
+    { program: ".org $0801\nstart\n lda #$00" },
+    ctx,
+  );
+
+  assert.equal(result.isError, true);
+  assert.equal(result.metadata.error.kind, "validation");
+  assert.ok(typeof result.metadata.error.details.line === "number");
+  assert.ok(String(result.metadata.error.details.message ?? "").length > 0);
 });

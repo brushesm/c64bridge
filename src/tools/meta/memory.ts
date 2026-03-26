@@ -8,6 +8,11 @@ import { dirname, resolve as resolvePath } from "node:path";
 import { createHash } from "node:crypto";
 import { normalizeErrorDetails } from "./util.js";
 
+function supportsMachinePause(ctx: { platform?: { id?: string }; client?: { type?: string } }): boolean {
+  const platformId = ctx.platform?.id ?? ctx.client?.type;
+  return platformId !== "vice";
+}
+
 function hexClean(input: string): string {
   const trimmed = input.trim();
   const withoutPrefix = trimmed.startsWith("$") ? trimmed.slice(1) : trimmed;
@@ -95,9 +100,14 @@ export const tools: ToolDefinition[] = [
         const verifyLen = expectedBytes.length;
         const readLen = Math.max(writeBytes.length, verifyLen);
 
-        const paused = await (ctx.client as any).pause();
-        if (!paused.success) {
-          throw new ToolExecutionError("C64 firmware reported failure while pausing", { details: normalizeErrorDetails(paused.details) });
+        const canPause = supportsMachinePause(ctx as any);
+        let paused = false;
+        if (canPause) {
+          const pauseResult = await (ctx.client as any).pause();
+          if (!pauseResult.success) {
+            throw new ToolExecutionError("C64 firmware reported failure while pausing", { details: normalizeErrorDetails(pauseResult.details) });
+          }
+          paused = true;
         }
 
         let preReadHex: string | undefined;
@@ -154,9 +164,12 @@ export const tools: ToolDefinition[] = [
             wrote: bytesToHex(writeBytes),
             preRead: preReadHex,
             postRead: (post.data as string) ?? "",
+            paused,
           }, { success: true });
         } finally {
-          await (ctx.client as any).resume();
+          if (paused) {
+            await (ctx.client as any).resume();
+          }
         }
       } catch (error) {
         if (error instanceof ToolError) return toolErrorResult(error);
@@ -181,7 +194,8 @@ export const tools: ToolDefinition[] = [
         const outDir = dirname(outputPath);
         await fs.mkdir(outDir, { recursive: true });
 
-        if (pause) {
+        const canPause = pause && supportsMachinePause(ctx as any);
+        if (canPause) {
           const res = await (ctx.client as any).pause();
           if (!res.success) {
             throw new ToolExecutionError("Pause failed before dump", { details: normalizeErrorDetails(res.details) });
@@ -240,12 +254,13 @@ export const tools: ToolDefinition[] = [
             format: (parsed.format ?? "hex").toString().toLowerCase(),
             checksum,
             outputPath,
+            paused: canPause,
             createdAt: new Date().toISOString(),
           };
           await fs.writeFile(`${outputPath}.json`, JSON.stringify(manifest, null, 2), "utf8");
           return jsonResult({ manifest }, { success: true });
         } finally {
-          if (pause) {
+          if (canPause) {
             await (ctx.client as any).resume();
           }
         }

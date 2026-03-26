@@ -41,6 +41,9 @@ function toRecord(details: unknown): Record<string, unknown> | undefined {
 
 const BASIC_MAX_LINE = 63999;
 
+const prgPathDescription = "Path to the PRG image. Use an Ultimate-visible filesystem path on c64u, or a host-local filesystem path on VICE.";
+const crtPathDescription = "Path to the CRT image on Ultimate-visible storage. CRT mounting is only supported on c64u.";
+
 type OperationlessArgs<T extends Record<string, unknown>> = Omit<T, typeof OPERATION_DISCRIMINATOR>;
 
 function stripOperationDiscriminator<T extends Record<string, unknown>>(
@@ -311,10 +314,10 @@ const uploadAsmArgsSchema = objectSchema({
 });
 
 const prgFileArgsSchema = objectSchema({
-  description: "Arguments for loading or running a PRG that already exists on the Ultimate filesystem.",
+  description: "Arguments for loading or running a PRG file.",
   properties: {
     path: stringSchema({
-      description: "Absolute or Ultimate filesystem path to the PRG file (e.g. //USB0/demo.prg).",
+      description: prgPathDescription,
       minLength: 1,
     }),
   },
@@ -323,10 +326,10 @@ const prgFileArgsSchema = objectSchema({
 });
 
 const crtFileArgsSchema = objectSchema({
-  description: "Arguments for running a CRT image stored on the Ultimate filesystem.",
+  description: "Arguments for running a CRT image stored on Ultimate-visible storage.",
   properties: {
     path: stringSchema({
-      description: "Absolute or Ultimate filesystem path to the CRT file (e.g. //USB0/game.crt).",
+      description: crtPathDescription,
       minLength: 1,
     }),
   },
@@ -822,6 +825,7 @@ export const programRunnersModule = defineToolModule({
         "Stage PRG files without running when the user wants to inspect memory first.",
         "Confirm the Ultimate filesystem path (e.g. //USB0/demo.prg) is accessible before invoking.",
       ],
+      supportedPlatforms: ["c64u"] as const,
       async execute(args, ctx) {
         return executeLoadPrg(args, ctx);
       },
@@ -869,6 +873,7 @@ export const programRunnersModule = defineToolModule({
           arguments: { path: "//USB0/game.crt" },
         },
       ],
+      supportedPlatforms: ["c64u"] as const,
       async execute(args, ctx) {
         try {
           const parsed = crtFileArgsSchema.parse(args ?? {});

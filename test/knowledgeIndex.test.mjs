@@ -20,6 +20,20 @@ test("listKnowledgeResources returns expected resources including charset", () =
   assert.equal(charsetResource.name, "PETSCII Character Set Reference");
   assert.equal(charsetResource.mimeType, "text/markdown");
   assert.ok(typeof charsetResource.buildContent === "function", "charset should have buildContent function");
+
+  const fastPathResource = resources.find((r) => r.uri === "c64://context/fast-paths");
+  assert.ok(fastPathResource, "should include fast-path workflow resource");
+  assert.equal(fastPathResource.metadata.priority, "critical");
+});
+
+test("readKnowledgeResource returns fast-path workflow guidance", () => {
+  const result = readKnowledgeResource("c64://context/fast-paths", projectRoot);
+
+  assert.ok(result, "should return a result");
+  assert.equal(result.uri, "c64://context/fast-paths");
+  assert.equal(result.mimeType, "text/markdown");
+  assert.equal(result.text.includes("cross_platform_greeting") || result.text.includes("fuer_elise"), true);
+  assert.equal(result.text.includes("Quick Visible Demo") || result.text.includes("Quick Music Demo"), true);
 });
 
 test("readKnowledgeResource generates charset quickref dynamically", () => {

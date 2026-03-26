@@ -243,7 +243,7 @@ Custom charsets have minimal performance impact:
 
 ## Tool Integration
 
-### Using generate_sprite_prg
+### Using render_sprite
 
 ```javascript
 {
@@ -258,7 +258,7 @@ Custom charsets have minimal performance impact:
 The tool:
 
 - Validates 63-byte sprite format
-- Generates BASIC program to display sprite
+- Writes sprite data directly into RAM
 - Handles sprite pointer and VIC-II register setup
 - Returns structured metadata for follow-up operations
 
@@ -277,8 +277,8 @@ When working with sprites and charsets:
 ### Simple Sprite Display
 
 1. Prepare 24×21 sprite bitmap
-2. Call `generate_sprite_prg` with sprite data
-3. Tool returns PRG that sets up sprite automatically
+2. Call `render_sprite` with sprite data
+3. Tool writes sprite data and patches VIC-II state automatically
 4. Use `read_screen` to verify appearance
 5. Optionally call `c64_memory` `write` to adjust position/colour
 
@@ -303,7 +303,7 @@ When working with sprites and charsets:
 
 1. **Plan Memory Layout**: Map out sprite and charset locations before coding
 2. **Test Incrementally**: Display one sprite/char before adding more
-3. **Use Tools**: Leverage `generate_sprite_prg` and memory tools
+3. **Use Tools**: Leverage `render_sprite` and memory tools
 4. **Document State**: Note which sprites/chars are active
 5. **Handle Errors**: Check return values and screen output
 6. **Optimize Last**: Get it working, then optimize if needed

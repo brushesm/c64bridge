@@ -13,6 +13,9 @@ if (typeof globalThis.Bun !== "undefined") {
 
   function registerTest(name, optionsOrFn, maybeFn, mode) {
     const { options, fn } = parseArgs(name, optionsOrFn, maybeFn);
+    const timeoutOption = typeof options?.timeout === "number" && Number.isFinite(options.timeout)
+      ? Math.max(1, options.timeout)
+      : DEFAULT_TIMEOUT_MS;
 
     const runner = async () => {
       const teardowns = [];
@@ -51,29 +54,16 @@ if (typeof globalThis.Bun !== "undefined") {
     };
 
     const bunOptions = { ...options };
-    if (bunOptions.timeout === undefined) {
-      bunOptions.timeout = DEFAULT_TIMEOUT_MS;
-    }
-
-    const { skip, only, todo, ...callOptions } = bunOptions;
-    const hasOptions = Object.keys(callOptions).length > 0;
+    const { skip, only, todo } = bunOptions;
 
     if (mode === "skip" || skip) {
       bunTest.skip(name, runner);
     } else if (mode === "only" || only) {
-      if (hasOptions) {
-        bunTest.only(name, callOptions, runner);
-      } else {
-        bunTest.only(name, runner);
-      }
+      bunTest.only(name, runner, timeoutOption);
     } else if (mode === "todo" || todo) {
       bunTest.todo(name);
     } else {
-      if (hasOptions) {
-        bunTest(name, callOptions, runner);
-      } else {
-        bunTest(name, runner);
-      }
+      bunTest(name, runner, timeoutOption);
     }
   }
 

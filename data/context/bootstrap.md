@@ -2,6 +2,30 @@
 
 High-level overview for C64 development. For more details, see linked spec documents.
 
+## Backend Selection
+
+Two backends may be available: `c64u` (physical C64 Ultimate hardware) and `vice`
+(VICE emulator). Use `c64_select_backend` to switch.
+
+**Routing rules — call `c64_select_backend` first when the user:**
+- Says "use vice", "on vice", "in the emulator", "via vice", or similar
+- Says "use c64u", "on hardware", "on the Ultimate", "on the real machine", or similar
+- Prefixes a request with a backend name, e.g. "vice: run this program"
+
+Do not assume the current backend is correct without checking
+`c64://platform/status` if the user has expressed a preference.
+
+## Fast Paths
+
+- Grouped MCP tools are never called bare. For tools such as `c64_program`, `c64_memory`, `c64_graphics`, `c64_sound`, and `c64_system`, always send an object with `op` first.
+- Wrong: `c64_program {}`. Correct: `c64_program { op: "cross_platform_greeting" }`.
+- For simple visible confirmation on `vice`, `c64u`, or both, prefer `c64_program` with `op: "cross_platform_greeting"`.
+- For trivial hello-world and smoke-test requests, route to `.github/skills/hello-world/SKILL.md` and let that skill use the shortest greeting workflow.
+- That workflow switches backends internally, writes a platform-customized BASIC greeting, captures screenshots, and verifies the rendered text without extra tool composition.
+- Use manual `c64_select_backend` plus `upload_run_basic` only when the user needs custom program logic beyond a quick greeting or text demo.
+- On local machines with a graphical session, assume VICE should be visible by default. Only expect Xvfb or other headless fallback in CI or when no framebuffer/display session exists.
+- For manual visible VICE BASIC runs, avoid immediate `read_screen` or `wait_for_text` calls, because Binary Monitor traffic traps execution while servicing requests.
+
 ## Device & Services
 
 - MCP server controls Ultimate 64/C64 via REST: upload/run BASIC or ASM, screen/memory I/O, drives, SID music, audio analysis, local RAG.
@@ -126,7 +150,7 @@ Basic is used for simple programs and quick prototyping. It is very slow compare
 
 ## 6502/6510 Assembly
 
-Assembly is used for maximum performance and control. For more information see `data/asssembly/assembly-spec.md`.
+Assembly is used for maximum performance and control. For more information see `data/assembly/assembly-spec.md`.
 
 - Addressing modes: `#imm, zp, zp,X, zp,Y, abs, abs,X, abs,Y, (zp), (zp,X), (zp),Y, rel`.
 - Key opcodes (full set):
@@ -144,5 +168,5 @@ Assembly is used for maximum performance and control. For more information see `
 
 ## Context & RAG
 
-- Layers: `data/context/bootstrap.md` → `AGENTS.md` → `.github/prompts/*.prompt.md` → `data/context/chat.md` → RAG docs (`doc/**/*.md`, `data/**/*.md`).
+- Layers: `data/context/bootstrap.md` → `AGENTS.md` / `CLAUDE.md` / `.github/copilot-instructions.md` → `.github/prompts/*.prompt.md` → `.github/skills/*/SKILL.md` → `data/context/chat.md` → RAG docs (`doc/**/*.md`, `data/**/*.md`).
 - Retrieval returns relevant chunks with provenance comments for transparency.

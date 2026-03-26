@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "./bootstrap/stdio-logger.js";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,8 +20,9 @@ import {
   listKnowledgeResources,
   readKnowledgeResource,
 } from "./rag/knowledgeIndex.js";
-import { initRag } from "./rag/init.js";
+import { createLazyRagRetriever, initRag } from "./rag/init.js";
 import type { RagRetriever } from "./rag/types.js";
+import { getMcpServerImplementationInfo } from "./mcp/metadata.js";
 import { toolRegistry } from "./tools/registry/index.js";
 import { unknownErrorResult } from "./tools/errors.js";
 import type { ToolRunResult } from "./tools/types.js";
@@ -28,6 +30,7 @@ import { createPromptRegistry, type PromptSegment } from "./prompts/registry.js"
 import { describePlatformCapabilities, getPlatformStatus, setPlatform } from "./platform.js";
 import axios, { type AxiosResponse } from "axios";
 import { loggerFor, payloadByteLength, formatPayloadForDebug, formatErrorMessage } from "./logger.js";
+import { getDiagnosticsSessionInfo, installProcessDiagnostics, withDiagnosticSpan, writeDiagnosticEvent } from "./diagnostics.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -39,6 +42,18 @@ interface ServerRuntimeContext {
   client: C64Client;
   rag: RagRetriever;
   baseUrl: string;
+}
+
+function createPromptRegistryGetter() {
+  let registry: ReturnType<typeof createPromptRegistry> | undefined;
+  return () => {
+    if (!registry) {
+      writeDiagnosticEvent("prompt_registry_init_start");
+      registry = createPromptRegistry();
+      writeDiagnosticEvent("prompt_registry_init_complete");
+    }
+    return registry;
+  };
 }
 
 function parseCliOptions(argv: string[]): CliOptions {
@@ -62,26 +77,56 @@ function parsePort(raw?: string): number | undefined {
 }
 
 async function main() {
+  const diagnostics = installProcessDiagnostics("mcp-server");
   console.error("Starting c64bridge MCP server...");
+  console.error(`c64bridge diagnostics file: ${diagnostics.filePath}`);
+  writeDiagnosticEvent("server_start", { diagnosticsFile: diagnostics.filePath });
 
-  const config = loadConfig();
+  const config = await withDiagnosticSpan("startup", "load_config", {}, () => Promise.resolve(loadConfig()));
   const baseUrl = config.baseUrl ?? `http://${config.c64_host}`;
+  writeDiagnosticEvent("config_loaded", {
+    baseUrl,
+    hasNetworkPassword: Boolean(config.networkPassword),
+  });
   
   // Initialize C64 client (reuse existing)
-  const client = new C64Client(baseUrl, { networkPassword: config.networkPassword });
-  const rag = await initRag();
+  const client = await withDiagnosticSpan("startup", "create_client", { baseUrl }, async () => new C64Client(baseUrl, {
+    networkPassword: config.networkPassword,
+    forceC64uFacade: false,
+  }));
+  const initialBackendType = await withDiagnosticSpan("startup", "resolve_active_backend", {}, () => client.getActiveBackendType());
+  setPlatform(initialBackendType);
+  writeDiagnosticEvent("platform_initialised", { platform: initialBackendType });
+  void withDiagnosticSpan("startup", "prewarm_backends", { backends: ["vice"] }, () => client.prewarmBackends(["vice"])).then((results) => {
+    writeDiagnosticEvent("backend_prewarm_complete", { results });
+  }).catch((error) => {
+    writeDiagnosticEvent("backend_prewarm_failed", { error });
+  });
+  const rag: RagRetriever = createLazyRagRetriever(() => initRag(), {
+    onInitStart() {
+      writeDiagnosticEvent("rag_init_start");
+    },
+    onInitComplete() {
+      writeDiagnosticEvent("rag_init_complete");
+    },
+    onInitError(error) {
+      writeDiagnosticEvent("rag_init_failed", { error });
+    },
+  });
+  void (rag as { warmup?: () => Promise<void> }).warmup?.().catch(() => {
+    // Diagnostics already record the failure; keep startup non-blocking.
+  });
 
   const toolLogger = loggerFor("tool");
   const resourceLogger = loggerFor("resource");
   const promptLogger = loggerFor("prompt");
   const promptRegistry = createPromptRegistry();
+  const getPromptRegistry = createPromptRegistryGetter();
+  const implementationInfo = getMcpServerImplementationInfo();
 
   // Create MCP server
   const server = new Server(
-    {
-      name: "c64bridge",
-      version: "0.4.0",
-    },
+    implementationInfo,
     {
       capabilities: {
         resources: {},
@@ -94,13 +139,14 @@ async function main() {
   // RESOURCES: Expose C64 knowledge base
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
     const startedAt = Date.now();
+    writeDiagnosticEvent("mcp_list_resources_start");
     try {
       const knowledgeResources = listKnowledgeResources().map((resource) => ({
         uri: resource.uri,
         name: resource.name,
         description: resource.description,
         mimeType: resource.mimeType,
-        metadata: resource.metadata,
+        _meta: resource.metadata,
       }));
 
       const platformResource = createPlatformResourceDescriptor();
@@ -118,6 +164,11 @@ async function main() {
         resourceLogger.debug("list resources response", { response: formatPayloadForDebug(response) });
       }
 
+      writeDiagnosticEvent("mcp_list_resources_ok", {
+        count: response.resources.length,
+        latencyMs: latency,
+      });
+
       return response;
     } catch (error) {
       const latency = Date.now() - startedAt;
@@ -126,12 +177,14 @@ async function main() {
         resourceLogger.debug("list resources request", { request: {} });
         resourceLogger.debug("list resources error", { error: formatErrorMessage(error) });
       }
+      writeDiagnosticEvent("mcp_list_resources_failed", { latencyMs: latency, error });
       throw error;
     }
   });
 
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const startedAt = Date.now();
+    writeDiagnosticEvent("mcp_read_resource_start", { uri: request.params.uri });
     try {
       let response;
       if (request.params.uri === PLATFORM_RESOURCE_URI) {
@@ -140,7 +193,7 @@ async function main() {
             {
               uri: PLATFORM_RESOURCE_URI,
               mimeType: "text/markdown",
-              text: renderPlatformStatusMarkdown(),
+              text: renderPlatformStatusMarkdown(client),
             },
           ],
         };
@@ -163,6 +216,11 @@ async function main() {
         resourceLogger.debug("read resource response", { response: formatPayloadForDebug(response) });
       }
 
+      writeDiagnosticEvent("mcp_read_resource_ok", {
+        uri: request.params.uri,
+        latencyMs: latency,
+      });
+
       return response;
     } catch (error) {
       const latency = Date.now() - startedAt;
@@ -171,15 +229,27 @@ async function main() {
         resourceLogger.debug("read resource request", { request: formatPayloadForDebug(request.params) });
         resourceLogger.debug("read resource error", { error: formatErrorMessage(error) });
       }
+      writeDiagnosticEvent("mcp_read_resource_failed", {
+        uri: request.params.uri,
+        latencyMs: latency,
+        error,
+      });
       throw error;
     }
   });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const startedAt = Date.now();
+    writeDiagnosticEvent("mcp_list_tools_start");
     try {
       const response = {
-        tools: toolRegistry.list(),
+        tools: toolRegistry.list().map((tool) => ({
+          name: tool.name,
+          title: tool.metadata.summary,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+          _meta: tool.metadata,
+        })),
       };
       const latency = Date.now() - startedAt;
       const bytes = payloadByteLength(response);
@@ -190,6 +260,11 @@ async function main() {
         toolLogger.debug("list tools response", { response: formatPayloadForDebug(response) });
       }
 
+      writeDiagnosticEvent("mcp_list_tools_ok", {
+        count: response.tools.length,
+        latencyMs: latency,
+      });
+
       return response;
     } catch (error) {
       const latency = Date.now() - startedAt;
@@ -198,12 +273,14 @@ async function main() {
         toolLogger.debug("list tools request", { request: {} });
         toolLogger.debug("list tools error", { error: formatErrorMessage(error) });
       }
+      writeDiagnosticEvent("mcp_list_tools_failed", { latencyMs: latency, error });
       throw error;
     }
   });
 
   server.setRequestHandler(ListPromptsRequestSchema, async () => {
     const startedAt = Date.now();
+    writeDiagnosticEvent("mcp_list_prompts_start");
     try {
       const entries = promptRegistry.list();
       const response = {
@@ -222,6 +299,11 @@ async function main() {
             optionalResources: entry.descriptor.optionalResources ?? [],
             tools: entry.descriptor.tools,
             tags: entry.descriptor.tags ?? [],
+            argumentOptions: Object.fromEntries(
+              (entry.arguments ?? [])
+                .filter((argument) => Array.isArray(argument.options) && argument.options.length > 0)
+                .map((argument) => [argument.name, argument.options]),
+            ),
           },
         })),
       };
@@ -235,6 +317,11 @@ async function main() {
         promptLogger.debug("list prompts response", { response: formatPayloadForDebug(response) });
       }
 
+      writeDiagnosticEvent("mcp_list_prompts_ok", {
+        count: response.prompts.length,
+        latencyMs: latency,
+      });
+
       return response;
     } catch (error) {
       const latency = Date.now() - startedAt;
@@ -243,6 +330,7 @@ async function main() {
         promptLogger.debug("list prompts request", { request: {} });
         promptLogger.debug("list prompts error", { error: formatErrorMessage(error) });
       }
+      writeDiagnosticEvent("mcp_list_prompts_failed", { latencyMs: latency, error });
       throw error;
     }
   });
@@ -251,6 +339,10 @@ async function main() {
     const { name } = request.params;
     const args = request.params.arguments ?? {};
     const startedAt = Date.now();
+    writeDiagnosticEvent("mcp_call_tool_start", {
+      name,
+      arguments: formatPayloadForDebug(args),
+    });
     if (toolLogger.isDebugEnabled()) {
       toolLogger.debug("tool request", {
         name,
@@ -281,6 +373,12 @@ async function main() {
         });
       }
 
+      writeDiagnosticEvent("mcp_call_tool_ok", {
+        name,
+        latencyMs: latency,
+        isError: result.isError === true,
+      });
+
       return response;
     } catch (error) {
       const latency = Date.now() - startedAt;
@@ -298,6 +396,12 @@ async function main() {
         });
       }
 
+      writeDiagnosticEvent("mcp_call_tool_failed", {
+        name,
+        latencyMs: latency,
+        error,
+      });
+
       return response;
     }
   });
@@ -306,6 +410,10 @@ async function main() {
     const { name } = request.params;
     const args = request.params.arguments ?? {};
     const startedAt = Date.now();
+    writeDiagnosticEvent("mcp_get_prompt_start", {
+      name,
+      arguments: formatPayloadForDebug(args),
+    });
 
     if (promptLogger.isDebugEnabled()) {
       promptLogger.debug("prompt request", {
@@ -344,6 +452,11 @@ async function main() {
         });
       }
 
+      writeDiagnosticEvent("mcp_get_prompt_ok", {
+        name,
+        latencyMs: latency,
+      });
+
       return response;
     } catch (error) {
       const latency = Date.now() - startedAt;
@@ -355,6 +468,11 @@ async function main() {
         });
         promptLogger.debug("prompt error", { name, error: formatErrorMessage(error) });
       }
+      writeDiagnosticEvent("mcp_get_prompt_failed", {
+        name,
+        latencyMs: latency,
+        error,
+      });
       throw error;
     }
   });
@@ -362,10 +480,14 @@ async function main() {
   // Connect via stdio
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  writeDiagnosticEvent("mcp_transport_connected", { mode: "stdio" });
 
   await logConnectivity(client, baseUrl);
   
   console.error("c64bridge MCP server running on stdio");
+  writeDiagnosticEvent("server_ready", {
+    diagnosticsFile: diagnostics.filePath,
+  });
 }
 
 const PLATFORM_RESOURCE_URI = "c64://platform/status";
@@ -376,7 +498,7 @@ function createPlatformResourceDescriptor() {
     name: "Active Platform Status",
     description: "Reports the active MCP platform and tool compatibility snapshot.",
     mimeType: "text/markdown",
-    metadata: {
+    _meta: {
       domain: "platform",
       priority: "critical",
       summary: "Current platform (c64u or vice), feature flags, and tool support overview.",
@@ -388,14 +510,19 @@ function createPlatformResourceDescriptor() {
   };
 }
 
-function renderPlatformStatusMarkdown(): string {
+function renderPlatformStatusMarkdown(client: C64Client): string {
   const status = getPlatformStatus();
+  const availableBackends = client.getAvailableBackends();
   const capabilities = describePlatformCapabilities(toolRegistry.list());
 
   const lines: string[] = [
     "# MCP Platform Status",
     "",
     `Current platform: \`${status.id}\``,
+    "",
+    "## Available Backends",
+    "",
+    ...availableBackends.map((backend) => `- \`${backend}\`${backend === status.id ? " (active)" : ""}`),
     "",
     status.features.length > 0
       ? ["## Active Features", "", ...status.features.map((feature) => `- ${feature}`)].join("\n")
@@ -426,13 +553,35 @@ function renderPlatformStatusMarkdown(): string {
   }
 
   lines.push(
-    "> Switching platforms currently requires restarting the MCP server with an updated configuration.",
+    "> Use `c64_select_backend` to switch to another available backend without restarting the MCP server.",
   );
 
   return lines.join("\n");
 }
 
 async function logConnectivity(client: C64Client, baseUrl: string): Promise<void> {
+  const backendType = await client.getBackendType();
+  if (backendType !== "c64u") {
+    writeDiagnosticEvent("connectivity_probe_skipped", { baseUrl, reason: "vice_backend" });
+    console.error("Skipping direct REST connectivity probe because active backend is VICE");
+    try {
+      const memoryAddress = "$0000";
+      const memoryResult = await client.readMemory(memoryAddress, "1");
+      if (memoryResult.success && memoryResult.data) {
+        writeDiagnosticEvent("zero_page_probe_ok", { address: memoryAddress, data: memoryResult.data, backendType });
+        console.error(`VICE zero-page probe @ ${memoryAddress}: ${memoryResult.data}`);
+      } else if (memoryResult.details) {
+        writeDiagnosticEvent("zero_page_probe_failed", { address: memoryAddress, details: memoryResult.details, backendType });
+        console.error(`VICE zero-page probe failed: ${JSON.stringify(memoryResult.details)}`);
+      }
+    } catch (memoryError) {
+      const message = memoryError instanceof Error ? memoryError.message : String(memoryError);
+      writeDiagnosticEvent("zero_page_probe_failed", { address: "$0000", error: memoryError, backendType });
+      console.error(`VICE zero-page probe skipped or failed: ${message}`);
+    }
+    return;
+  }
+
   const c64Logger = loggerFor("c64u");
   const startedAt = Date.now();
   const infoUrl = new URL("/v1/info", baseUrl).toString();
@@ -453,28 +602,34 @@ async function logConnectivity(client: C64Client, baseUrl: string): Promise<void
     } else {
       c64Logger.error(`GET ${infoUrl} status=ERR bytes=0 latencyMs=${latency} error=${formatErrorMessage(error)}`);
     }
-    console.log(`Skipping direct REST connectivity probe (no hardware REST base reachable at ${baseUrl})`);
+    writeDiagnosticEvent("connectivity_probe_skipped", { baseUrl, latencyMs: latency, error });
+    console.error(`Skipping direct REST connectivity probe (no hardware REST base reachable at ${baseUrl})`);
     return;
   }
 
   if (!response) {
-    console.log(`Skipping direct REST connectivity probe (no hardware REST base reachable at ${baseUrl})`);
+    writeDiagnosticEvent("connectivity_probe_skipped", { baseUrl, reason: "empty_response" });
+    console.error(`Skipping direct REST connectivity probe (no hardware REST base reachable at ${baseUrl})`);
     return;
   }
 
-  console.log(`Connectivity check succeeded for c64 device at ${baseUrl}`);
+  writeDiagnosticEvent("connectivity_probe_ok", { baseUrl, status: response.status });
+  console.error(`Connectivity check succeeded for c64 device at ${baseUrl}`);
 
   try {
     const memoryAddress = "$0000";
     const memoryResult = await client.readMemory(memoryAddress, "1");
     if (memoryResult.success && memoryResult.data) {
-      console.log(`Zero-page probe @ ${memoryAddress}: ${memoryResult.data}`);
+      writeDiagnosticEvent("zero_page_probe_ok", { address: memoryAddress, data: memoryResult.data });
+      console.error(`Zero-page probe @ ${memoryAddress}: ${memoryResult.data}`);
     } else if (memoryResult.details) {
-      console.warn(`Zero-page probe failed: ${JSON.stringify(memoryResult.details)}`);
+      writeDiagnosticEvent("zero_page_probe_failed", { address: memoryAddress, details: memoryResult.details });
+      console.error(`Zero-page probe failed: ${JSON.stringify(memoryResult.details)}`);
     }
   } catch (memoryError) {
     const message = memoryError instanceof Error ? memoryError.message : String(memoryError);
-    console.warn(`Zero-page probe skipped or failed (may be unsupported on current backend): ${message}`);
+    writeDiagnosticEvent("zero_page_probe_failed", { address: "$0000", error: memoryError });
+    console.error(`Zero-page probe skipped or failed (may be unsupported on current backend): ${message}`);
   }
 }
 
@@ -519,6 +674,10 @@ function toPromptMessage(segment: PromptSegment): {
 }
 
 main().catch((error) => {
+  writeDiagnosticEvent("server_fatal", {
+    diagnosticsFile: getDiagnosticsSessionInfo()?.filePath,
+    error,
+  });
   console.error("Fatal error in MCP server:", error);
   process.exit(1);
 });

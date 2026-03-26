@@ -451,6 +451,7 @@ export const audioModule = defineToolModule({
   ],
   prompts: ["sid-music"],
   defaultTags: ["sid", "audio"],
+  supportedPlatforms: ["c64u", "vice"] as const,
   workflowHints: [
     "Reach for SID helpers when the user talks about sound design, playback quality, or stuck notes.",
     "After changing playback state, suggest verify-by-ear steps such as analyze_audio so the user gets concrete feedback.",
@@ -1094,7 +1095,8 @@ export const audioModule = defineToolModule({
           const duration = parsed.durationSeconds ?? 3;
           ctx.logger.info("Auto-analyzing SID audio", { durationSeconds: duration });
 
-          const analysis = await recordAndAnalyzeAudio({
+            const analyzer = resolveAnalyzer(ctx);
+            const analysis = await analyzer({
             durationSeconds: duration,
             expectedSidwave: normaliseSidwaveInput(parsed.expectedSidwave),
           });

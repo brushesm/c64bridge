@@ -148,6 +148,46 @@ test("loadConfig includes networkPassword from c64u config", (t) => {
   });
 });
 
+test("loadConfig lets C64U env vars override config and defaults", (t) => {
+  const originalEnv = {
+    C64BRIDGE_CONFIG: process.env.C64BRIDGE_CONFIG,
+    C64U_HOST: process.env.C64U_HOST,
+    C64U_PORT: process.env.C64U_PORT,
+    C64U_PASSWORD: process.env.C64U_PASSWORD,
+  };
+  const { dir, file } = writeTempConfig({
+    c64u: {
+      host: "config.local",
+      port: 6500,
+      networkPassword: "config-secret",
+    },
+  });
+
+  process.env.C64BRIDGE_CONFIG = file;
+  process.env.C64U_HOST = "env.local";
+  process.env.C64U_PORT = "6501";
+  process.env.C64U_PASSWORD = "env-secret";
+  __resetConfigCacheForTests();
+
+  const config = loadConfig();
+  assert.equal(config.c64_host, "env.local:6501");
+  assert.equal(config.baseUrl, "http://env.local:6501");
+  assert.equal(config.c64_port, 6501);
+  assert.equal(config.networkPassword, "env-secret");
+
+  t.after(() => {
+    __resetConfigCacheForTests();
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
 test("loadConfig prefers repo config over home config when env is unset", (t) => {
   const originalEnv = process.env.C64BRIDGE_CONFIG;
   const originalHome = process.env.HOME;

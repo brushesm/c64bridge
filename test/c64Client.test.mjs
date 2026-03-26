@@ -1,6 +1,9 @@
 import test from "#test/runner";
 import assert from "#test/assert";
 import { Buffer } from "node:buffer";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { C64Client } from "../src/c64Client.js";
 import {
   buildPrinterBasicProgram,
@@ -10,9 +13,11 @@ import {
 } from "../src/c64Client.js";
 import { basicToPrg } from "../src/basicConverter.js";
 import { startMockC64Server } from "../scripts/mockC64Server.mjs";
+import { startViceMockServer } from "../src/vice/mockServer.js";
 
 const SCREEN_BASE = "$0400";
 const SAFE_RAM_BASE = "$C000";
+const REPO_CONFIG_PATH = path.resolve(".c64bridge.json");
 
 function asciiToHexBytes(text) {
   return Buffer.from(text, "ascii").toString("hex").toUpperCase();
@@ -24,12 +29,88 @@ async function writeMessageAt(client, baseAddress, message) {
   return { write, hex: `$${hex}` };
 }
 
+async function withEnv(overrides, fn) {
+  const previous = new Map(Object.keys(overrides).map((key) => [key, process.env[key]]));
+  try {
+    for (const [key, value] of Object.entries(overrides)) {
+      if (value === undefined || value === null) {
+        delete process.env[key];
+      } else {
+        process.env[key] = String(value);
+      }
+    }
+    return await fn();
+  } finally {
+    for (const [key, value] of previous.entries()) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+async function withConfigScenario({
+  envConfig,
+  repoConfig,
+  homeConfig,
+  mode,
+}, fn) {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "c64bridge-client-config-"));
+  const envConfigPath = path.join(tempRoot, "env.json");
+  const homeDir = path.join(tempRoot, "home");
+  const homeConfigPath = path.join(homeDir, ".c64bridge.json");
+  const hadRepoConfig = fs.existsSync(REPO_CONFIG_PATH);
+  const originalRepoConfig = hadRepoConfig ? fs.readFileSync(REPO_CONFIG_PATH, "utf8") : null;
+
+  fs.mkdirSync(homeDir, { recursive: true });
+
+  try {
+    if (repoConfig === null) {
+      fs.rmSync(REPO_CONFIG_PATH, { force: true });
+    } else if (repoConfig !== undefined) {
+      fs.writeFileSync(REPO_CONFIG_PATH, JSON.stringify(repoConfig), "utf8");
+    }
+
+    if (homeConfig !== undefined) {
+      if (homeConfig === null) {
+        fs.rmSync(homeConfigPath, { force: true });
+      } else {
+        fs.writeFileSync(homeConfigPath, JSON.stringify(homeConfig), "utf8");
+      }
+    }
+
+    if (envConfig !== undefined && envConfig !== null) {
+      fs.writeFileSync(envConfigPath, JSON.stringify(envConfig), "utf8");
+    }
+
+    return await withEnv({
+      HOME: homeDir,
+      C64BRIDGE_CONFIG: envConfig !== undefined ? envConfigPath : undefined,
+      C64_MODE: mode ?? undefined,
+    }, fn);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    if (hadRepoConfig) {
+      fs.writeFileSync(REPO_CONFIG_PATH, originalRepoConfig, "utf8");
+    } else {
+      fs.rmSync(REPO_CONFIG_PATH, { force: true });
+    }
+  }
+}
+
 const target = (process.env.C64_TEST_TARGET ?? "mock").toLowerCase();
+const platform = (process.env.C64_MODE ?? "c64u").toLowerCase();
 const injectedBaseUrl = process.env.C64_TEST_BASE_URL;
 
 test("C64Client against mock server", async (t) => {
   if (target !== "mock") {
     t.skip("mock target disabled");
+    return;
+  }
+  if (platform !== "c64u") {
+    t.skip("C64Client mock integration is only exercised on c64u");
     return;
   }
 
@@ -55,6 +136,57 @@ test("C64Client against mock server", async (t) => {
     assert.equal(prg[6], 0x99);
     const finalMarker = prg.subarray(-2);
     assert.deepEqual(Array.from(finalMarker), [0x00, 0x00]);
+  });
+
+  await t.test("captureFrames reconstructs a complete streamed video frame", async () => {
+    const result = await client.captureFrames({ count: 1 });
+
+    assert.equal(result.backend, "c64u");
+    assert.equal(result.frames.length, 1);
+    assert.equal(result.frames[0].width, 384);
+    assert.equal(result.frames[0].height, 272);
+    assert.equal(result.frames[0].bitsPerPixel, 4);
+    assert.equal(result.frames[0].complete, true);
+    assert.equal(result.frames[0].pixels.length, 384 * 272);
+    assert.equal(mock.state.streams.video.active, false);
+    assert.ok(mock.state.streams.video.packetsSent >= 68);
+  });
+
+  await t.test("prepareVideoCapture reuses a single C64U video stream across captures", async () => {
+    const startsBefore = mock.state.streamActionLog.filter((entry) => entry.action === "start" && entry.stream === "video").length;
+    const stopsBefore = mock.state.streamActionLog.filter((entry) => entry.action === "stop" && entry.stream === "video").length;
+
+    await client.prepareVideoCapture({ keepAliveMs: 5_000 });
+    assert.equal(mock.state.streams.video.active, true);
+    assert.equal(mock.state.streamActionLog.filter((entry) => entry.action === "start" && entry.stream === "video").length - startsBefore, 1);
+
+    const first = await client.captureFrames({ count: 1, reuseSession: true, keepAliveMs: 5_000 });
+    const second = await client.captureFrames({ count: 1, reuseSession: true, keepAliveMs: 5_000 });
+
+    assert.equal(first.backend, "c64u");
+    assert.equal(first.frames.length, 1);
+    assert.equal(second.backend, "c64u");
+    assert.equal(second.frames.length, 1);
+    assert.equal(mock.state.streams.video.active, true);
+    assert.equal(mock.state.streamActionLog.filter((entry) => entry.action === "start" && entry.stream === "video").length - startsBefore, 1);
+    assert.equal(mock.state.streamActionLog.filter((entry) => entry.action === "stop" && entry.stream === "video").length - stopsBefore, 0);
+
+    await client.releaseVideoCapture();
+
+    assert.equal(mock.state.streams.video.active, false);
+    assert.equal(mock.state.streamActionLog.filter((entry) => entry.action === "stop" && entry.stream === "video").length - stopsBefore, 1);
+  });
+
+  await t.test("captureSamples collects stereo PCM pairs from streamed audio", async () => {
+    const result = await client.captureSamples({ count: 256 });
+
+    assert.equal(result.backend, "c64u");
+    assert.equal(result.channels, 2);
+    assert.equal(result.samplePairs, 256);
+    assert.equal(result.samples.length, 512);
+    assert.equal(result.sampleRateHz, 47982.8869047619);
+    assert.equal(mock.state.streams.audio.active, false);
+    assert.ok(mock.state.streams.audio.packetsSent >= 2);
   });
 
   await t.test("printTextOnPrinterAndRun generates Commodore BASIC and runs it", async () => {
@@ -323,9 +455,81 @@ test("C64Client against mock server", async (t) => {
   });
 });
 
+test("renderGreetingScreen uses batched writes when the facade supports them", async () => {
+  const client = new C64Client("http://127.0.0.1:65535");
+  const writeMemoryCalls = [];
+  const writeMemoryBlocksCalls = [];
+  let readMemoryCalls = 0;
+
+  client.facadePromise = Promise.resolve({
+    type: "c64u",
+    async readMemory() {
+      readMemoryCalls += 1;
+      return Uint8Array.of(0);
+    },
+    async writeMemory(address, bytes) {
+      writeMemoryCalls.push({ address, length: bytes.length });
+    },
+    async writeMemoryBlocks(blocks) {
+      writeMemoryBlocksCalls.push(blocks.map(({ address, bytes }) => ({ address, length: bytes.length })));
+    },
+  });
+
+  const result = await client.renderGreetingScreen({ message: "HELLO TEST" });
+
+  assert.equal(result.success, true);
+  assert.equal(writeMemoryCalls.length, 0);
+  assert.equal(writeMemoryBlocksCalls.length, 1);
+  assert.equal(writeMemoryBlocksCalls[0].length, 8);
+  assert.equal(readMemoryCalls, 1);
+});
+
+test("renderGreetingScreen reuses the cached DD00 value across repeated renders", async () => {
+  const client = new C64Client("http://127.0.0.1:65535");
+  let readMemoryCalls = 0;
+
+  client.facadePromise = Promise.resolve({
+    type: "c64u",
+    async readMemory() {
+      readMemoryCalls += 1;
+      return Uint8Array.of(0);
+    },
+    async writeMemory() {},
+    async writeMemoryBlocks() {},
+  });
+
+  const first = await client.renderGreetingScreen({ message: "HELLO ONCE" });
+  const second = await client.renderGreetingScreen({ message: "HELLO TWICE" });
+
+  assert.equal(first.success, true);
+  assert.equal(second.success, true);
+  assert.equal(readMemoryCalls, 1);
+});
+
+test("renderGreetingScreen coalesces contiguous C64U register writes", async () => {
+  const mock = await startMockC64Server();
+
+  try {
+    const client = new C64Client(mock.baseUrl);
+    const result = await client.renderGreetingScreen({ message: "HELLO MOCK" });
+
+    assert.equal(result.success, true);
+    assert.equal(mock.state.writeLog.length, 7);
+    const mergedRegisters = mock.state.writeLog.find((entry) => entry.address === 0xD020);
+    assert.ok(mergedRegisters);
+    assert.equal(mergedRegisters.bytes.length, 2);
+  } finally {
+    await mock.close();
+  }
+});
+
 test("C64Client against real C64", async (t) => {
   if (target !== "real") {
     t.skip("real target disabled");
+    return;
+  }
+  if (platform !== "c64u") {
+    t.skip("C64Client real-hardware integration is only exercised on c64u");
     return;
   }
 
@@ -375,5 +579,135 @@ test("C64Client against real C64", async (t) => {
   await t.test("reboot real C64", async () => {
     const response = await client.reboot();
     assert.equal(response.success, true, `Reboot failed: ${JSON.stringify(response.details)}`);
+  });
+});
+
+test("C64Client backend selection and switching", async (t) => {
+  await t.test("single c64u config exposes only c64u", async () => {
+    const mock = await startMockC64Server();
+    t.after(async () => {
+      await mock.close();
+    });
+
+    await withConfigScenario(
+      {
+        envConfig: { c64u: { baseUrl: mock.baseUrl } },
+        repoConfig: null,
+        homeConfig: null,
+      },
+      async () => {
+        const client = new C64Client("http://unused.local", { forceC64uFacade: false });
+
+        assert.equal(await client.getActiveBackendType(), "c64u");
+        assert.equal(await client.getBackendType(), "c64u");
+        assert.deepEqual(client.getAvailableBackends(), ["c64u"]);
+
+        const info = await client.info();
+        assert.ok(info && typeof info === "object");
+        await assert.rejects(() => client.viceCheckpointList(), /VICE-specific operation requested/);
+      },
+    );
+  });
+
+  await t.test("single vice config exposes only vice", async () => {
+    const vice = await startViceMockServer({ host: "127.0.0.1", port: 0 });
+    t.after(async () => {
+      await vice.stop();
+    });
+
+    await withConfigScenario(
+      {
+        envConfig: { vice: { host: "127.0.0.1", port: vice.port } },
+        repoConfig: null,
+        homeConfig: null,
+      },
+      async () => {
+        const client = new C64Client("http://unused.local", { forceC64uFacade: false });
+
+        assert.equal(await client.getActiveBackendType(), "vice");
+        assert.equal(await client.getBackendType(), "vice");
+        assert.deepEqual(client.getAvailableBackends().sort(), ["c64u", "vice"]);
+
+        const info = await client.info();
+        assert.equal(info?.emulator, "vice");
+        assert.equal(info?.port, vice.port);
+
+        client.switchBackend("c64u");
+        assert.equal(await client.getActiveBackendType(), "c64u");
+
+        client.switchBackend("vice");
+        assert.equal(await client.getActiveBackendType(), "vice");
+      },
+    );
+  });
+
+  await t.test("both configured initialises both facades and switchBackend swaps the active facade", async () => {
+    const c64u = await startMockC64Server();
+    const vice = await startViceMockServer({ host: "127.0.0.1", port: 0 });
+    t.after(async () => {
+      await Promise.all([c64u.close(), vice.stop()]);
+    });
+
+    await withConfigScenario(
+      {
+        repoConfig: { c64u: { baseUrl: c64u.baseUrl } },
+        homeConfig: { vice: { host: "127.0.0.1", port: vice.port } },
+        mode: "vice",
+      },
+      async () => {
+        const client = new C64Client("http://unused.local", { forceC64uFacade: false });
+
+        assert.equal(await client.getActiveBackendType(), "vice");
+        assert.deepEqual(client.getAvailableBackends().sort(), ["c64u", "vice"]);
+
+        const warmResults = await client.prewarmBackends();
+        assert.equal(warmResults.c64u, true);
+        assert.equal(warmResults.vice, true);
+
+        const viceFrames = await client.captureFrames({ count: 1 });
+        assert.equal(viceFrames.backend, "vice");
+        assert.equal(viceFrames.frames.length, 1);
+
+        const viceInfo = await client.info();
+        assert.equal(viceInfo?.emulator, "vice");
+        assert.equal((await client.version())?.emulator, "vice");
+        assert.equal(await client.getBackendType(), "vice");
+
+        client.switchBackend("c64u");
+        assert.equal(await client.getActiveBackendType(), "c64u");
+        assert.equal(await client.getBackendType(), "c64u");
+
+        const c64uInfo = await client.info();
+        assert.ok(c64uInfo && typeof c64uInfo === "object");
+        assert.equal(c64u.state.lastRequest?.method, "GET");
+        assert.match(c64u.state.lastRequest?.url ?? "", /\/v1\/info$/);
+
+        client.switchBackend("vice");
+        assert.equal(await client.getActiveBackendType(), "vice");
+        assert.equal(await client.getBackendType(), "vice");
+        assert.equal((await client.info())?.emulator, "vice");
+      },
+    );
+  });
+
+  await t.test("switchBackend throws for an unconfigured backend", async () => {
+    const mock = await startMockC64Server();
+    t.after(async () => {
+      await mock.close();
+    });
+
+    await withConfigScenario(
+      {
+        envConfig: { c64u: { baseUrl: mock.baseUrl } },
+        repoConfig: null,
+        homeConfig: null,
+      },
+      async () => {
+        const client = new C64Client("http://unused.local", { forceC64uFacade: false });
+        await client.getActiveBackendType();
+
+        assert.throws(() => client.switchBackend("vice"), /not configured/);
+      },
+    );
   });
 });

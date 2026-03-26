@@ -3,84 +3,389 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import process from "node:process";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_TARGET = "mock";
+const DEFAULT_PLATFORM = "c64u";
+const DEFAULT_BUN_FILE_LIMIT = 4;
+const DEFAULT_BUN_BATCH_SIZE = 12;
+const ISOLATED_BUN_TEST_FILES = new Set([
+  "test/audioRuntime.test.mjs",
+]);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaultEmbeddingsDir = path.join(repoRoot, "artifacts", "test-embeddings");
+const defaultTestFiles = listRepoTestFiles(path.join(repoRoot, "test"));
 
-let target = DEFAULT_TARGET;
-let explicitBaseUrl: string | null = null;
-let runCoverage = false;
-const passthrough: string[] = [];
+function resolveNodeExecutable(): string {
+  const candidates = [
+    process.env.C64BRIDGE_TEST_NODE_BIN,
+    process.env.C64BRIDGE_NODE_BIN,
+    process.env.NODE_BINARY,
+    process.env.NODE_EXEC_PATH,
+    process.env.npm_node_execpath,
+  ];
 
-for (const arg of process.argv.slice(2)) {
-  if (arg === "--mock") {
-    target = "mock";
-    continue;
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
   }
-  if (arg === "--real") {
-    target = "real";
-    continue;
-  }
-  if (arg.startsWith("--target=")) {
-    target = arg.split("=", 2)[1] ?? DEFAULT_TARGET;
-    continue;
-  }
-  if (arg.startsWith("--base-url=")) {
-    explicitBaseUrl = arg.split("=", 2)[1] ?? null;
-    continue;
-  }
-  if (arg === "--coverage") {
-    runCoverage = true;
-    continue;
-  }
-  passthrough.push(arg);
+
+  return "node";
 }
 
-if (!fs.existsSync(defaultEmbeddingsDir)) {
-  fs.mkdirSync(defaultEmbeddingsDir, { recursive: true });
+export type RunTestsArgs = {
+  target: string;
+  platform: "c64u" | "vice";
+  explicitBaseUrl: string | null;
+  runCoverage: boolean;
+  passthrough: string[];
+};
+
+export function parseRunTestsArgs(args: string[]): RunTestsArgs {
+  let target = DEFAULT_TARGET;
+  let platform: "c64u" | "vice" = DEFAULT_PLATFORM;
+  let explicitBaseUrl: string | null = null;
+  let runCoverage = false;
+  const passthrough: string[] = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg || !arg.trim()) {
+      continue;
+    }
+    if (arg === "--mock") {
+      target = "mock";
+      continue;
+    }
+    if (arg === "--real") {
+      target = "device";
+      continue;
+    }
+    if (arg === "--platform" && index + 1 < args.length) {
+      platform = normalizePlatform(args[index + 1]);
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--platform=")) {
+      platform = normalizePlatform(arg.split("=", 2)[1] ?? DEFAULT_PLATFORM);
+      continue;
+    }
+    if (arg.startsWith("--target=")) {
+      target = arg.split("=", 2)[1] ?? DEFAULT_TARGET;
+      continue;
+    }
+    if (arg === "--target" && index + 1 < args.length) {
+      target = args[index + 1] ?? DEFAULT_TARGET;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--base-url=")) {
+      explicitBaseUrl = arg.split("=", 2)[1] ?? null;
+      continue;
+    }
+    if (arg === "--coverage") {
+      runCoverage = true;
+      continue;
+    }
+    passthrough.push(arg);
+  }
+
+  return { target, platform, explicitBaseUrl, runCoverage, passthrough };
 }
 
-const env: Record<string, string> = { ...process.env } as Record<string, string>;
-env.C64_TEST_TARGET = target;
-if (!env.RAG_EMBEDDINGS_DIR) {
-  env.RAG_EMBEDDINGS_DIR = defaultEmbeddingsDir;
-}
-if (explicitBaseUrl) {
-  env.C64_TEST_BASE_URL = explicitBaseUrl;
-}
-if (target === "real" && !env.C64_TEST_BASE_URL) {
-  env.C64_TEST_BASE_URL = resolveBaseUrlFromConfig() ?? "http://c64u";
+export function shouldUseNodeFallback(runCoverage: boolean, passthrough: string[], env: NodeJS.ProcessEnv = process.env): boolean {
+  const requestedRunner = String(env.C64BRIDGE_TEST_RUNNER ?? "").trim().toLowerCase();
+  if (requestedRunner === "bun") {
+    return false;
+  }
+  if (requestedRunner === "node") {
+    return true;
+  }
+  if (runCoverage) {
+    return false;
+  }
+
+  const explicitFiles = passthrough.filter(looksLikeTestFileArg);
+  if (passthrough.length === 0) {
+    return true;
+  }
+
+  const maxBunFiles = resolveBunFileLimit(env.C64BRIDGE_BUN_FILE_LIMIT);
+  return explicitFiles.length > maxBunFiles;
 }
 
-const bunExecutable = process.execPath;
-const cmd = [
-  bunExecutable,
-  "test",
-  ...(runCoverage
-    ? [
-        "--coverage",
-        // Ensure LCOV is emitted for Codecov
-        "--coverage-reporter=lcov",
-        // Use supported console reporter in Bun
-        "--coverage-reporter=text",
-      ]
-    : []),
-  ...passthrough,
-];
-const child = Bun.spawn({
-  cmd,
-  cwd: repoRoot,
-  env,
-  stdout: "inherit",
-  stderr: "inherit",
-});
+export function buildBunTestBatches(passthrough: string[], env: NodeJS.ProcessEnv = process.env): string[][] {
+  const explicitFiles = passthrough.filter(looksLikeTestFileArg);
+  if (passthrough.length === 0) {
+    const sharedFiles = defaultTestFiles.filter((file) => !ISOLATED_BUN_TEST_FILES.has(file));
+    return [
+      ...chunkFiles(sharedFiles, resolveBunBatchSize(env.C64BRIDGE_BUN_BATCH_SIZE)),
+      ...[...ISOLATED_BUN_TEST_FILES].filter((file) => defaultTestFiles.includes(file)).map((file) => [file]),
+    ];
+  }
+  if (explicitFiles.length === 0) {
+    return [passthrough];
+  }
 
-const exitCode = await child.exited;
-process.exit(typeof exitCode === "number" ? exitCode : 1);
+  const batchSize = resolveBunBatchSize(env.C64BRIDGE_BUN_BATCH_SIZE);
+  const sharedArgs = passthrough.filter((arg) => !looksLikeTestFileArg(arg));
+  const sharedFiles = explicitFiles.filter((file) => !ISOLATED_BUN_TEST_FILES.has(file));
+  const isolatedFiles = explicitFiles.filter((file) => ISOLATED_BUN_TEST_FILES.has(file));
+  return [
+    ...chunkFiles(sharedFiles, batchSize).map((files) => [...files, ...sharedArgs]),
+    ...isolatedFiles.map((file) => [file, ...sharedArgs]),
+  ];
+}
 
-function resolveBaseUrlFromConfig(): string | null {
+async function runNodeFallback(target: string, explicitBaseUrl: string | null, passthrough: string[], env: Record<string, string>, runCoverage: boolean): Promise<number> {
+  console.warn("[run-tests] Using Node runner for this test set to avoid Bun memory growth on broad suites");
+  if (runCoverage) {
+    console.warn("[run-tests] Coverage reporting is unavailable in Node fallback mode");
+  }
+  const nodeExecutable = resolveNodeExecutable();
+  const nodeScript = path.join(repoRoot, "scripts", "run-tests.mjs");
+  const fallbackArgs = [] as string[];
+  if (target !== DEFAULT_TARGET) {
+    fallbackArgs.push(`--target=${target}`);
+  }
+  if (explicitBaseUrl) {
+    fallbackArgs.push(`--base-url=${explicitBaseUrl}`);
+  }
+  fallbackArgs.push(...passthrough);
+  return await new Promise<number>((resolve) => {
+    const childProcess = spawn(nodeExecutable, [nodeScript, ...fallbackArgs], {
+      cwd: repoRoot,
+      env,
+      stdio: "inherit",
+    }) as unknown as {
+      on(event: "error", listener: (error: Error) => void): void;
+      on(event: "exit", listener: (code: number | null) => void): void;
+    };
+    childProcess.on("error", (error) => {
+      console.error("[run-tests] Failed to launch Node fallback:", error);
+      resolve(1);
+    });
+    childProcess.on("exit", (code) => {
+      resolve(typeof code === "number" ? code : 1);
+    });
+  });
+}
+
+async function runExternalCommand(command: string, args: string[], env: Record<string, string>): Promise<number> {
+  return await new Promise<number>((resolve) => {
+    const childProcess = spawn(command, args, {
+      cwd: repoRoot,
+      env,
+      stdio: "inherit",
+    }) as unknown as {
+      on(event: "error", listener: (error: Error) => void): void;
+      on(event: "exit", listener: (code: number | null) => void): void;
+    };
+    childProcess.on("error", (error) => {
+      console.error("[run-tests] Failed to launch test runner:", error);
+      resolve(1);
+    });
+    childProcess.on("exit", (code) => {
+      resolve(typeof code === "number" ? code : 1);
+    });
+  });
+}
+
+async function main(): Promise<number> {
+  const { target, platform, explicitBaseUrl, runCoverage, passthrough } = parseRunTestsArgs(process.argv.slice(2));
+
+  if (!fs.existsSync(defaultEmbeddingsDir)) {
+    fs.mkdirSync(defaultEmbeddingsDir, { recursive: true });
+  }
+
+  const env: Record<string, string> = { ...process.env } as Record<string, string>;
+  const normalizedTarget = normalizeTarget(target);
+  env.C64_MODE = platform;
+  env.C64_TEST_TARGET = normalizedTarget === "device" ? "real" : "mock";
+  if (platform === "vice") {
+    env.VICE_TEST_TARGET = normalizedTarget === "device" ? "vice" : "mock";
+  } else {
+    delete env.VICE_TEST_TARGET;
+  }
+  if (!env.RAG_EMBEDDINGS_DIR) {
+    env.RAG_EMBEDDINGS_DIR = defaultEmbeddingsDir;
+  }
+  if (explicitBaseUrl) {
+    env.C64_TEST_BASE_URL = explicitBaseUrl;
+  }
+  if (platform === "c64u" && normalizedTarget === "device" && !env.C64_TEST_BASE_URL) {
+    env.C64_TEST_BASE_URL = resolveBaseUrlFromConfig(env) ?? "http://c64u";
+  }
+
+  printMatrixHeading({
+    platform,
+    target: normalizedTarget,
+    coverage: runCoverage,
+    baseUrl: env.C64_TEST_BASE_URL ?? null,
+    passthrough,
+  });
+
+  const bunRuntime = (globalThis as { Bun?: unknown }).Bun;
+  if (!bunRuntime) {
+    console.warn("[run-tests] Bun runtime not detected; falling back to Node runner");
+    return await runNodeFallback(target, explicitBaseUrl, passthrough, env, runCoverage);
+  }
+
+  if (!runCoverage && passthrough.length === 0) {
+    return await runBunBatches(env, buildBunTestBatches([], env), {
+      coverage: false,
+      labelPrefix: "default-suite",
+    });
+  }
+
+  if (shouldUseNodeFallback(runCoverage, passthrough, env)) {
+    if (!runCoverage) {
+      return await runBunBatches(env, buildBunTestBatches(passthrough, env), {
+        coverage: false,
+        labelPrefix: "sharded-suite",
+      });
+    }
+    return await runNodeFallback(target, explicitBaseUrl, passthrough, env, runCoverage);
+  }
+
+  const bunArgs = [
+    "test",
+    ...(runCoverage
+      ? [
+          "--coverage",
+          "--coverage-reporter=lcov",
+          "--coverage-reporter=text",
+        ]
+      : []),
+    ...(passthrough.length > 0 ? passthrough : defaultTestFiles),
+  ];
+  return await runExternalCommand(process.execPath, bunArgs, env);
+}
+
+if (import.meta.main) {
+  process.exit(await main());
+}
+
+type MatrixHeadingOptions = {
+  platform: "c64u" | "vice";
+  target: "mock" | "device";
+  coverage: boolean;
+  baseUrl: string | null;
+  passthrough: string[];
+};
+
+function printMatrixHeading(options: MatrixHeadingOptions): void {
+  const { platform, target, coverage, baseUrl, passthrough } = options;
+  const useColor = Boolean(process.stdout.isTTY) && process.env.NO_COLOR !== "1";
+  const color = (code: string): string => (useColor ? `\x1b[${code}m` : "");
+  const reset = useColor ? "\x1b[0m" : "";
+  const bold = useColor ? "\x1b[1m" : "";
+
+  const platformColor = platform === "vice" ? color("34") : color("36");
+  const targetColor = target === "device" ? color("33") : color("32");
+  const coverageColor = coverage ? color("31") : color("90");
+  const labelColor = color("90");
+
+  const header = `${bold}${color("97")}=== test-matrix run ===${reset}`;
+  const platformLine = `${labelColor}platform:${reset} ${platformColor}${platform}${reset}`;
+  const targetLine = `${labelColor}target:${reset} ${targetColor}${target}${reset}`;
+  const coverageLine = `${labelColor}coverage:${reset} ${coverageColor}${coverage ? "enabled" : "disabled"}${reset}`;
+
+  console.log("\n" + header);
+  console.log(`${platformLine}  ${targetLine}  ${coverageLine}`);
+  if (baseUrl) {
+    console.log(`${labelColor}base-url:${reset} ${baseUrl}`);
+  }
+  if (passthrough.length > 0) {
+    console.log(`${labelColor}extra args:${reset} ${passthrough.join(" ")}`);
+  }
+  console.log("");
+}
+
+function normalizePlatform(value: string): "c64u" | "vice" {
+  const lower = (value ?? "").toLowerCase();
+  return lower === "vice" ? "vice" : "c64u";
+}
+
+function normalizeTarget(value: string): "mock" | "device" {
+  const lower = (value ?? "").toLowerCase();
+  if (lower === "real" || lower === "device" || lower === "hardware" || lower === "vice") {
+    return "device";
+  }
+  return "mock";
+}
+
+function resolveBunFileLimit(raw: string | undefined): number {
+  const parsed = Number(raw ?? "");
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_BUN_FILE_LIMIT;
+}
+
+function resolveBunBatchSize(raw: string | undefined): number {
+  const parsed = Number(raw ?? "");
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_BUN_BATCH_SIZE;
+}
+
+function looksLikeTestFileArg(arg: string): boolean {
+  return /^test\/.*\.test\.(mjs|ts)$/i.test(arg) || /\.test\.(mjs|ts)$/i.test(arg);
+}
+
+function chunkFiles(files: string[], chunkSize: number): string[][] {
+  if (files.length === 0) {
+    return [];
+  }
+  const chunks: string[][] = [];
+  for (let index = 0; index < files.length; index += chunkSize) {
+    chunks.push(files.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+async function runBunBatches(
+  env: Record<string, string>,
+  batches: string[][],
+  options: { coverage: boolean; labelPrefix: string },
+): Promise<number> {
+  const coverageArgs = options.coverage
+    ? ["--coverage", "--coverage-reporter=lcov", "--coverage-reporter=text"]
+    : [];
+
+  for (let index = 0; index < batches.length; index += 1) {
+    const batch = batches[index] ?? [];
+    console.log(`[run-tests] ${options.labelPrefix} batch ${index + 1}/${batches.length} (${batch.length} entries)`);
+    const exitCode = await runExternalCommand(process.execPath, ["test", ...coverageArgs, ...batch], env);
+    if (exitCode !== 0) {
+      return exitCode;
+    }
+  }
+
+  return 0;
+}
+
+function listRepoTestFiles(testRoot: string): string[] {
+  const files: string[] = [];
+
+  function walk(dir: string): void {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(fullPath);
+        continue;
+      }
+      if (entry.isFile() && /\.test\.(mjs|ts)$/i.test(entry.name)) {
+        files.push(path.relative(repoRoot, fullPath));
+      }
+    }
+  }
+
+  walk(testRoot);
+  files.sort((a, b) => a.localeCompare(b));
+  return files;
+}
+
+function resolveBaseUrlFromConfig(env: Record<string, string>): string | null {
   const configPathEnv = env.C64BRIDGE_CONFIG;
   const homeConfig = os.homedir() ? path.join(os.homedir(), ".c64bridge.json") : null;
   const repoConfig = path.join(repoRoot, ".c64bridge.json");
@@ -150,7 +455,7 @@ function normalizeBase(input: string): string {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(input) ? input.replace(/\/+$/, "") : `http://${input}`;
 }
 
-function parseEndpoint(value: string | null): { hostname?: string; port?: number } {
+function parseEndpoint(value: string | null | undefined): { hostname?: string; port?: number } {
   const input = value && value.trim() ? value.trim() : null;
   if (!input) return {};
   try {

@@ -7,6 +7,7 @@ import {
   type PlatformId,
   type PlatformStatus,
 } from "../platform.js";
+import { withDiagnosticSpan } from "../diagnostics.js";
 import { ToolUnsupportedPlatformError, ToolValidationError } from "./errors.js";
 
 export type JsonSchema = {
@@ -181,8 +182,8 @@ export function createOperationDispatcher<TMap extends OperationMap>(
 
     if (typeof opValue !== "string" || opValue.length === 0) {
       throw new ToolValidationError(
-        `${toolName} requires an ${OPERATION_DISCRIMINATOR} string to select an operation`,
-        { path: `$.${OPERATION_DISCRIMINATOR}` },
+        `${toolName} is a grouped tool and requires an ${OPERATION_DISCRIMINATOR} string to select an operation`,
+        { path: `$.${OPERATION_DISCRIMINATOR}`, details: { allowed } },
       );
     }
 
@@ -213,6 +214,8 @@ export interface ToolDefinition {
   readonly workflowHints?: readonly string[];
   readonly prerequisites?: readonly string[];
   readonly supportedPlatforms?: readonly PlatformId[];
+  readonly operationPlatforms?: Record<string, readonly PlatformId[]>;
+  readonly operationToolNames?: Record<string, string>;
   readonly execute: (args: unknown, ctx: ToolExecutionContext) => Promise<ToolRunResult>;
 }
 
@@ -231,6 +234,7 @@ export interface ToolDescriptor {
     readonly workflowHints?: readonly string[];
     readonly prerequisites?: readonly string[];
     readonly platforms?: readonly PlatformId[];
+    readonly operationPlatforms?: Record<string, readonly PlatformId[]>;
   };
 }
 
@@ -291,6 +295,7 @@ export function defineToolModule(config: ToolModuleConfig): ToolModule {
           ...(workflowHints ? { workflowHints } : {}),
           ...(prerequisites ? { prerequisites } : {}),
           ...(platforms ? { platforms } : {}),
+          ...(tool.operationPlatforms ? { operationPlatforms: tool.operationPlatforms } : {}),
         };
 
         return {
@@ -307,11 +312,11 @@ export function defineToolModule(config: ToolModuleConfig): ToolModule {
         throw new Error(`Unknown tool: ${name}`);
       }
 
-      const platforms = mergePlatforms(defaultPlatforms, tool.supportedPlatforms) ?? defaultPlatforms;
+      const platforms = resolveSupportedPlatforms(tool, args, defaultPlatforms);
       const status = ctx.platform ?? getPlatformStatus();
       const setter = ctx.setPlatform ?? setPlatform;
       if (!isPlatformSupported(status.id, platforms)) {
-        throw new ToolUnsupportedPlatformError(name, status.id, platforms);
+        throw new ToolUnsupportedPlatformError(resolveUnsupportedToolName(name, tool, args), status.id, platforms);
       }
 
       const enrichedCtx: ToolExecutionContext = {
@@ -320,9 +325,61 @@ export function defineToolModule(config: ToolModuleConfig): ToolModule {
         setPlatform: setter,
       };
 
-      return tool.execute(args, enrichedCtx);
+      return withDiagnosticSpan(
+        "tool",
+        `${config.domain}.${name}`,
+        {
+          domain: config.domain,
+          tool: name,
+          operation: getSelectedOperation(args) ?? null,
+          platform: status.id,
+        },
+        () => tool.execute(args, enrichedCtx),
+      );
     },
   };
+}
+
+function resolveSupportedPlatforms(
+  tool: ToolDefinition,
+  args: unknown,
+  defaultPlatforms: readonly PlatformId[],
+): readonly PlatformId[] {
+  const basePlatforms = mergePlatforms(defaultPlatforms, tool.supportedPlatforms) ?? defaultPlatforms;
+  const operation = getSelectedOperation(args);
+  if (!operation) {
+    return basePlatforms;
+  }
+
+  const operationPlatforms = tool.operationPlatforms?.[operation];
+  return operationPlatforms && operationPlatforms.length > 0 ? operationPlatforms : basePlatforms;
+}
+
+function resolveUnsupportedToolName(
+  toolName: string,
+  tool: ToolDefinition,
+  args: unknown,
+): string {
+  const operation = getSelectedOperation(args);
+  if (!operation) {
+    return toolName;
+  }
+
+  const mappedName = tool.operationToolNames?.[operation];
+  if (mappedName) {
+    return mappedName;
+  }
+
+  return tool.operationPlatforms?.[operation] ? operation : toolName;
+}
+
+function getSelectedOperation(args: unknown): string | undefined {
+  if (typeof args !== "object" || args === null) {
+    return undefined;
+  }
+
+  const op = (args as Record<string, unknown>)[OPERATION_DISCRIMINATOR];
+  return typeof op === "string" && op.length > 0 ? op : undefined;
 }
 
 function mergeUnique(

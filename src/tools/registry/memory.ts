@@ -62,6 +62,7 @@ const memoryOperationHandlers = createOperationHandlers(memoryOperations);
 export const memoryModuleGroup = defineToolModule({
   domain: "memory",
   summary: "Grouped memory, screen, and polling operations.",
+  supportedPlatforms: ["c64u", "vice"],
   resources: ["c64://context/bootstrap", "c64://specs/basic", "c64://specs/assembly"],
   prompts: ["memory-debug", "basic-program", "assembly-program"],
   defaultTags: ["memory", "debug"],

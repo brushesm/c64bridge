@@ -28,11 +28,13 @@ export interface PromptSegment {
 
 interface PromptDefinition {
   readonly descriptor: PromptDescriptor;
+  readonly skillPath: string;
+  readonly routingNotes: readonly string[];
   readonly arguments?: readonly PromptArgumentDefinition[];
   readonly prepareArgs?: (args: Record<string, unknown>) => Record<string, unknown>;
-  readonly buildMessages: (args: Record<string, unknown>) => readonly PromptSegment[];
   readonly selectOptionalResources?: (args: Record<string, unknown>) => readonly string[];
   readonly selectTools?: (args: Record<string, unknown>) => readonly string[];
+  readonly renderRoutingNotes?: (args: Record<string, unknown>) => readonly string[];
 }
 
 export interface PromptListEntry {
@@ -58,232 +60,62 @@ type AssemblyHardware = "sid" | "vic" | "cia" | "multi";
 type GraphicsMode = "text" | "multicolour" | "bitmap" | "sprite";
 type PrinterType = "commodore" | "epson";
 
-const BASE_SEGMENTS: Record<string, PromptSegment> = {
-  "intro/core": {
-    id: "intro/core",
-    role: "assistant",
-    content: [
-      "You operate the Commodore 64 Ultimate hardware through MCP tools and documented workflows.",
-      "Consult the listed knowledge resources before generating code or issuing device commands.",
-      "State each intended MCP tool invocation explicitly and explain why it is required before running it.",
-    ].join("\n"),
-  },
-  "safety/reset": {
-    id: "safety/reset",
-    role: "assistant",
-    content: [
-      "Safety guardrails:",
-      "- Ask the user before resets, power cycles, disk swaps, or destructive writes.",
-      "- Offer an undo or recovery path (reload prior program, remount image, or restore settings).",
-      "- Highlight side effects that could halt running software or corrupt data.",
-    ].join("\n"),
-  },
-  "workflow/basic-verify": {
-    id: "workflow/basic-verify",
-    role: "assistant",
-    content: [
-    "Verification for BASIC programs:",
-    "- After uploading, call `c64_memory` (op `read_screen`) to capture PETSCII output and confirm `READY.` appears when expected.",
-    "- Use `c64_memory` (op `read`) around the BASIC program area when verifying that lines tokenised correctly.",
-    "- Call out newline and quotation handling quirks so the user can interpret the output accurately.",
-    ].join("\n"),
-  },
-  "workflow/asm-irq": {
-    id: "workflow/asm-irq",
-    role: "assistant",
-    content: [
-      "IRQ discipline:",
-      "- Wrap installation in `SEI`/`CLI`, set vectors, and configure `$D01A` masks explicitly.",
-      "- Acknowledge interrupts via `$D019` before returning, and document any timing assumptions.",
-      "- Describe zero-page and workspace usage so other routines can coexist safely.",
-    ].join("\n"),
-  },
-  "workflow/sid-iterate": {
-    id: "workflow/sid-iterate",
-    role: "assistant",
-    content: [
-      "SID feedback loop:",
-      "- Compose the sequence, waveform, ADSR, and modulation plan referencing SID register names.",
-  "- Explain how to play it (e.g., `c64_sound` ops `generate` or `note_on`, or uploading executable code).",
-      "- After playback, run `analyze_audio` and describe how to adjust envelope, tuning, or rhythm.",
-    ].join("\n"),
-  },
-  "workflow/graphics-verify": {
-    id: "workflow/graphics-verify",
-    role: "assistant",
-    content: [
-    "Graphics verification:",
-    "- List register writes for mode setup, colour RAM, and sprite pointers.",
-    "- Suggest capturing output with `c64_memory` (op `read_screen`) or noting expected border/background colours.",
-    "- Include timing checks (raster lines, badline windows) when applicable.",
-    ].join("\n"),
-  },
-  "workflow/printer": {
-    id: "workflow/printer",
-    role: "assistant",
-    content: [
-      "Printer workflow:",
-      "- Confirm printer type and device number before printing.",
-      "- Include channel open/write/close steps and eject the page with `CHR$(12)` when appropriate.",
-      "- Recommend checking printer status or repeating `print_text` if paper alignment is uncertain.",
-    ].join("\n"),
-  },
-  "workflow/memory-snapshot": {
-    id: "workflow/memory-snapshot",
-    role: "assistant",
-    content: [
-    "Memory safety:",
-    "- Pause running code before writes, capture the target range with `c64_memory` (op `read`), then resume when safe.",
-    "- Explain how to revert the change (rewriting original bytes or power-cycling if needed).",
-    "- Document address ranges, register dependencies, and any expected side effects.",
-    ].join("\n"),
-  },
-  "workflow/drive": {
-    id: "workflow/drive",
-    role: "assistant",
-    content: [
-      "Drive management protocol:",
-      "- List currently mounted images before altering drives to avoid disrupting active workflows.",
-      "- Warn if IEC bus operations could interfere with running programs or disk writes.",
-      "- Verify results with `drives_list` or relevant status tools after each action.",
-    ].join("\n"),
-  },
+const ASSEMBLY_HARDWARE_NOTES: Record<AssemblyHardware, readonly string[]> = {
+  sid: [
+    "When routing this request, keep SID register usage, voice allocation, and timing side effects in scope.",
+  ],
+  vic: [
+    "When routing this request, keep VIC-II register usage, raster timing, and display-mode side effects in scope.",
+  ],
+  cia: [
+    "When routing this request, keep CIA timer, interrupt, and I/O side effects in scope.",
+  ],
+  multi: [
+    "When routing this request, keep cross-chip coordination across SID, VIC-II, and CIA state in scope.",
+  ],
 };
 
-const BASIC_CORE_SEGMENT: PromptSegment = {
-  id: "family/basic-core",
+const GRAPHICS_MODE_NOTES: Record<GraphicsMode, readonly string[]> = {
+  text: [
+    "When routing this request, keep screen-code layout, PETSCII constraints, and colour RAM updates in scope.",
+  ],
+  multicolour: [
+    "When routing this request, keep multicolour cell constraints, palette choices, and VIC-II mode flags in scope.",
+  ],
+  bitmap: [
+    "When routing this request, keep bitmap memory layout, colour sources, and frame-capture validation in scope.",
+  ],
+  sprite: [
+    "When routing this request, keep sprite data layout, sprite pointers, enable masks, and expansion flags in scope.",
+  ],
+};
+
+const ROUTING_CORE_SEGMENT: PromptSegment = {
+  id: "routing/core",
   role: "assistant",
   content: [
-  "BASIC workflow:",
-  "- Restate the request and outline a short plan citing `c64://specs/basic` for syntax or device usage.",
-  "- Generate a numbered BASIC listing with inline remarks when clarity is required.",
-  "- Describe how `c64_program` (op `upload_run_basic`) loads the program and what output to inspect.",
-  "- Suggest follow-up diagnostics (screen capture, memory snapshot, or tool reruns).",
+    "Prompts in this repository define intent and routing only.",
+    "Execution logic, validation steps, and safety rules live exclusively in `.github/skills/*/SKILL.md`.",
+    "Use the referenced skill, extract missing inputs from the user request, execute the skill, and summarize the outcome.",
   ].join("\n"),
 };
 
-function assemblyCoreSegment(hardware?: AssemblyHardware): PromptSegment {
-  const focus = (() => {
-    switch (hardware) {
-      case "sid":
-        return "- Emphasise SID register usage, voice mixing, and timing derived from `c64://specs/sid`.";
-      case "vic":
-        return "- Highlight VIC-II raster, sprite, or bitmap setup drawing from `c64://specs/vic`.";
-      case "cia":
-        return "- Cover CIA timer/port configuration and interrupt hand-offs carefully.";
-      case "multi":
-        return "- Coordinate SID, VIC-II, and CIA interactions; call out contention risks.";
-      default:
-        return "- Declare which hardware blocks (SID, VIC-II, CIA) you will touch and why.";
-    }
-  })();
-
+function buildSkillRoutingSegment(skillPath: string, routingNotes: readonly string[]): PromptSegment {
   return {
-    id: "family/assembly-core",
+    id: `routing/${skillPath}`,
     role: "assistant",
     content: [
-      "Assembly workflow:",
-      focus,
-      "- Provide memory layout, zero-page usage, and register effects for the routine.",
-  "- Explain how to build and deploy via `c64_program` (op `upload_run_asm`) or targeted `c64_memory` (op `write`) calls.",
-  "- Include verification steps using `c64_memory` operations or hardware-specific checks.",
+      `Use the skill defined in \`${skillPath}\` as the single source of truth for execution.`,
+      ...routingNotes,
     ].join("\n"),
   };
 }
 
-const SID_CORE_SEGMENT: PromptSegment = {
-  id: "family/sid-core",
-  role: "assistant",
-  content: [
-    "SID composition workflow:",
-    "- Summarise the musical goal, tempo, and character before presenting notes or SIDWAVE data.",
-    "- Reference `c64://specs/sid` and `c64://specs/sidwave` when detailing registers and data formats.",
-    "- Provide a playback plan (tool calls, SID register writes, or PRG execution) and note required buffers.",
-  ].join("\n"),
-};
-
-function graphicsCoreSegment(mode?: GraphicsMode): PromptSegment {
-  const intro = (() => {
-    switch (mode) {
-      case "text":
-        return "- Focus on PETSCII screen composition and character set considerations.";
-      case "multicolour":
-        return "- Detail multicolour bitmap setup, shared colour registers, and memory banking.";
-      case "bitmap":
-        return "- Lay out bitmap memory, screen RAM, and colour RAM usage explicitly.";
-      case "sprite":
-        return "- Describe sprite data, pointer tables, and multiplexing or animation timing.";
-      default:
-        return "- State which VIC-II mode or technique you will use and justify the choice.";
-    }
-  })();
-
-  return {
-    id: "family/graphics-core",
-    role: "assistant",
-    content: [
-      "Graphics workflow:",
-      intro,
-      "- Summarise VIC-II register writes, memory banking, and colour usage with references to `c64://specs/vic`.",
-      "- Explain how to deploy the routine (BASIC loader vs assembly) and required assets.",
-      "- Include clean-up or teardown steps so the user can restore the display state.",
-    ].join("\n"),
-  };
-}
-
-function printerCoreSegment(printerType?: PrinterType): PromptSegment {
-  const detail = (() => {
-    switch (printerType) {
-      case "commodore":
-        return "- Reference Commodore device 4 character codes and PETSCII control sequences.";
-      case "epson":
-        return "- Reference Epson ESC/P control codes, especially for fonts and bit-image modes.";
-      default:
-        return "- Clarify whether the target is Commodore MPS or Epson FX to select correct control codes.";
-    }
-  })();
-
-  return {
-    id: "family/printer-core",
-    role: "assistant",
-    content: [
-      "Printer workflow:",
-      detail,
-      "- Outline data preparation, channel open/write/close, and any required delays.",
-      "- Mention how to recover if paper jams or alignment differs from expectations.",
-    ].join("\n"),
-  };
-}
-
-const MEMORY_CORE_SEGMENT: PromptSegment = {
-  id: "family/memory-core",
-  role: "assistant",
-  content: [
-    "Memory debugging workflow:",
-    "- Restate the target address ranges and relate them to symbols from `c64://specs/assembly` or the memory map.",
-  "- Plan safe inspection or patching steps using `c64_memory` operations alongside `pause` and `resume`.",
-    "- Encourage logging or diffing memory before and after changes for auditability.",
-  ].join("\n"),
-};
-
-const DRIVE_CORE_SEGMENT: PromptSegment = {
-  id: "family/drive-core",
-  role: "assistant",
-  content: [
-    "Drive management workflow:",
-    "- Summarise desired drive state and confirm affected slots before issuing commands.",
-    "- Use `drives_list` to baseline the system and to verify outcomes after each operation.",
-    "- Provide contingency steps if mounting or power commands fail.",
-  ].join("\n"),
-};
-
-function mergeUniqueStrings(
-  base: readonly string[],
-  extras?: readonly string[],
-): string[] {
+function mergeUniqueStrings(base: readonly string[], extras?: readonly string[]): string[] {
   if (!extras || extras.length === 0) {
     return [...base];
   }
+
   const seen = new Set(base);
   const combined: string[] = [...base];
   for (const value of extras) {
@@ -303,14 +135,14 @@ function prepareAssemblyArgs(args: Record<string, unknown>): Record<string, unkn
   if (typeof hardware !== "string") {
     throw new Error("assembly-program prompt argument \"hardware\" must be a string");
   }
-  const normalised = hardware.trim().toLowerCase();
+  const normalized = hardware.trim().toLowerCase();
   const allowed: AssemblyHardware[] = ["sid", "vic", "cia", "multi"];
-  if (!allowed.includes(normalised as AssemblyHardware)) {
+  if (!allowed.includes(normalized as AssemblyHardware)) {
     throw new Error(
-      `assembly-program prompt does not support hardware "${hardware}". Expected one of: ${allowed.join(", ")}`,
+      `assembly-program prompt does not support hardware \"${hardware}\". Expected one of: ${allowed.join(", ")}`,
     );
   }
-  return { hardware: normalised };
+  return { hardware: normalized };
 }
 
 function prepareGraphicsArgs(args: Record<string, unknown>): Record<string, unknown> {
@@ -321,14 +153,14 @@ function prepareGraphicsArgs(args: Record<string, unknown>): Record<string, unkn
   if (typeof mode !== "string") {
     throw new Error("graphics-demo prompt argument \"mode\" must be a string");
   }
-  const normalised = mode.trim().toLowerCase();
+  const normalized = mode.trim().toLowerCase();
   const allowed: GraphicsMode[] = ["text", "multicolour", "bitmap", "sprite"];
-  if (!allowed.includes(normalised as GraphicsMode)) {
+  if (!allowed.includes(normalized as GraphicsMode)) {
     throw new Error(
-      `graphics-demo prompt does not support mode "${mode}". Expected one of: ${allowed.join(", ")}`,
+      `graphics-demo prompt does not support mode \"${mode}\". Expected one of: ${allowed.join(", ")}`,
     );
   }
-  return { mode: normalised };
+  return { mode: normalized };
 }
 
 function preparePrinterArgs(args: Record<string, unknown>): Record<string, unknown> {
@@ -339,14 +171,14 @@ function preparePrinterArgs(args: Record<string, unknown>): Record<string, unkno
   if (typeof printerType !== "string") {
     throw new Error("printer-job prompt argument \"printerType\" must be a string");
   }
-  const normalised = printerType.trim().toLowerCase();
+  const normalized = printerType.trim().toLowerCase();
   const allowed: PrinterType[] = ["commodore", "epson"];
-  if (!allowed.includes(normalised as PrinterType)) {
+  if (!allowed.includes(normalized as PrinterType)) {
     throw new Error(
-      `printer-job prompt does not support printerType "${printerType}". Expected one of: ${allowed.join(", ")}`,
+      `printer-job prompt does not support printerType \"${printerType}\". Expected one of: ${allowed.join(", ")}`,
     );
   }
-  return { printerType: normalised };
+  return { printerType: normalized };
 }
 
 export function createPromptRegistry(): PromptRegistry {
@@ -358,40 +190,84 @@ export function createPromptRegistry(): PromptRegistry {
   const definitions: readonly PromptDefinition[] = [
     {
       descriptor: {
+        name: "hello-world",
+        title: "Hello World Workflow",
+        description: "Route ultra-fast hello-world and smoke-test requests to the canonical greeting skill.",
+        requiredResources: ["c64://context/bootstrap", "c64://context/fast-paths", "c64://docs/index"],
+        optionalResources: [],
+        tools: ["c64_program"],
+        tags: ["hello", "demo", "greeting", "smoke-test"],
+      },
+      skillPath: ".github/skills/hello-world/SKILL.md",
+      routingNotes: [
+        "Use this prompt for the narrowest hello-world, greeting, or smoke-test path.",
+        "Backend-pinned requests such as `vice: write a small BASIC program that clears the screen and prints HELLO VICE` should prefer this prompt over the bespoke BASIC prompt.",
+        "`c64_program` is a grouped tool, so every direct invocation must include `op`; for this prompt the canonical call is `{ op: \"cross_platform_greeting\", ... }`.",
+        "If the current agent cannot directly call `c64_program`, immediately delegate the same request to the `C64` agent instead of exploring repository files or manifests.",
+        "For visible single-backend VICE greetings, prefer the no-probe fast path unless the user explicitly asks for screenshots or verification.",
+      ],
+    },
+    {
+      descriptor: {
         name: "basic-program",
         title: "BASIC Program Workflow",
-        description: "Plan, implement, and verify Commodore BASIC v2 programs safely.",
-        requiredResources: [
-          "c64://specs/basic",
-          "c64://context/bootstrap",
-          "c64://docs/index",
-        ],
-        optionalResources: [],
-  tools: ["c64_program", "c64_memory"],
+        description: "Route bespoke Commodore BASIC v2 requests to the canonical BASIC skill.",
+        requiredResources: ["c64://specs/basic", "c64://context/bootstrap", "c64://docs/index"],
+        optionalResources: ["c64://context/fast-paths"],
+        tools: ["c64_program", "c64_memory"],
         tags: ["basic", "program"],
       },
-      buildMessages: () => [
-        BASE_SEGMENTS["intro/core"],
-        BASE_SEGMENTS["safety/reset"],
-        BASIC_CORE_SEGMENT,
-        BASE_SEGMENTS["workflow/basic-verify"],
+      skillPath: ".github/skills/basic-program/SKILL.md",
+      routingNotes: [
+        "This prompt is for bespoke BASIC programs rather than generic quick demos.",
+        "If the request collapses to a hello-world or smoke test, the selected skill should redirect to the hello-world flow.",
+      ],
+    },
+    {
+      descriptor: {
+        name: "cross-platform-demo",
+        title: "Cross-Platform Demo Workflow",
+        description: "Route quick visible demo requests to the cross-platform demo skill.",
+        requiredResources: ["c64://context/bootstrap", "c64://context/fast-paths", "c64://docs/index"],
+        optionalResources: [],
+        tools: ["c64_program"],
+        tags: ["demo", "platform", "greeting"],
+      },
+      skillPath: ".github/skills/cross-platform-demo/SKILL.md",
+      routingNotes: [
+        "This prompt is for the shortest visible confirmation path across one or more configured backends.",
+        "`c64_program` is a grouped tool, so always call it with `op: \"cross_platform_greeting\"` for this workflow.",
+      ],
+    },
+    {
+      descriptor: {
+        name: "preset-music-demo",
+        title: "Preset Music Demo Workflow",
+        description: "Route quick recognizable tune requests to the SID music skill.",
+        requiredResources: ["c64://specs/sid", "c64://specs/sidwave", "c64://context/fast-paths"],
+        optionalResources: ["c64://docs/sid/best-practices"],
+        tools: ["c64_sound"],
+        tags: ["sid", "music", "demo"],
+      },
+      skillPath: ".github/skills/sid-music/SKILL.md",
+      routingNotes: [
+        "This prompt is for the built-in preset playback path, using `fuer_elise` as the canonical preset.",
       ],
     },
     {
       descriptor: {
         name: "assembly-program",
         title: "Assembly Program Workflow",
-        description: "Author 6502/6510 assembly routines with precise hardware guidance.",
-        requiredResources: [
-          "c64://specs/assembly",
-          "c64://specs/vic",
-          "c64://specs/sid",
-          "c64://context/bootstrap",
-        ],
+        description: "Route 6502/6510 routine requests to the canonical assembly skill.",
+        requiredResources: ["c64://specs/assembly", "c64://specs/vic", "c64://specs/sid", "c64://context/bootstrap"],
         optionalResources: ["c64://docs/sid/best-practices"],
-  tools: ["c64_program", "c64_memory"],
+        tools: ["c64_program", "c64_memory"],
         tags: ["assembly", "program"],
       },
+      skillPath: ".github/skills/assembly-program/SKILL.md",
+      routingNotes: [
+        "Use this prompt when the user needs assembly-level control, IRQ handling, or direct register work.",
+      ],
       arguments: [
         {
           name: "hardware",
@@ -402,57 +278,54 @@ export function createPromptRegistry(): PromptRegistry {
       prepareArgs: prepareAssemblyArgs,
       selectOptionalResources: (args) => {
         const hardware = args.hardware as AssemblyHardware | undefined;
-        if (hardware === "sid" || hardware === "multi") {
-          return ["c64://docs/sid/best-practices"];
-        }
-        return [];
+        return hardware === "sid" || hardware === "multi"
+          ? ["c64://docs/sid/best-practices"]
+          : [];
       },
-      buildMessages: (args) => {
+      renderRoutingNotes: (args) => {
         const hardware = args.hardware as AssemblyHardware | undefined;
-        return [
-          BASE_SEGMENTS["intro/core"],
-          BASE_SEGMENTS["safety/reset"],
-          assemblyCoreSegment(hardware),
-          BASE_SEGMENTS["workflow/asm-irq"],
-          BASE_SEGMENTS["workflow/memory-snapshot"],
-        ];
+        return hardware
+          ? [
+              `Prompt argument hardware is set to \`${hardware}\`; keep that focus while executing the skill.`,
+              ...ASSEMBLY_HARDWARE_NOTES[hardware],
+            ]
+          : [];
       },
     },
     {
       descriptor: {
         name: "sid-music",
         title: "SID Composition Workflow",
-        description: "Compose SID music with expressive phrasing and iterative audio verification.",
+        description: "Route SID playback and composition work to the canonical SID skill.",
         requiredResources: [
           "c64://specs/sid",
           "c64://specs/sidwave",
           "c64://docs/sid/file-structure",
           "c64://docs/sid/best-practices",
         ],
-        optionalResources: [],
+        optionalResources: ["c64://context/fast-paths"],
         tools: ["c64_sound"],
         tags: ["sid", "music"],
       },
-      buildMessages: () => [
-        BASE_SEGMENTS["intro/core"],
-        SID_CORE_SEGMENT,
-        BASE_SEGMENTS["workflow/sid-iterate"],
-        BASE_SEGMENTS["safety/reset"],
+      skillPath: ".github/skills/sid-music/SKILL.md",
+      routingNotes: [
+        "Use this prompt for custom SID work or when the user wants to move beyond the preset demo path.",
       ],
     },
     {
       descriptor: {
         name: "graphics-demo",
         title: "Graphics Demo Workflow",
-        description: "Create VIC-II graphics demos with safe setup and validation steps.",
-        requiredResources: [
-          "c64://specs/vic",
-          "c64://context/bootstrap",
-        ],
-  optionalResources: ["c64://specs/assembly", "c64://specs/charset", "c64://docs/petscii-style"],
-  tools: ["c64_program", "c64_memory", "c64_graphics"],
+        description: "Route graphics requests to the canonical graphics skill.",
+        requiredResources: ["c64://specs/vic", "c64://context/bootstrap"],
+        optionalResources: ["c64://specs/assembly", "c64://specs/charset", "c64://docs/petscii-style"],
+        tools: ["c64_program", "c64_memory", "c64_graphics"],
         tags: ["graphics", "vic"],
       },
+      skillPath: ".github/skills/graphics-demo/SKILL.md",
+      routingNotes: [
+        "Use this prompt for PETSCII, sprite, bitmap, or frame-capture work.",
+      ],
       arguments: [
         {
           name: "mode",
@@ -461,48 +334,35 @@ export function createPromptRegistry(): PromptRegistry {
         },
       ],
       prepareArgs: prepareGraphicsArgs,
-      selectTools: (args) => {
+      renderRoutingNotes: (args) => {
         const mode = args.mode as GraphicsMode | undefined;
-        if (mode === "sprite") {
-          return ["c64_graphics", "c64_memory"];
-        }
-        if (mode === "bitmap" || mode === "multicolour") {
-          return ["c64_graphics", "c64_memory"];
-        }
-        if (mode === "text") {
-          return ["c64_graphics", "c64_memory"];
-        }
-        return ["c64_graphics", "c64_memory"];
-      },
-      buildMessages: (args) => {
-        const mode = args.mode as GraphicsMode | undefined;
-        return [
-          BASE_SEGMENTS["intro/core"],
-          BASE_SEGMENTS["safety/reset"],
-          graphicsCoreSegment(mode),
-          BASE_SEGMENTS["workflow/graphics-verify"],
-        ];
+        return mode
+          ? [
+              `Prompt argument mode is set to \`${mode}\`; keep that mode constraint while executing the skill.`,
+              ...GRAPHICS_MODE_NOTES[mode],
+            ]
+          : [];
       },
     },
     {
       descriptor: {
         name: "printer-job",
         title: "Printer Job Workflow",
-        description: "Send formatted output to Commodore or Epson printers with safe teardown steps.",
-        requiredResources: [
-          "c64://specs/printer",
-          "c64://docs/printer/guide",
-          "c64://docs/printer/prompts",
-        ],
+        description: "Route printer work to the canonical printer skill.",
+        requiredResources: ["c64://specs/printer", "c64://docs/printer/guide", "c64://docs/printer/prompts"],
         optionalResources: [
           "c64://docs/printer/commodore-text",
           "c64://docs/printer/commodore-bitmap",
           "c64://docs/printer/epson-text",
           "c64://docs/printer/epson-bitmap",
         ],
-  tools: ["c64_printer"],
+        tools: ["c64_printer"],
         tags: ["printer"],
       },
+      skillPath: ".github/skills/printer-job/SKILL.md",
+      routingNotes: [
+        "Use this prompt when the user needs Commodore or Epson printer workflows.",
+      ],
       arguments: [
         {
           name: "printerType",
@@ -521,56 +381,41 @@ export function createPromptRegistry(): PromptRegistry {
         }
         return [];
       },
-      selectTools: () => ["c64_printer"],
-      buildMessages: (args) => {
+      renderRoutingNotes: (args) => {
         const printerType = args.printerType as PrinterType | undefined;
-        return [
-          BASE_SEGMENTS["intro/core"],
-          printerCoreSegment(printerType),
-          BASE_SEGMENTS["workflow/printer"],
-          BASE_SEGMENTS["safety/reset"],
-        ];
+        return printerType
+          ? [`Prompt argument printerType is set to \`${printerType}\`; preserve that choice while executing the skill.`]
+          : [];
       },
     },
     {
       descriptor: {
         name: "memory-debug",
         title: "Memory Debug Workflow",
-        description: "Inspect or patch memory ranges with reversible steps and logging.",
-        requiredResources: [
-          "c64://context/bootstrap",
-          "c64://specs/assembly",
-          "c64://docs/index",
-        ],
-    optionalResources: [],
-    tools: ["c64_memory", "c64_system"],
+        description: "Route reversible memory inspection or patching work to the canonical memory skill.",
+        requiredResources: ["c64://context/bootstrap", "c64://specs/assembly", "c64://docs/index"],
+        optionalResources: [],
+        tools: ["c64_memory", "c64_system"],
         tags: ["memory", "debug"],
       },
-      buildMessages: () => [
-        BASE_SEGMENTS["intro/core"],
-        BASE_SEGMENTS["safety/reset"],
-        MEMORY_CORE_SEGMENT,
-        BASE_SEGMENTS["workflow/memory-snapshot"],
+      skillPath: ".github/skills/memory-debug/SKILL.md",
+      routingNotes: [
+        "Use this prompt for screen reads, memory reads, polling, and carefully scoped writes.",
       ],
     },
     {
       descriptor: {
         name: "drive-manager",
         title: "Drive Manager Workflow",
-        description: "Mount, create, or power drives while preserving running workloads.",
+        description: "Route disk-image and drive-state requests to the canonical drive skill.",
         requiredResources: ["c64://context/bootstrap"],
         optionalResources: [],
-        tools: [
-          "c64_disk",
-          "c64_drive",
-        ],
+        tools: ["c64_disk", "c64_drive"],
         tags: ["drive", "storage"],
       },
-      buildMessages: () => [
-        BASE_SEGMENTS["intro/core"],
-        BASE_SEGMENTS["safety/reset"],
-        DRIVE_CORE_SEGMENT,
-        BASE_SEGMENTS["workflow/drive"],
+      skillPath: ".github/skills/drive-manager/SKILL.md",
+      routingNotes: [
+        "Use this prompt for image mounts, blank media creation, drive resets, and mode changes.",
       ],
     },
   ];
@@ -623,16 +468,21 @@ export function createPromptRegistry(): PromptRegistry {
         definition.descriptor.tools,
         definition.selectTools ? definition.selectTools(prepared) : undefined,
       );
-      const tools: ToolDescriptor[] = toolNames
-        .map((toolName) => {
-          const tool = toolByName.get(toolName);
-          if (!tool) {
-            throw new Error(`Prompt ${name} references unknown tool: ${toolName}`);
-          }
-          return tool;
-        });
+      const tools: ToolDescriptor[] = toolNames.map((toolName) => {
+        const tool = toolByName.get(toolName);
+        if (!tool) {
+          throw new Error(`Prompt ${name} references unknown tool: ${toolName}`);
+        }
+        return tool;
+      });
 
-      const messages = definition.buildMessages(prepared);
+      const routingNotes = definition.renderRoutingNotes
+        ? [...definition.routingNotes, ...definition.renderRoutingNotes(prepared)]
+        : [...definition.routingNotes];
+      const messages: PromptSegment[] = [
+        ROUTING_CORE_SEGMENT,
+        buildSkillRoutingSegment(definition.skillPath, routingNotes),
+      ];
 
       return {
         name: definition.descriptor.name,

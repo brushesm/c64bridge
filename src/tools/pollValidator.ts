@@ -281,8 +281,10 @@ async function pollAsmOutcome(
       // Extract jiffy clock for separate comparison (at offset $00A0 in the buffer)
       const jiffyClock = lowMemAndScreen.slice(0xA0, 0xA3);
       
-      // Concatenate all regions and compute signature
-      const combinedBuffer = concatBuffers(ioRegions, lowMemAndScreen);
+      // Exclude the jiffy clock from the broad signature so it can be tracked separately.
+      const lowMemSignatureBuffer = lowMemAndScreen.slice();
+      lowMemSignatureBuffer.fill(0, 0xA0, 0xA3);
+      const combinedBuffer = concatBuffers(ioRegions, lowMemSignatureBuffer);
       const ioSignature = computeCrc32(combinedBuffer);
       
       // Check for any activity

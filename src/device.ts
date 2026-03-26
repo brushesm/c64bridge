@@ -4,12 +4,14 @@
 
 import axios from "axios";
 import { Buffer } from "node:buffer";
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Api } from "../generated/c64/index.js";
 import { createLoggingHttpClient } from "./loggingHttpClient.js";
+import { ViceClient } from "./vice/viceClient.js";
+import { waitForBasicReady } from "./vice/readiness.js";
+import { startViceProcess, type ViceProcessHandle } from "./vice/process.js";
 
 export type DeviceType = "c64u" | "vice";
 
@@ -31,6 +33,7 @@ export interface C64Facade {
   // Memory/register access
   readMemory(address: number, length: number): Promise<Uint8Array>;
   writeMemory(address: number, bytes: Uint8Array): Promise<void>;
+  writeMemoryBlocks?(blocks: ReadonlyArray<{ address: number; bytes: Uint8Array }>): Promise<void>;
   // System control
   reset(): Promise<RunResult>;
   reboot(): Promise<RunResult>;
@@ -75,11 +78,54 @@ export interface C64uConfig {
   port?: number | string;
   networkPassword?: string;
 }
-export interface ViceConfig { exe?: string }
+export interface ViceConfig {
+  exe?: string;
+  host?: string;
+  port?: number | string;
+  directory?: string;
+  visible?: boolean | string;
+  warp?: boolean | string;
+  args?: string | string[];
+}
 export interface C64BridgeConfigFile { c64u?: C64uConfig; vice?: ViceConfig }
 
 const DEFAULT_C64U_HOST = "c64u";
 const DEFAULT_C64U_PORT = 80;
+const DEFAULT_VICE_HOST = "127.0.0.1";
+const DEFAULT_VICE_PORT = 6502;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function coalesceMemoryWriteBlocks(
+  blocks: ReadonlyArray<{ address: number; bytes: Uint8Array }>,
+): Array<{ address: number; bytes: Uint8Array }> {
+  const merged: Array<{ address: number; bytes: Uint8Array }> = [];
+
+  for (const block of blocks) {
+    if (!Number.isInteger(block.address) || block.address < 0 || block.address > 0xffff) {
+      throw new Error("Address must be within 0x0000-0xFFFF");
+    }
+    if (!(block.bytes instanceof Uint8Array) || block.bytes.length === 0) {
+      throw new Error("Bytes must be a non-empty Uint8Array");
+    }
+
+    const previous = merged[merged.length - 1];
+    const previousEnd = previous ? previous.address + previous.bytes.length : -1;
+    if (previous && previousEnd === block.address) {
+      const bytes = new Uint8Array(previous.bytes.length + block.bytes.length);
+      bytes.set(previous.bytes, 0);
+      bytes.set(block.bytes, previous.bytes.length);
+      previous.bytes = bytes;
+      continue;
+    }
+
+    merged.push({ address: block.address, bytes: Uint8Array.from(block.bytes) });
+  }
+
+  return merged;
+}
 
 function readConfigFile(): C64BridgeConfigFile | null {
   const envPath = process.env.C64BRIDGE_CONFIG;
@@ -92,16 +138,27 @@ function readConfigFile(): C64BridgeConfigFile | null {
   } catch {}
   const home = process.env.HOME || os.homedir();
   if (home) candidates.push(path.join(home, ".c64bridge.json"));
+  let foundCandidate = false;
+  const merged: C64BridgeConfigFile = {};
   for (const p of candidates) {
     try {
       if (fs.existsSync(p)) {
+        foundCandidate = true;
         const text = fs.readFileSync(p, "utf8");
         const json = JSON.parse(text);
-        return json ?? null;
+        if (!merged.c64u && json?.c64u && typeof json.c64u === "object" && !Array.isArray(json.c64u)) {
+          merged.c64u = json.c64u as C64uConfig;
+        }
+        if (!merged.vice && json?.vice && typeof json.vice === "object" && !Array.isArray(json.vice)) {
+          merged.vice = json.vice as ViceConfig;
+        }
+        if (merged.c64u && merged.vice) {
+          break;
+        }
       }
     } catch {}
   }
-  return null;
+  return foundCandidate ? merged : null;
 }
 
 class C64uBackend implements C64Facade {
@@ -111,9 +168,30 @@ class C64uBackend implements C64Facade {
   private readonly api: Api<unknown>;
 
   constructor(config: C64uConfig) {
-    const baseUrl = resolveBaseUrl(config);
+    const envHost = configuredString(process.env.C64U_HOST);
+    const envPort = configuredPort(process.env.C64U_PORT);
+    const configBaseUrl = normaliseBaseUrl(config.baseUrl);
+    const parsedConfigBaseUrl = configBaseUrl ? parseEndpoint(configBaseUrl) : {};
+    const baseUrl = envHost !== undefined || envPort !== undefined
+      ? buildBaseUrl(
+          firstDefined(
+            envHost,
+            configuredString(config.host),
+            configuredString(config.hostname),
+            parsedConfigBaseUrl.hostname,
+          ) ?? DEFAULT_C64U_HOST,
+          firstDefined(
+            envPort,
+            configuredPort(config.port),
+            parsedConfigBaseUrl.port,
+          ) ?? DEFAULT_C64U_PORT,
+        )
+      : resolveBaseUrl(config);
     this.baseUrl = baseUrl;
-    this.networkPassword = configuredString(config.networkPassword);
+    this.networkPassword = firstDefined(
+      configuredString(process.env.C64U_PASSWORD),
+      configuredString(config.networkPassword),
+    );
     const http = createLoggingHttpClient({
       baseURL: baseUrl,
       timeout: 10_000,
@@ -190,6 +268,10 @@ class C64uBackend implements C64Facade {
       );
     }
   }
+  async writeMemoryBlocks(blocks: ReadonlyArray<{ address: number; bytes: Uint8Array }>): Promise<void> {
+    const mergedBlocks = coalesceMemoryWriteBlocks(blocks);
+    await Promise.all(mergedBlocks.map(({ address, bytes }) => this.writeMemory(address, bytes)));
+  }
   async reset(): Promise<RunResult> { const res = await this.api.v1.machineResetUpdate(":reset"); return { success: true, details: res.data }; }
   async reboot(): Promise<RunResult> { const res = await this.api.v1.machineRebootUpdate(":reboot"); return { success: true, details: res.data }; }
   async pause(): Promise<RunResult> { const res = await this.api.v1.machinePauseUpdate(":pause"); return { success: true, details: res.data }; }
@@ -225,58 +307,517 @@ class C64uBackend implements C64Facade {
   async modplayFile(pathStr: string): Promise<RunResult> { const res = await (this.api as any).v1.runnersModplayUpdate(":modplay", { file: pathStr }); return { success: true, details: res.data }; }
 }
 
-class ViceBackend implements C64Facade {
+export class ViceBackend implements C64Facade {
   readonly type = "vice" as const;
   private readonly exe: string;
+  private readonly host: string;
+  private readonly port: number;
+  private readonly directory?: string;
+  private readonly manageProcess: boolean;
+  private readonly mockMode: boolean;
+  private readonly warp: boolean;
+  private readonly visible: boolean;
+  private readonly extraArgs: string[];
+  private static readonly supervisors = new Map<string, ViceProcessHandle>();
+  private static cleanupRegistered = false;
+  private readonly debugEnabled = process.env.VICE_DEVICE_TEST_DEBUG === "1";
+  private startupPromise: Promise<void> | null = null;
+  private monitorQueue: Promise<void> = Promise.resolve();
+  private lastProcessStart = 0;
+
   constructor(config: ViceConfig) {
-    this.exe = config.exe || which("x64sc") || which("x64") || "x64sc";
+    ViceBackend.ensureCleanupRegistration();
+    const envBinary = configuredString(process.env.VICE_BINARY);
+    const configBinary = config.exe !== undefined
+      ? configuredString(config.exe) ?? (typeof config.exe === "string" ? config.exe : String(config.exe))
+      : undefined;
+    this.exe = resolveViceBinary({ envBinary, configBinary });
+
+    const envHost = normaliseViceHost(process.env.VICE_HOST);
+    const envPort = normaliseVicePort(process.env.VICE_PORT);
+    this.host = firstDefined(envHost, normaliseViceHost(config.host)) ?? DEFAULT_VICE_HOST;
+    this.port = firstDefined(envPort, normaliseVicePort(config.port)) ?? DEFAULT_VICE_PORT;
+    this.directory = firstDefined(
+      resolveViceDirectory(configuredString(process.env.VICE_DIRECTORY)),
+      resolveViceDirectory(configuredString(config.directory)),
+      findViceResourceDirectory(this.exe),
+    );
+
+    this.mockMode = (process.env.VICE_TEST_TARGET || "").toLowerCase() === "mock";
+    const hostLower = this.host.toLowerCase();
+    const isLocal = hostLower === "127.0.0.1" || hostLower === "localhost";
+    this.manageProcess = !this.mockMode && isLocal;
+
+    const warpEnv = configuredBoolean(process.env.VICE_WARP);
+    const visibleEnv = configuredBoolean(process.env.VICE_VISIBLE);
+    this.visible = visibleEnv ?? configuredBoolean(config.visible) ?? true;
+    this.warp = warpEnv ?? configuredBoolean(config.warp) ?? !this.visible;
+
+    this.extraArgs = resolveViceArgs(config);
   }
-  async ping(): Promise<boolean> { return Boolean(which(this.exe)); }
-  async runPrg(prg: Uint8Array | Buffer): Promise<RunResult> {
-    const tmp = writeTempPrg(prg);
+
+  private async tryPingExisting(): Promise<boolean> {
+    const client = new ViceClient();
     try {
-      const args = ["-silent", "-warp", "-autostart", tmp];
-      const exitCode = await spawnWithTimeout(this.exe, args, resolveTimeout());
-      return { success: exitCode === 0, details: { command: [this.exe, ...args].join(" "), exitCode } };
+      if (this.debugEnabled) console.error("[vice-backend] probing existing VICE", this.host, this.port);
+      await client.connect(this.port, this.host);
+      await client.info();
+      if (this.debugEnabled) console.error("[vice-backend] existing VICE is reachable");
+      return true;
+    } catch {
+      return false;
     } finally {
-      try { fs.unlinkSync(tmp); } catch {}
+      client.close();
     }
   }
+
+  private async waitForResponsiveMonitor(timeoutMs = 10_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    let lastError: unknown;
+    while (Date.now() < deadline) {
+      const client = new ViceClient();
+      try {
+        await client.connect(this.port, this.host);
+        await client.info();
+        return;
+      } catch (error) {
+        lastError = error;
+        await delay(250);
+      } finally {
+        client.close();
+      }
+    }
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(`VICE monitor at ${this.host}:${this.port} did not become responsive within ${timeoutMs}ms`);
+  }
+
+  private async waitForUsableMachine(timeoutMs = 20_000): Promise<void> {
+    const client = new ViceClient();
+    try {
+      await client.connect(this.port, this.host);
+      const readiness = await waitForBasicReady(client, { timeoutMs, ensurePrompt: true });
+      if (!readiness.pointersOk || !readiness.promptOk) {
+        throw new Error(
+          `VICE machine at ${this.host}:${this.port} did not reach the BASIC prompt within ${timeoutMs}ms`,
+        );
+      }
+    } finally {
+      client.close();
+    }
+  }
+
+  private async ensureProcessInternal(): Promise<void> {
+    if (!this.manageProcess) return;
+    const key = `${this.host}:${this.port}`;
+    const existing = ViceBackend.supervisors.get(key);
+    if (existing) {
+      const running = existing.process.exitCode === null && existing.process.signalCode === null;
+      if (running) return;
+      try { await existing.stop(); } catch {}
+      ViceBackend.supervisors.delete(key);
+    }
+    if (await this.tryPingExisting()) {
+      return;
+    }
+    if (this.debugEnabled) {
+      console.error("[vice-backend] starting VICE process", {
+        binary: this.exe,
+        host: this.host,
+        port: this.port,
+        warp: this.warp,
+        visible: this.visible,
+        extraArgs: this.extraArgs,
+      });
+    }
+    const handle = await startViceProcess({
+      binary: this.exe,
+      directory: this.directory,
+      host: this.host,
+      port: this.port,
+      warp: this.warp,
+      visible: this.visible,
+      extraArgs: this.extraArgs.length > 0 ? this.extraArgs : undefined,
+    });
+    this.lastProcessStart = Date.now();
+    if (this.debugEnabled) {
+      console.error("[vice-backend] VICE process started", { pid: handle.process.pid });
+    }
+    ViceBackend.supervisors.set(key, handle);
+    handle.process.once("exit", () => {
+      ViceBackend.supervisors.delete(key);
+    });
+    // Allow VICE to fully initialize its display before connecting to the monitor.
+    // Early monitor connection can interfere with the boot sequence.
+    await delay(1000);
+    await this.waitForResponsiveMonitor(20_000);
+    await this.waitForUsableMachine(20_000);
+  }
+
+  private async ensureProcess(): Promise<void> {
+    if (!this.manageProcess) {
+      return;
+    }
+    if (!this.startupPromise) {
+      this.startupPromise = this.ensureProcessInternal().finally(() => {
+        this.startupPromise = null;
+      });
+    }
+    await this.startupPromise;
+  }
+
+  private static ensureCleanupRegistration(): void {
+    if (ViceBackend.cleanupRegistered) {
+      return;
+    }
+    ViceBackend.cleanupRegistered = true;
+    process.once("exit", () => {
+      for (const [, handle] of ViceBackend.supervisors) {
+        handle.stop().catch(() => {});
+      }
+      ViceBackend.supervisors.clear();
+    });
+  }
+
+  private async withClient<T>(fn: (client: ViceClient) => Promise<T>): Promise<T> {
+    const previous = this.monitorQueue;
+    let releaseQueue: () => void = () => {};
+    this.monitorQueue = new Promise<void>((resolve) => {
+      releaseQueue = resolve;
+    });
+
+    await previous;
+    try {
+      if (!this.mockMode) await this.ensureProcess();
+      const client = new ViceClient();
+      if (this.debugEnabled) console.error("[vice-backend] connecting to VICE monitor", { host: this.host, port: this.port });
+      await client.connect(this.port, this.host);
+      if (this.manageProcess && this.lastProcessStart > 0) {
+        const sinceStart = Date.now() - this.lastProcessStart;
+        const settleDelay = 500 - sinceStart;
+        if (settleDelay > 0) {
+          await delay(settleDelay);
+        }
+      }
+      try {
+        if (this.debugEnabled) console.error("[vice-backend] connected to VICE monitor");
+        return await fn(client);
+      } finally {
+        if (this.debugEnabled) console.error("[vice-backend] closing VICE monitor connection");
+        client.close();
+      }
+    } finally {
+      releaseQueue();
+    }
+  }
+
+  async withMonitor<T>(fn: (client: ViceClient) => Promise<T>): Promise<T> {
+    return this.withClient(fn);
+  }
+
+  async ping(): Promise<boolean> {
+    const attempts = 8;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        await this.withClient(async (client) => {
+          await client.info();
+        });
+        return true;
+      } catch (error) {
+        if (this.debugEnabled) {
+          console.error(`[vice-backend] ping failed (attempt ${attempt}/${attempts})`, error);
+        }
+        if (attempt < attempts) {
+          await delay(Math.min(1_000, 200 * attempt));
+        }
+      }
+    }
+    return false;
+  }
+
+  private async injectPrg(buffer: Buffer): Promise<void> {
+    if (buffer.length < 2) throw new Error("PRG data too short");
+    const loadAddress = buffer.readUInt16LE(0);
+    const body = buffer.subarray(2);
+    await this.withClient(async (client) => {
+      await client.reset();
+      await waitForBasicReady(client, { timeoutMs: 10_000, ensurePrompt: true });
+      if (body.length > 0) await client.memSet(loadAddress, body);
+      const programEnd = loadAddress + body.length;
+      const ptrs = Buffer.alloc(8);
+      ptrs.writeUInt16LE(loadAddress, 0);
+      ptrs.writeUInt16LE(programEnd, 2);
+      ptrs.writeUInt16LE(programEnd, 4);
+      ptrs.writeUInt16LE(programEnd, 6);
+      await client.memSet(0x002B, ptrs);
+      await client.keyboardFeed("RUN\r");
+      await client.exitMonitor();
+    });
+  }
+
+  async runPrg(prg: Uint8Array | Buffer): Promise<RunResult> {
+    const buffer = Buffer.isBuffer(prg) ? prg : Buffer.from(prg);
+    await this.injectPrg(buffer);
+    return { success: true };
+  }
+
   async loadPrgFile(_path: string): Promise<RunResult> { throw unsupported("loadPrgFile"); }
+
   async runPrgFile(prgPath: string): Promise<RunResult> {
-    const args = ["-silent", "-warp", "-autostart", prgPath];
-    const exitCode = await spawnWithTimeout(this.exe, args, resolveTimeout());
-    return { success: exitCode === 0, details: { command: [this.exe, ...args].join(" "), exitCode } };
+    const data = fs.readFileSync(prgPath);
+    await this.injectPrg(data);
+    return { success: true };
   }
   async runCrtFile(_path: string): Promise<RunResult> { throw unsupported("runCrtFile"); }
   async sidplayFile(_p: string): Promise<RunResult> { throw unsupported("sidplayFile"); }
   async sidplayAttachment(_sid: Uint8Array | Buffer): Promise<RunResult> { throw unsupported("sidplayAttachment"); }
-  async readMemory(_a: number): Promise<Uint8Array> { throw unsupported("readMemory"); }
-  async writeMemory(_a: number, _b: Uint8Array): Promise<void> { throw unsupported("writeMemory"); }
-  async reset(): Promise<RunResult> { throw unsupported("reset"); }
-  async reboot(): Promise<RunResult> { throw unsupported("reboot"); }
-  async pause(): Promise<RunResult> { throw unsupported("pause"); }
-  async resume(): Promise<RunResult> { throw unsupported("resume"); }
-  async poweroff(): Promise<RunResult> { throw unsupported("poweroff"); }
+
+  async readMemory(address: number, length: number): Promise<Uint8Array> {
+    if (!Number.isInteger(address) || address < 0 || address > 0xffff) {
+      throw new Error("Address must be within 0x0000-0xFFFF");
+    }
+    if (!Number.isInteger(length) || length <= 0) {
+      throw new Error("Length must be positive");
+    }
+    const end = Math.min(0xffff, address + length - 1);
+    return await this.withClient(async (client) => {
+      const buf = await client.memGet(address, end);
+      return buf.subarray(0, Math.min(buf.length, length));
+    });
+  }
+
+  async writeMemory(address: number, bytes: Uint8Array): Promise<void> {
+    if (!Number.isInteger(address) || address < 0 || address > 0xffff) {
+      throw new Error("Address must be within 0x0000-0xFFFF");
+    }
+    if (!(bytes instanceof Uint8Array) || bytes.length === 0) {
+      throw new Error("Bytes must be a non-empty Uint8Array");
+    }
+    await this.withClient(async (client) => {
+      await client.memSet(address, Buffer.from(bytes));
+    });
+  }
+
+  async writeMemoryBlocks(blocks: ReadonlyArray<{ address: number; bytes: Uint8Array }>): Promise<void> {
+    const mergedBlocks = coalesceMemoryWriteBlocks(blocks);
+    await this.withClient(async (client) => {
+      for (const { address, bytes } of mergedBlocks) {
+        await client.memSet(address, Buffer.from(bytes));
+      }
+    });
+  }
+
+  async reset(): Promise<RunResult> {
+    await this.withClient(async (client) => {
+      await client.reset();
+      const opts = this.debugEnabled
+        ? {
+            timeoutMs: 20_000,
+            ensurePrompt: true,
+            onPointersSample: (p: { tx: number; va: number; ar: number; st: number }) => {
+              console.error("[vice-backend] BASIC pointers", p);
+            },
+          }
+        : { timeoutMs: 20_000, ensurePrompt: true };
+      const readiness = await waitForBasicReady(client, opts);
+      if (this.debugEnabled) console.error("[vice-backend] waitForBasicReady result", readiness);
+    });
+    return { success: true };
+  }
+
+  async reboot(): Promise<RunResult> { return this.reset(); }
+
+  async pause(): Promise<RunResult> {
+    return {
+      success: false,
+      details: {
+        code: "UNSUPPORTED",
+        message: "VICE pause is not implemented as a durable machine stop; use per-operation monitor access instead.",
+      },
+    };
+  }
+
+  async resume(): Promise<RunResult> {
+    return {
+      success: false,
+      details: {
+        code: "UNSUPPORTED",
+        message: "VICE resume is unavailable because durable pause is not supported.",
+      },
+    };
+  }
+  async poweroff(): Promise<RunResult> {
+    const key = this.supervisorKey();
+    const managedHandle = this.manageProcess ? ViceBackend.supervisors.get(key) : null;
+    try {
+      await this.withClient(async (client) => {
+        try {
+          await client.quit();
+        } catch {
+          // Ignore transport errors during quit; the emulator will terminate regardless.
+        }
+      });
+      if (managedHandle) {
+        try {
+          await managedHandle.stop();
+        } catch {}
+        ViceBackend.supervisors.delete(key);
+      }
+      return { success: true };
+    } catch (error) {
+      const details = error instanceof Error
+        ? { message: error.message }
+        : error;
+      return { success: false, details };
+    }
+  }
   async menuButton(): Promise<RunResult> { throw unsupported("menuButton"); }
   async debugregRead(): Promise<{ success: boolean; value?: string; details?: unknown }> { throw unsupported("debugregRead"); }
   async debugregWrite(_v: string): Promise<{ success: boolean; value?: string; details?: unknown }> { throw unsupported("debugregWrite"); }
-  async version(): Promise<unknown> { return { emulator: "vice" }; }
-  async info(): Promise<unknown> { return { emulator: "vice", phase: 1 }; }
-  async drivesList(): Promise<unknown> { throw unsupported("drivesList"); }
-  async driveMount(): Promise<RunResult> { throw unsupported("driveMount"); }
-  async driveRemove(): Promise<RunResult> { throw unsupported("driveRemove"); }
-  async driveReset(): Promise<RunResult> { throw unsupported("driveReset"); }
-  async driveOn(): Promise<RunResult> { throw unsupported("driveOn"); }
-  async driveOff(): Promise<RunResult> { throw unsupported("driveOff"); }
-  async driveSetMode(): Promise<RunResult> { throw unsupported("driveSetMode"); }
+  async version(): Promise<unknown> { return { emulator: "vice", host: this.host, port: this.port }; }
+
+  async info(): Promise<unknown> {
+    return await this.withClient(async (client) => {
+      await client.info();
+      return { emulator: "vice", host: this.host, port: this.port };
+    });
+  }
+
+  getEndpoint(): { host: string; port: number } {
+    return { host: this.host, port: this.port };
+  }
+
+  async drivesList(): Promise<unknown> {
+    return await this.withClient(async (client) => {
+      const drives = [];
+      for (const n of [8, 9, 10, 11]) {
+        try {
+          const enabled = await client.resourceGet(`Drive${n}CPUEnabled`);
+          const image = await client.resourceGet(`Drive${n}Image`);
+          const typeRes = await client.resourceGet(`Drive${n}Type`);
+          drives.push({
+            id: `drive${n}`,
+            power: (typeof enabled.value === "number" ? enabled.value : 0) ? "on" : "off",
+            image: typeof image.value === "string" && image.value ? image.value : null,
+            type: typeRes.value,
+          });
+        } catch {
+          drives.push({ id: `drive${n}`, power: "off", image: null, type: 0 });
+        }
+      }
+      return drives;
+    });
+  }
+
+  async driveMount(drive: string, imagePath: string): Promise<RunResult> {
+    const n = parseDriveNumber(drive);
+    await this.withClient(async (client) => {
+      await client.resourceSet(`Drive${n}CPUEnabled`, 1);
+      await client.resourceSet(`Drive${n}Image`, imagePath);
+    });
+    return { success: true, details: { drive, image: imagePath } };
+  }
+
+  async driveRemove(drive: string): Promise<RunResult> {
+    const n = parseDriveNumber(drive);
+    await this.withClient(async (client) => {
+      await client.resourceSet(`Drive${n}Image`, "");
+    });
+    return { success: true, details: { drive } };
+  }
+
+  async driveReset(drive: string): Promise<RunResult> {
+    const n = parseDriveNumber(drive);
+    await this.withClient(async (client) => {
+      await client.resourceSet(`Drive${n}CPUEnabled`, 0);
+      await client.resourceSet(`Drive${n}CPUEnabled`, 1);
+    });
+    return { success: true, details: { drive } };
+  }
+
+  async driveOn(drive: string): Promise<RunResult> {
+    const n = parseDriveNumber(drive);
+    await this.withClient(async (client) => {
+      await client.resourceSet(`Drive${n}CPUEnabled`, 1);
+    });
+    return { success: true, details: { drive, power: "on" } };
+  }
+
+  async driveOff(drive: string): Promise<RunResult> {
+    const n = parseDriveNumber(drive);
+    await this.withClient(async (client) => {
+      await client.resourceSet(`Drive${n}CPUEnabled`, 0);
+    });
+    return { success: true, details: { drive, power: "off" } };
+  }
+
+  async driveSetMode(drive: string, mode: "1541" | "1571" | "1581"): Promise<RunResult> {
+    const n = parseDriveNumber(drive);
+    const DRIVE_TYPE: Record<string, number> = { "1541": 2, "1571": 8, "1581": 11 };
+    const typeNum = DRIVE_TYPE[mode];
+    if (typeNum === undefined) throw new Error(`Unknown drive mode: ${mode}`);
+    await this.withClient(async (client) => {
+      await client.resourceSet(`Drive${n}Type`, typeNum);
+    });
+    return { success: true, details: { drive, mode } };
+  }
+
   async driveLoadRom(): Promise<RunResult> { throw unsupported("driveLoadRom"); }
   async streamStart(): Promise<RunResult> { throw unsupported("streamStart"); }
   async streamStop(): Promise<RunResult> { throw unsupported("streamStop"); }
-  async configsList(): Promise<unknown> { throw unsupported("configsList"); }
-  async configGet(): Promise<unknown> { throw unsupported("configGet"); }
-  async configSet(): Promise<RunResult> { throw unsupported("configSet"); }
-  async configBatchUpdate(): Promise<RunResult> { throw unsupported("configBatchUpdate"); }
+
+  async configsList(): Promise<unknown> {
+    return {
+      categories: [
+        {
+          name: "VICE",
+          items: [
+            "WarpMode", "SoundVolume", "Drive8CPUEnabled", "Drive9CPUEnabled",
+            "Drive10CPUEnabled", "Drive11CPUEnabled", "Drive8Image", "Drive9Image",
+            "Drive8Type", "Drive9Type", "VICIIBorderMode", "VICIIFullscreen",
+          ],
+        },
+      ],
+    };
+  }
+
+  async configGet(_category: string, item?: string): Promise<unknown> {
+    if (!item) throw unsupported("configGet without item name");
+    return await this.withClient(async (client) => {
+      const res = await client.resourceGet(item as string);
+      return { category: _category, item, value: res.value, type: res.type };
+    });
+  }
+
+  async configSet(_category: string, item: string, value: string): Promise<RunResult> {
+    const numValue = Number(value);
+    const parsed: string | number = !isNaN(numValue) && value.trim() !== "" ? numValue : value;
+    await this.withClient(async (client) => {
+      await client.resourceSet(item, parsed);
+    });
+    return { success: true, details: { item, value: parsed } };
+  }
+
+  async configBatchUpdate(payload: Record<string, object>): Promise<RunResult> {
+    const results: Array<{ item: string; success: boolean; error?: string }> = [];
+    await this.withClient(async (client) => {
+      for (const [category, items] of Object.entries(payload)) {
+        for (const [item, value] of Object.entries(items as Record<string, unknown>)) {
+          try {
+            const str = String(value ?? "");
+            const numValue = Number(str);
+            const parsed: string | number = !isNaN(numValue) && str.trim() !== "" ? numValue : str;
+            await client.resourceSet(item, parsed);
+            results.push({ item: `${category}/${item}`, success: true });
+          } catch (err) {
+            results.push({ item: `${category}/${item}`, success: false, error: err instanceof Error ? err.message : String(err) });
+          }
+        }
+      }
+    });
+    return { success: results.every((r) => r.success), details: { results } };
+  }
+
   async configLoadFromFlash(): Promise<RunResult> { throw unsupported("configLoadFromFlash"); }
   async configSaveToFlash(): Promise<RunResult> { throw unsupported("configSaveToFlash"); }
   async configResetToDefault(): Promise<RunResult> { throw unsupported("configResetToDefault"); }
@@ -285,9 +826,19 @@ class ViceBackend implements C64Facade {
   async filesCreateD71(): Promise<RunResult> { throw unsupported("filesCreateD71"); }
   async filesCreateD81(): Promise<RunResult> { throw unsupported("filesCreateD81"); }
   async filesCreateDnp(): Promise<RunResult> { throw unsupported("filesCreateDnp"); }
+  private supervisorKey(): string {
+    return `${this.host}:${this.port}`;
+  }
 }
 
 function unsupported(name: string): Error { const err = new Error(`Operation '${name}' is not supported by the VICE backend in phase one`); (err as any).code = "UNSUPPORTED"; return err; }
+
+function parseDriveNumber(drive: string): number {
+  const match = /\d+/.exec(drive);
+  const n = match ? parseInt(match[0], 10) : NaN;
+  if (isNaN(n) || n < 8 || n > 11) throw new Error(`Invalid drive specification: ${drive}`);
+  return n;
+}
 
 function extractBytes(data: unknown): Uint8Array {
   if (!data) return new Uint8Array();
@@ -317,23 +868,32 @@ function which(binary: string): string | null {
   return null;
 }
 
-function writeTempPrg(prg: Uint8Array | Buffer): string {
-  const dir = process.env.TMPDIR || process.env.TEMP || "/tmp";
-  const file = path.join(dir, `c64bridge-${Date.now()}-${Math.random().toString(16).slice(2)}.prg`);
-  const buf = Buffer.isBuffer(prg) ? prg : Buffer.from(prg);
-  fs.writeFileSync(file, buf);
-  return file;
+function resolveViceBinary(
+  options: { envBinary?: string; configBinary?: string },
+  findBinary: (binary: string) => string | null = which,
+): string {
+  const explicit = firstDefined(options.envBinary, options.configBinary);
+  if (explicit) {
+    const resolvedExplicit = findBinary(explicit);
+    if (resolvedExplicit) {
+      return resolvedExplicit;
+    }
+  }
+
+  for (const candidate of ["/usr/local/bin/x64sc", "/usr/local/bin/x64"]) {
+    if (findBinary(candidate)) {
+      return candidate;
+    }
+  }
+
+  return findBinary("x64sc") ?? findBinary("x64") ?? "x64sc";
 }
 
-function resolveTimeout(): number { const n = Number(process.env.VICE_RUN_TIMEOUT_MS); return Number.isFinite(n) && n > 0 ? Math.floor(n) : 10000; }
-
-async function spawnWithTimeout(file: string, args: string[], timeoutMs: number): Promise<number> {
-  return await new Promise<number>((resolve) => {
-    const child = spawn(file, args, { stdio: ["ignore", "ignore", "pipe"] });
-    const timer = setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, Math.max(1000, timeoutMs));
-    child.on("close", (code) => { clearTimeout(timer); resolve(code ?? 0); });
-    child.on("error", () => { clearTimeout(timer); resolve(127); });
-  });
+export function __resolveViceBinaryForTests(
+  options: { envBinary?: string; configBinary?: string },
+  findBinary?: (binary: string) => string | null,
+): string {
+  return resolveViceBinary(options, findBinary ?? which);
 }
 
 export interface FacadeSelection { facade: C64Facade; selected: DeviceType; reason: string; details?: Record<string, unknown> }
@@ -341,6 +901,12 @@ export interface FacadeSelection { facade: C64Facade; selected: DeviceType; reas
 export interface FacadeOptions {
   preferredC64uBaseUrl?: string;
   preferredC64uNetworkPassword?: string;
+}
+
+export interface AllFacadesResult {
+  primary: FacadeSelection;
+  secondary: C64Facade | null;
+  secondaryType: DeviceType | null;
 }
 
 export async function createFacade(logger?: { info: (...a: any[]) => void }, options?: FacadeOptions): Promise<FacadeSelection> {
@@ -366,7 +932,8 @@ export async function createFacade(logger?: { info: (...a: any[]) => void }, opt
   if (envMode === "vice") {
     const backend = new ViceBackend(cfg?.vice ?? {});
     logger?.info?.("Active backend: vice (from env override)");
-    return { facade: backend, selected: "vice", reason: "env override", details: { exe: (cfg?.vice?.exe || which("x64sc") || "x64sc") } };
+    const endpoint = backend.getEndpoint();
+    return { facade: backend, selected: "vice", reason: "env override", details: { host: endpoint.host, port: endpoint.port } };
   }
 
   if (hasC64u && !hasVice) {
@@ -377,7 +944,8 @@ export async function createFacade(logger?: { info: (...a: any[]) => void }, opt
   if (!hasC64u && hasVice) {
     const backend = new ViceBackend(cfg!.vice!);
     logger?.info?.("Active backend: vice (from config)");
-    return { facade: backend, selected: "vice", reason: "config only", details: { exe: (cfg!.vice!.exe || which("x64sc") || "x64sc") } };
+    const endpoint = backend.getEndpoint();
+    return { facade: backend, selected: "vice", reason: "config only", details: { host: endpoint.host, port: endpoint.port } };
   }
   if (hasC64u && hasVice) {
     const backend = new C64uBackend(cfg!.c64u!);
@@ -397,7 +965,56 @@ export async function createFacade(logger?: { info: (...a: any[]) => void }, opt
   } catch {}
   const backend = new ViceBackend(cfg?.vice ?? {});
   logger?.info?.("Active backend: vice (fallback – hardware unavailable)");
-  return { facade: backend, selected: "vice", reason: "fallback (hardware unavailable)", details: { exe: (cfg?.vice?.exe || which("x64sc") || "x64sc") } };
+  const endpoint = backend.getEndpoint();
+  return { facade: backend, selected: "vice", reason: "fallback (hardware unavailable)", details: { host: endpoint.host, port: endpoint.port } };
+}
+
+export async function createAllFacades(
+  logger?: { info: (...a: any[]) => void },
+  options?: FacadeOptions,
+): Promise<AllFacadesResult> {
+  const primary = await createFacade(logger);
+  const config = readConfigFile();
+  const secondaryType = primary.selected === "c64u" ? "vice" : "c64u";
+
+  if (secondaryType === "c64u" && shouldProvisionSecondaryC64u(config, options)) {
+    const secondaryConfig: C64uConfig = {
+      ...(config?.c64u ?? {}),
+      ...(!config?.c64u?.baseUrl && options?.preferredC64uBaseUrl ? { baseUrl: options.preferredC64uBaseUrl } : {}),
+      ...(!config?.c64u?.networkPassword && options?.preferredC64uNetworkPassword
+        ? { networkPassword: options.preferredC64uNetworkPassword }
+        : {}),
+    };
+    return {
+      primary,
+      secondary: new C64uBackend(secondaryConfig),
+      secondaryType,
+    };
+  }
+
+  if (secondaryType === "vice" && config?.vice) {
+    return {
+      primary,
+      secondary: new ViceBackend(config.vice),
+      secondaryType,
+    };
+  }
+
+  return {
+    primary,
+    secondary: null,
+    secondaryType: null,
+  };
+}
+
+function shouldProvisionSecondaryC64u(config: C64BridgeConfigFile | null, options?: FacadeOptions): boolean {
+  return Boolean(
+    config?.c64u
+    || options?.preferredC64uBaseUrl
+    || configuredString(process.env.C64U_HOST)
+    || configuredPort(process.env.C64U_PORT)
+    || configuredString(process.env.C64U_PASSWORD),
+  );
 }
 
 function resolveBaseUrl(config: C64uConfig): string {
@@ -423,6 +1040,87 @@ function configuredString(value: unknown): string | undefined {
     return trimmed ? trimmed : undefined;
   }
   return undefined;
+}
+
+function configuredBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  const input = configuredString(value);
+  if (!input) return undefined;
+  const normalised = input.toLowerCase();
+  if (normalised === "1" || normalised === "true" || normalised === "yes" || normalised === "on") {
+    return true;
+  }
+  if (normalised === "0" || normalised === "false" || normalised === "no" || normalised === "off") {
+    return false;
+  }
+  return undefined;
+}
+
+function resolveViceArgs(config: ViceConfig): string[] {
+  const argsEnv = configuredString(process.env.VICE_ARGS);
+  if (argsEnv) {
+    return parseArgsList(argsEnv);
+  }
+  if (Array.isArray(config.args)) {
+    return config.args
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+  }
+  if (typeof config.args === "string") {
+    return parseArgsList(config.args);
+  }
+  return [];
+}
+
+function resolveViceDirectory(value?: string): string | undefined {
+  const input = configuredString(value);
+  if (!input) {
+    return undefined;
+  }
+  return isViceResourceDirectory(input) ? input : undefined;
+}
+
+function findViceResourceDirectory(binaryPath: string): string | undefined {
+  const candidates = new Set<string>();
+  const resolvedBinary = configuredString(binaryPath);
+  if (resolvedBinary) {
+    const binaryDir = path.dirname(resolvedBinary);
+    candidates.add(path.resolve(binaryDir, "..", "share", "vice"));
+    candidates.add(path.resolve(binaryDir, "..", "..", "share", "vice"));
+  }
+  candidates.add("/usr/local/share/vice");
+  candidates.add("/usr/share/vice");
+  candidates.add("/opt/homebrew/share/vice");
+  candidates.add("/opt/local/share/vice");
+
+  for (const candidate of candidates) {
+    if (isViceResourceDirectory(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function isViceResourceDirectory(candidate: string): boolean {
+  const normalized = configuredString(candidate);
+  if (!normalized) {
+    return false;
+  }
+  const requiredFiles = [
+    path.join(normalized, "C64", "kernal-901227-03.bin"),
+    path.join(normalized, "C64", "basic-901226-01.bin"),
+    path.join(normalized, "C64", "chargen-901225-01.bin"),
+  ];
+  return requiredFiles.every((filePath) => {
+    try {
+      return fs.existsSync(filePath);
+    } catch {
+      return false;
+    }
+  });
 }
 
 function configuredPort(value: unknown): number | undefined {
@@ -480,9 +1178,29 @@ function stripTrailingSlash(input: string): string {
   return input.replace(/\/+$/, "");
 }
 
+function parseArgsList(input: string): string[] {
+  const args: string[] = [];
+  const pattern = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|(\S+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(input)) !== null) {
+    const value = match[1] ?? match[2] ?? match[3] ?? "";
+    args.push(value.replace(/\\(["'\\])/g, "$1"));
+  }
+  return args;
+}
+
 function firstDefined<T>(...values: Array<T | undefined>): T | undefined {
   for (const value of values) {
     if (value !== undefined && value !== null) return value;
   }
   return undefined;
+}
+
+function normaliseViceHost(input?: string): string | undefined {
+  const trimmed = configuredString(input);
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normaliseVicePort(value?: string | number): number | undefined {
+  return configuredPort(value);
 }

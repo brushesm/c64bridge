@@ -9,6 +9,7 @@ import {
 const expectedResources = [
   { uri: "c64://docs/index", domain: "overview", priority: "critical", includeInIndex: true },
   { uri: "c64://context/bootstrap", domain: "orientation", priority: "critical", includeInIndex: true },
+  { uri: "c64://context/fast-paths", domain: "orientation", priority: "critical", includeInIndex: true },
   { uri: "c64://specs/basic", domain: "languages", priority: "critical", includeInIndex: true },
   { uri: "c64://docs/basic/pitfalls", domain: "languages", priority: "reference", includeInIndex: true },
   { uri: "c64://specs/assembly", domain: "languages", priority: "critical", includeInIndex: true },
@@ -46,26 +47,27 @@ export function registerMcpServerResourcesTests(withSharedMcpClient) {
 
       for (const expected of expectedResources) {
         const resource = resourcesByUri.get(expected.uri);
+        const metadata = resource?._meta;
         assert.ok(resource, `resource ${expected.uri} should be listed`);
         assert.equal(resource.mimeType, "text/markdown");
-        assert.ok(resource.metadata, "resource metadata should be present");
-        assert.equal(resource.metadata.domain, expected.domain);
-        assert.equal(resource.metadata.priority, expected.priority);
+        assert.ok(metadata, "resource metadata should be present");
+        assert.equal(metadata.domain, expected.domain);
+        assert.equal(metadata.priority, expected.priority);
         assert.ok(
-          typeof resource.metadata.summary === "string" &&
-            resource.metadata.summary.length > 0,
+          typeof metadata.summary === "string" &&
+            metadata.summary.length > 0,
           "resource metadata should include a non-empty summary",
         );
         assert.ok(
-          Array.isArray(resource.metadata.prompts),
+          Array.isArray(metadata.prompts),
           "metadata.prompts should be an array",
         );
         assert.ok(
-          Array.isArray(resource.metadata.tools),
+          Array.isArray(metadata.tools),
           "metadata.tools should be an array",
         );
         assert.ok(
-          Array.isArray(resource.metadata.relatedResources),
+          Array.isArray(metadata.relatedResources),
           "metadata.relatedResources should be an array",
         );
       }

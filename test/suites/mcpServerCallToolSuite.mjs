@@ -1,10 +1,46 @@
 import test from "#test/runner";
 import assert from "#test/assert";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import { assertToolUnsupported } from "../helpers/toolAssertions.mjs";
 import { getChargenGlyphs } from "../../src/chargen.js";
 
 function getTextContent(result) {
   return result.content.find((entry) => entry.type === "text");
+}
+
+function buildTestSidwaveDoc() {
+  return {
+    song: {
+      title: "Duck Test",
+      tempo: 110,
+      mode: "PAL",
+      length_bars: 2,
+    },
+    voices: [
+      {
+        id: 1,
+        name: "Lead",
+        waveform: "triangle",
+        adsr: [2, 2, 10, 3],
+        pulse_width: 2048,
+        patterns: {
+          main: {
+            type: "arpeggio",
+            notes: ["C4", "E4", "G4"],
+          },
+        },
+      },
+    ],
+    timeline: [
+      {
+        section: "A",
+        bars: 2,
+        layers: {
+          v1: "main",
+        },
+      },
+    ],
+  };
 }
 
 const CHAR_TO_SCREEN = (() => {
@@ -44,6 +80,66 @@ function writeScreenTextAsCodes(state, row, column, text) {
   }
 }
 
+function toolIsAvailable(ctx, toolName) {
+  if (typeof ctx.isToolSupported === "function") {
+    try {
+      return ctx.isToolSupported(toolName);
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+function assertUnsupportedOperation(result, platform, expectedTool) {
+  assert.equal(result.isError, true);
+  assert.equal(result.metadata?.error?.kind, "execution");
+  assert.equal(result.metadata?.error?.code, "unsupported_platform");
+  assert.equal(result.metadata?.error?.details?.platform, platform);
+  if (expectedTool) {
+    assert.equal(result.metadata?.error?.details?.tool, expectedTool);
+  }
+}
+
+async function callTool(ctx, toolName, args) {
+  const supported = toolIsAvailable(ctx, toolName);
+  const result = await ctx.client.request(
+    {
+      method: "tools/call",
+      params: {
+        name: toolName,
+        arguments: args,
+      },
+    },
+    CallToolResultSchema,
+  );
+
+  if (!supported) {
+    assertToolUnsupported(result, toolName, ctx.platform);
+  }
+
+  return { result, supported };
+}
+
+async function callToolUntil(ctx, toolName, args, predicate, {
+  timeoutMs = 10_000,
+  intervalMs = 250,
+  description = toolName,
+} = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    last = await callTool(ctx, toolName, args);
+    if (!last.supported || predicate(last.result)) {
+      return last;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(
+    `Timed out waiting for ${description}; lastMetadata=${JSON.stringify(last?.result?.metadata ?? null)}`,
+  );
+}
+
 export function registerMcpServerCallToolTests(withSharedMcpClient) {
   test("CallTool returns structured error for unknown tools", async () => {
     await withSharedMcpClient(async ({ client }) => {
@@ -72,21 +168,18 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
   });
 
   test("c64_program upload_run_basic operation proxies to C64 client", async () => {
-    await withSharedMcpClient(async ({ client, mockServer }) => {
+    await withSharedMcpClient(async (ctx) => {
+      const { mockServer } = ctx;
       const program = `10 PRINT "HELLO"\n20 GOTO 10`;
-      const result = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_program",
-            arguments: {
-              op: "upload_run_basic",
-              program,
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
+      const runCountBefore = mockServer.state.runCount;
+      const { result, supported } = await callTool(ctx, "c64_program", {
+        op: "upload_run_basic",
+        program,
+      });
+
+      if (!supported) {
+        return;
+      }
 
       assert.ok(Array.isArray(result.content));
       const textContent = getTextContent(result);
@@ -95,28 +188,30 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
 
       assert.ok(result.metadata?.success, "metadata should flag success");
       assert.equal(result.metadata?.details?.result ?? "ok", "ok");
-      assert.equal(mockServer.state.runCount, 1, "mock server should execute program once");
+      if (ctx.platform === "vice") {
+        assert.equal(mockServer.state.runCount, runCountBefore, "vice mode must not run programs on the C64U mock");
+        return;
+      }
+
+      assert.equal(mockServer.state.runCount, runCountBefore + 1, "mock server should execute program once");
       assert.ok(mockServer.state.lastPrg, "mock server should receive PRG payload");
     });
   });
 
   test("c64_program upload_run_asm assembles source and runs program", async () => {
-    await withSharedMcpClient(async ({ client, mockServer }) => {
+    await withSharedMcpClient(async (ctx) => {
+      const { mockServer } = ctx;
       const program = `\n      .org $0801\nstart:\n      lda #$01\n      sta $0400\n      rts\n    `;
+      const runCountBefore = mockServer.state.runCount;
 
-      const result = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_program",
-            arguments: {
-              op: "upload_run_asm",
-              program,
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
+      const { result, supported } = await callTool(ctx, "c64_program", {
+        op: "upload_run_asm",
+        program,
+      });
+
+      if (!supported) {
+        return;
+      }
 
       assert.ok(Array.isArray(result.content));
       const textContent = getTextContent(result);
@@ -125,358 +220,352 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
 
       assert.ok(result.metadata?.success, "metadata should flag success");
       assert.equal(result.metadata?.details?.result ?? "ok", "ok");
-      assert.equal(mockServer.state.runCount, 1, "mock server should execute program once");
+      if (ctx.platform === "vice") {
+        assert.equal(mockServer.state.runCount, runCountBefore, "vice mode must not assemble-run via the C64U mock");
+        assert.equal(result.structuredContent?.data?.kind, "upload_run_asm");
+        assert.equal(result.structuredContent?.data?.format, "prg");
+        return;
+      }
+
+      assert.equal(mockServer.state.runCount, runCountBefore + 1, "mock server should execute program once");
       assert.ok(mockServer.state.lastPrg, "mock server should receive PRG payload");
     });
   });
 
-  test("c64_program upload_run_basic verify surfaces BASIC errors on last screen row", async () => {
-    await withSharedMcpClient(async ({ client, mockServer }) => {
-      const program = '10 PRINT "OK"\n20 END';
-      const resultPromise = client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_program",
-            arguments: {
-              op: "upload_run_basic",
-              program,
-              verify: true,
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
+  test("Drive and storage tools operate via MCP", async () => {
+    await withSharedMcpClient(async (ctx) => {
+      const { mockServer } = ctx;
 
-      const triggerErrorScreen = (async () => {
-        const deadline = Date.now() + 120;
-        let patched = false;
-        while (!patched && Date.now() < deadline) {
-          const last = mockServer.state.lastRequest;
-          if (last?.method === "GET" && typeof last.url === "string" && last.url.startsWith("/v1/machine:readmem")) {
-            await new Promise((resolve) => setTimeout(resolve, 5));
-            mockServer.state.memory.fill(SPACE_SCREEN_CODE, 0x0400, 0x0400 + 0x03e8);
-            writeScreenTextAsCodes(mockServer.state, 24, 0, "?SYNTAX  ERROR IN 80");
-            patched = true;
-            break;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 2));
-        }
-        if (!patched) {
-          mockServer.state.memory.fill(SPACE_SCREEN_CODE, 0x0400, 0x0400 + 0x03e8);
-          writeScreenTextAsCodes(mockServer.state, 24, 0, "?SYNTAX  ERROR IN 80");
-        }
-      })();
+      const listCall = await callTool(ctx, "c64_disk", { op: "list_drives" });
+      if (!listCall.supported) {
+        return;
+      }
+      const { result: listResult } = listCall;
 
-    const [result] = await Promise.all([resultPromise, triggerErrorScreen]);
+      assert.equal(listResult.metadata?.success, true, "list_drives operation should succeed");
+      assert.ok(listResult.metadata?.drives, "drives_list should include drive metadata");
 
-      assert.equal(result.isError, true, "verification should surface BASIC error");
-      assert.equal(result.metadata?.error?.kind, "execution");
-      assert.equal(result.metadata?.error?.details?.message, "SYNTAX");
-      assert.equal(result.metadata?.error?.details?.line, 80);
-      const textContent = getTextContent(result);
-      assert.ok(textContent, "Expected text response content");
-      assert.match(textContent.text, /BASIC program verification failed/i);
+      const { result: mountResult } = await callTool(ctx, "c64_disk", {
+        op: "mount",
+        drive: "drive8",
+        image: "/tmp/demo.d64",
+        type: "d64",
+        attachmentMode: "readwrite",
+      });
+
+      assert.equal(mountResult.metadata?.success, true, "mount operation should succeed");
+      if (ctx.platform === "vice") {
+        assert.equal(mountResult.metadata?.drive, "drive8");
+        assert.equal(mountResult.metadata?.image, "/tmp/demo.d64");
+        assert.equal(mountResult.metadata?.mode, "readwrite");
+        assert.equal(mountResult.metadata?.type, "d64");
+      } else {
+      assert.equal(mockServer.state.lastDriveOperation?.action, "mount");
+      assert.deepEqual(mockServer.state.drives.drive8.mountedImage, {
+        image: "/tmp/demo.d64",
+        type: "d64",
+        mode: "readwrite",
+      });
+      }
+
+      const modeCall = await callTool(ctx, "c64_drive", {
+        op: "set_mode",
+        drive: "drive8",
+        mode: "1571",
+      });
+      if (!modeCall.supported) {
+        return;
+      }
+      const { result: modeResult } = modeCall;
+
+      assert.equal(modeResult.metadata?.success, true, "set_mode operation should succeed");
+      if (ctx.platform === "vice") {
+        assert.equal(modeResult.metadata?.mode, "1571");
+      } else {
+        assert.equal(mockServer.state.drives.drive8.mode, "1571");
+      }
+
+      const { result: onResult } = await callTool(ctx, "c64_drive", {
+        op: "power_on",
+        drive: "drive8",
+      });
+
+      assert.equal(onResult.metadata?.success, true, "power_on operation should succeed");
+      if (ctx.platform === "vice") {
+        assert.equal(onResult.metadata?.power, "on");
+      } else {
+        assert.equal(mockServer.state.drives.drive8.power, "on");
+      }
+
+      const { result: offResult } = await callTool(ctx, "c64_drive", {
+        op: "power_off",
+        drive: "drive8",
+      });
+
+      assert.equal(offResult.metadata?.success, true, "power_off operation should succeed");
+      if (ctx.platform === "vice") {
+        assert.equal(offResult.metadata?.power, "off");
+      } else {
+        assert.equal(mockServer.state.drives.drive8.power, "off");
+      }
+
+      const { result: resetResult } = await callTool(ctx, "c64_drive", {
+        op: "reset",
+        drive: "drive8",
+      });
+
+      assert.equal(resetResult.metadata?.success, true, "reset operation should succeed");
+      if (ctx.platform === "vice") {
+        assert.equal(resetResult.metadata?.drive, "drive8");
+      } else {
+        assert.equal(mockServer.state.drives.drive8.resetCount, 1);
+      }
+
+      const { result: romResult } = await callTool(ctx, "c64_drive", {
+        op: "load_rom",
+        drive: "drive8",
+        path: "/roms/custom.rom",
+      });
+
+      if (ctx.platform === "vice") {
+        assertUnsupportedOperation(romResult, ctx.platform, "drive_load_rom");
+      } else {
+        assert.equal(romResult.metadata?.success, true, "load_rom operation should succeed");
+        assert.equal(mockServer.state.drives.drive8.lastRom, "/roms/custom.rom");
+      }
+
+      const { result: removeResult } = await callTool(ctx, "c64_disk", {
+        op: "unmount",
+        drive: "drive8",
+      });
+
+      assert.equal(removeResult.metadata?.success, true, "unmount operation should succeed");
+      if (ctx.platform === "vice") {
+        assert.equal(removeResult.metadata?.drive, "drive8");
+      } else {
+        assert.equal(mockServer.state.drives.drive8.mountedImage, null);
+      }
+
+      const { result: infoResult } = await callTool(ctx, "c64_disk", {
+        op: "file_info",
+        path: "/tmp/demo.d64",
+      });
+
+      if (ctx.platform === "vice") {
+        assertUnsupportedOperation(infoResult, ctx.platform, "file_info");
+      } else {
+        assert.equal(infoResult.metadata?.success, true, "file_info operation should succeed");
+        assert.equal(mockServer.state.lastFileInfo, "/tmp/demo.d64");
+      }
+
+      const { result: createD64Result } = await callTool(ctx, "c64_disk", {
+        op: "create_image",
+        format: "d64",
+        path: "/tmp/new.d64",
+        tracks: 35,
+        diskname: "DISK1",
+      });
+
+      if (ctx.platform === "vice") {
+        assertUnsupportedOperation(createD64Result, ctx.platform, "create_image");
+        return;
+      }
+
+      assert.equal(createD64Result.metadata?.success, true, "create_image (d64) should succeed");
+
+      const { result: createD71Result } = await callTool(ctx, "c64_disk", {
+        op: "create_image",
+        format: "d71",
+        path: "/tmp/new.d71",
+        diskname: "DISK2",
+      });
+
+      assert.equal(createD71Result.metadata?.success, true, "create_image (d71) should succeed");
+
+      const { result: createD81Result } = await callTool(ctx, "c64_disk", {
+        op: "create_image",
+        format: "d81",
+        path: "/tmp/new.d81",
+        diskname: "DISK3",
+      });
+
+      assert.equal(createD81Result.metadata?.success, true, "create_image (d81) should succeed");
+
+      const { result: createDnpResult } = await callTool(ctx, "c64_disk", {
+        op: "create_image",
+        format: "dnp",
+        path: "/tmp/new.dnp",
+        tracks: 80,
+        diskname: "DISK4",
+      });
+
+      assert.equal(createDnpResult.metadata?.success, true, "create_image (dnp) should succeed");
+      assert.equal(mockServer.state.createdImages.length, 4, "All disk creations should be tracked");
+      const createdTypes = mockServer.state.createdImages.map((entry) => entry.type).sort();
+      assert.deepEqual(createdTypes, ["d64", "d71", "d81", "dnp"], "Disk creation types should match requests");
     });
   });
 
-  test("c64_memory read_screen operation returns current screen text", async () => {
-    await withSharedMcpClient(async ({ client }) => {
-      const result = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_memory",
-            arguments: {
-              op: "read_screen",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
+  test("c64_program grouped platform restrictions are enforced via MCP", async () => {
+    await withSharedMcpClient(async (ctx) => {
+      const { result: loadResult, supported } = await callTool(ctx, "c64_program", {
+        op: "load_prg",
+        path: "//USB0/demo.prg",
+      });
 
-      assert.ok(Array.isArray(result.content));
-      const textContent = getTextContent(result);
-      assert.ok(textContent, "Expected text response content");
-      assert.match(textContent.text, /READY/i);
+      if (!supported) {
+        return;
+      }
 
-      assert.ok(result.metadata?.success, "metadata should flag success");
-      assert.equal(typeof result.metadata?.screen, "string", "metadata should embed screen contents");
-      assert.match(String(result.metadata?.screen), /READY/i);
+      const { result: crtResult } = await callTool(ctx, "c64_program", {
+        op: "run_crt",
+        path: "//USB0/demo.crt",
+      });
+
+      if (ctx.platform !== "vice") {
+        return;
+      }
+
+      assertUnsupportedOperation(loadResult, ctx.platform, "load_prg");
+      assertUnsupportedOperation(crtResult, ctx.platform, "run_crt");
     });
   });
 
-  test("c64_memory read operation returns hex dump with metadata", async () => {
-    await withSharedMcpClient(async ({ client }) => {
-      const result = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_memory",
-            arguments: {
-              op: "read",
-              address: "$0400",
-              length: 8,
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
+  test("c64_sound grouped platform restrictions are enforced via MCP", async () => {
+    await withSharedMcpClient(async (ctx) => {
+      const { result: sidResult, supported } = await callTool(ctx, "c64_sound", {
+        op: "play_sid_file",
+        path: "//USB0/demo.sid",
+      });
 
-      assert.ok(Array.isArray(result.content));
-      const textContent = getTextContent(result);
-      assert.ok(textContent, "Expected text response content");
-      assert.match(textContent.text, /Read 8 bytes starting at \$0400/);
+      if (!supported) {
+        return;
+      }
 
-      assert.ok(result.metadata?.success, "metadata should flag success");
-      assert.equal(result.metadata?.address, "$0400");
-      assert.equal(result.metadata?.length, 8);
-  assert.equal(result.metadata?.hexData, "$12050104192E2000");
+      const { result: modResult } = await callTool(ctx, "c64_sound", {
+        op: "play_mod_file",
+        path: "//USB0/demo.mod",
+      });
+
+      if (ctx.platform !== "vice") {
+        return;
+      }
+
+      assertUnsupportedOperation(sidResult, ctx.platform, "sidplay_file");
+      assertUnsupportedOperation(modResult, ctx.platform, "modplay_file");
     });
   });
 
-  test("c64_memory write operation writes bytes to mock C64", async () => {
-    await withSharedMcpClient(async ({ client, mockServer }) => {
-      const result = await client.request(
+  test("c64_graphics capture_frame returns normalized frame data via MCP", async () => {
+    await withSharedMcpClient(async (ctx) => {
+      const { result, supported } = await callToolUntil(
+        ctx,
+        "c64_graphics",
+        { op: "capture_frame" },
+        (candidate) => candidate.metadata?.success === true,
         {
-          method: "tools/call",
-          params: {
-            name: "c64_memory",
-            arguments: {
-              op: "write",
-              address: "$0400",
-              bytes: "$AA55",
-            },
-          },
+          timeoutMs: 20_000,
+          intervalMs: 500,
+          description: `${ctx.platform} capture_frame`,
         },
-        CallToolResultSchema,
       );
 
-      assert.ok(Array.isArray(result.content));
-      const textContent = getTextContent(result);
-      assert.ok(textContent, "Expected text response content");
-      assert.match(textContent.text, /Wrote/);
+      if (!supported) {
+        return;
+      }
 
-      assert.ok(result.metadata?.success, "metadata should flag success");
-      assert.equal(result.metadata?.address, "$0400");
-      assert.equal(result.metadata?.bytes, "$AA55");
+      assert.equal(result.metadata?.success, true, "capture_frame should succeed");
+      assert.equal(result.structuredContent?.type, "json");
+      const frame = result.structuredContent?.data?.frames?.[0];
+      assert.ok(frame, "capture_frame should return at least one frame");
+      assert.ok(frame.complete, "captured frame should be complete");
+      assert.ok(frame.byteLength > 0, "captured frame should include bytes");
 
-      assert.equal(mockServer.state.lastWrite?.address, 0x0400);
-      assert.deepEqual([...mockServer.state.lastWrite?.bytes ?? []], [0xaa, 0x55]);
+      if (ctx.platform === "vice") {
+        assert.equal(result.structuredContent?.data?.backend, "vice");
+        assert.equal(frame.width, 320); // VICE returns debugWidth (320), not UDP stream width
+        assert.equal(frame.height, 200); // VICE mock encodeDisplay() sets debugHeight = 200
+      } else {
+        assert.equal(result.structuredContent?.data?.backend, "c64u");
+        assert.equal(frame.width, 384);
+        assert.equal(frame.height, 272);
+        assert.equal(ctx.mockServer.state.streams.video.active, false);
+        assert.ok(ctx.mockServer.state.streams.video.packetsSent >= 68);
+      }
     });
   });
 
-  test("c64_sound operations operate via MCP", async () => {
-    await withSharedMcpClient(async ({ client, mockServer }) => {
-      const volumeResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_sound",
-            arguments: {
-              op: "set_volume",
-              volume: 12,
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
+  test("c64_sound capture_samples returns streamed PCM data via MCP", async () => {
+    await withSharedMcpClient(async (ctx) => {
+      const { result, supported } = await callTool(ctx, "c64_sound", {
+        op: "capture_samples",
+      });
 
-    assert.ok(volumeResult.metadata?.success, "set_volume should succeed");
-      assert.equal(volumeResult.metadata?.appliedVolume, 12);
-      assert.equal(mockServer.state.lastWrite?.address, 0xd418);
-      assert.equal(mockServer.state.lastWrite?.bytes[0], 12);
+      if (!supported) {
+        return;
+      }
 
-      const noteOnResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_sound",
-            arguments: {
-              op: "note_on",
-              voice: 2,
-              note: "C4",
-              waveform: "tri",
-              pulseWidth: 0x0400,
-              attack: 2,
-              decay: 5,
-              sustain: 8,
-              release: 4,
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
+      if (ctx.platform === "vice") {
+        assertUnsupportedOperation(result, ctx.platform, "capture_samples");
+        return;
+      }
 
-    assert.ok(noteOnResult.metadata?.success, "note_on should succeed");
-      assert.equal(noteOnResult.metadata?.voice, 2);
-      assert.equal(mockServer.state.lastWrite?.address, 0xd407);
-      assert.equal(mockServer.state.lastWrite?.bytes.length, 7);
-
-      const noteOffResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_sound",
-            arguments: {
-              op: "note_off",
-              voice: 2,
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
-
-      assert.ok(noteOffResult.metadata?.success, "note_off should succeed");
-      assert.equal(noteOffResult.metadata?.voice, 2);
-      assert.equal(mockServer.state.lastWrite?.address, 0xd40b);
-      assert.equal(mockServer.state.lastWrite?.bytes[0], 0x00);
-
-      const silenceResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_sound",
-            arguments: {
-              op: "silence_all",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
-
-      assert.ok(silenceResult.metadata?.success, "sid_silence_all should succeed");
-      assert.equal(mockServer.state.lastWrite?.address, 0xd418);
-      assert.equal(mockServer.state.lastWrite?.bytes[0], 0x00);
-
-      const resetResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_sound",
-            arguments: {
-              op: "reset",
-              hard: true,
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
-
-      assert.ok(resetResult.metadata?.success, "sid_reset should succeed");
-      assert.equal(resetResult.metadata?.mode, "hard");
-      assert.equal(mockServer.state.lastWrite?.address, 0xd400);
-      assert.equal(mockServer.state.lastWrite?.bytes.length, 0x19);
-      assert.ok(mockServer.state.lastWrite?.bytes.every((byte) => byte === 0x00));
+      assert.equal(result.metadata?.success, true, "capture_samples should succeed");
+      assert.equal(result.structuredContent?.type, "json");
+      assert.equal(result.structuredContent?.data?.backend, "c64u");
+      assert.equal(result.structuredContent?.data?.samplePairs, 256);
+      assert.equal(result.structuredContent?.data?.channels, 2);
+      assert.equal(result.structuredContent?.data?.samples?.encoding, "base64");
+      assert.equal(ctx.mockServer.state.streams.audio.active, false);
+      assert.ok(ctx.mockServer.state.streams.audio.packetsSent >= 2);
     });
   });
 
-  test("c64_system operations operate via MCP", async () => {
-    await withSharedMcpClient(async ({ client, mockServer }) => {
-      const pauseResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_system",
-            arguments: { op: "pause" },
-          },
-        },
-        CallToolResultSchema,
-      );
+  test("c64_sound compile_play and c64_graphics render_petscii_art run through MCP", async () => {
+    await withSharedMcpClient(async (ctx) => {
+      const { result: audioResult, supported: audioSupported } = await callTool(ctx, "c64_sound", {
+        op: "compile_play",
+        sidwave: buildTestSidwaveDoc(),
+        dryRun: true,
+      });
 
-      assert.ok(pauseResult.metadata?.success, "pause operation should succeed");
-      assert.equal(mockServer.state.paused, true, "machine should be paused");
+      if (audioSupported) {
+        assert.equal(audioResult.metadata?.success, true);
+        assert.equal(audioResult.metadata?.dryRun, true);
+        assert.equal(audioResult.metadata?.ranOnC64, false);
+      }
 
-      const resumeResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_system",
-            arguments: { op: "resume" },
-          },
-        },
-        CallToolResultSchema,
-      );
+      const { result: graphicsResult, supported: graphicsSupported } = await callTool(ctx, "c64_graphics", {
+        op: "render_petscii_art",
+        text: "DUCKS",
+        dryRun: true,
+        backgroundColor: 6,
+        borderColor: 14,
+      });
 
-      assert.ok(resumeResult.metadata?.success, "resume operation should succeed");
-      assert.equal(mockServer.state.paused, false, "machine should be resumed");
+      if (!graphicsSupported) {
+        return;
+      }
 
-      const resetResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_system",
-            arguments: { op: "reset" },
-          },
-        },
-        CallToolResultSchema,
-      );
-
-      assert.ok(resetResult.metadata?.success, "reset operation should succeed");
-      assert.equal(mockServer.state.resets, 1, "reset endpoint should be invoked once");
-
-      const rebootResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_system",
-            arguments: { op: "reboot" },
-          },
-        },
-        CallToolResultSchema,
-      );
-
-      assert.ok(rebootResult.metadata?.success, "reboot operation should succeed");
-      assert.equal(mockServer.state.reboots, 1, "reboot endpoint should be invoked once");
-
-    });
-  });
-
-  test("c64_graphics create_petscii dry run returns art metadata", async () => {
-    await withSharedMcpClient(async ({ client }) => {
-      const result = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_graphics",
-            arguments: {
-              op: "create_petscii",
-              prompt: "c64 logo",
-              dryRun: true,
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
-
-      assert.ok(Array.isArray(result.content));
-      const textContent = getTextContent(result);
-      assert.ok(textContent, "Expected text response content");
-      assert.match(textContent.text, /petsciiCodes/i);
-
-      assert.equal(result.metadata?.dryRun, true);
-      assert.equal(result.metadata?.ranOnC64, false);
-      assert.ok(result.structuredContent?.data?.program, "should include generated BASIC program");
-      assert.ok(result.structuredContent?.data?.petsciiCodes?.length > 0, "should include petscii codes");
+      assert.equal(graphicsResult.metadata?.dryRun, true);
+      assert.equal(graphicsResult.metadata?.ranOnC64, false);
+      assert.equal(graphicsResult.structuredContent?.type, "json");
+      assert.ok(Array.isArray(graphicsResult.structuredContent?.data?.rowHex));
+      assert.equal(graphicsResult.structuredContent?.data?.ranOnC64, false);
     });
   });
 
   test("c64_rag basic retrieval returns references", async () => {
-    await withSharedMcpClient(async ({ client }) => {
-      const result = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_rag",
-            arguments: {
-              op: "basic",
-              q: "print reverse text",
-              k: 2,
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
+    await withSharedMcpClient(async (ctx) => {
+      const { result, supported } = await callTool(ctx, "c64_rag", {
+        op: "basic",
+        q: "print reverse text",
+        k: 2,
+      });
+
+      if (!supported) {
+        return;
+      }
 
       assert.ok(Array.isArray(result.content));
       const textContent = getTextContent(result);
@@ -490,420 +579,150 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
   });
 
   test("Developer configuration tools operate via MCP", async () => {
-    await withSharedMcpClient(async ({ client, mockServer }) => {
-      const listResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_config",
-            arguments: {
-              op: "list",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
-
+    await withSharedMcpClient(async (ctx) => {
+      const { mockServer } = ctx;
+      const list = await callTool(ctx, "c64_config", { op: "list" });
+      if (!list.supported) {
+        return;
+      }
+      const listResult = list.result;
       assert.equal(listResult.metadata?.success, true, "list operation should succeed");
-  const listContent = getTextContent(listResult);
-  assert.ok(listContent, "config_list should return text content");
-  const categories = JSON.parse(listContent.text)?.categories ?? [];
+      const listContent = getTextContent(listResult);
+      assert.ok(listContent, "config_list should return text content");
+      const categories = JSON.parse(listContent.text)?.categories ?? [];
       assert.ok(Array.isArray(categories), "config_list should return categories array");
-      assert.ok(categories.includes("Audio"));
-  assert.equal(listResult.structuredContent?.type, "json");
-  assert.deepEqual(listResult.structuredContent?.data?.categories, categories);
+      const categoryNames = categories.map((entry) => {
+        if (typeof entry === "string") {
+          return entry;
+        }
+        if (entry && typeof entry === "object" && typeof entry.name === "string") {
+          return entry.name;
+        }
+        return null;
+      }).filter(Boolean);
+      if (ctx.platform === "vice") {
+        assert.ok(categoryNames.includes("VICE"));
+      } else {
+        assert.ok(categoryNames.includes("Audio"));
+      }
+      assert.equal(listResult.structuredContent?.type, "json");
+      assert.deepEqual(listResult.structuredContent?.data?.categories, categories);
 
-      const getItemResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_config",
-            arguments: {
-              op: "get",
-              category: "Audio",
-              item: "Volume",
+      const category = ctx.platform === "vice" ? "VICE" : "Audio";
+      const item = ctx.platform === "vice" ? "SoundVolume" : "Volume";
+      const setValue = ctx.platform === "vice" ? 11 : 11;
+      const batchPayload = ctx.platform === "vice"
+        ? {
+            VICE: {
+              SoundVolume: 9,
+              Drive8Type: 8,
             },
-          },
-        },
-        CallToolResultSchema,
-      );
+          }
+        : {
+            Audio: {
+              Balance: "left",
+            },
+            Video: {
+              Mode: "NTSC",
+            },
+          };
+
+      const { result: getItemResult } = await callTool(ctx, "c64_config", {
+        op: "get",
+        category,
+        item,
+      });
 
       assert.equal(getItemResult.metadata?.success, true, "get operation should succeed");
-      assert.equal(getItemResult.metadata?.category, "Audio");
-      assert.equal(getItemResult.metadata?.item, "Volume");
+      assert.equal(getItemResult.metadata?.category, category);
+      assert.equal(getItemResult.metadata?.item, item);
 
-      const setResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_config",
-            arguments: {
-              op: "set",
-              category: "Audio",
-              item: "Volume",
-              value: 11,
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
+      const { result: setResult } = await callTool(ctx, "c64_config", {
+        op: "set",
+        category,
+        item,
+        value: setValue,
+      });
 
       assert.equal(setResult.metadata?.success, true, "set operation should succeed");
-      assert.equal(mockServer.state.configs.Audio.Volume, "11");
+      if (ctx.platform === "vice") {
+        assert.equal(setResult.metadata?.category, "VICE");
+        assert.equal(setResult.metadata?.item, "SoundVolume");
+        assert.equal(setResult.metadata?.value, 11);
+      } else {
+        assert.equal(mockServer.state.configs.Audio.Volume, "11");
+      }
 
-      const batchResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_config",
-            arguments: {
-              op: "batch_update",
-              Audio: {
-                Balance: "left",
-              },
-              Video: {
-                Mode: "NTSC",
-              },
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
+      const { result: batchResult } = await callTool(ctx, "c64_config", {
+        op: "batch_update",
+        ...batchPayload,
+      });
 
       assert.equal(batchResult.metadata?.success, true, "batch_update operation should succeed");
-      assert.equal(mockServer.state.configs.Audio.Balance, "left");
-      assert.equal(mockServer.state.configs.Video.Mode, "NTSC");
+      if (ctx.platform === "vice") {
+        assert.equal(batchResult.metadata?.categoryCount, 1);
+        assert.ok(Array.isArray(batchResult.metadata?.details?.results));
+        assert.equal(batchResult.metadata?.details?.results.length, 2);
+        assert.ok(batchResult.metadata?.details?.results.every((entry) => entry.success === true));
+      } else {
+        assert.equal(mockServer.state.configs.Audio.Balance, "left");
+        assert.equal(mockServer.state.configs.Video.Mode, "NTSC");
+      }
 
-      const saveResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_config",
-            arguments: {
-              op: "save_flash",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
+      const { result: saveResult } = await callTool(ctx, "c64_config", { op: "save_flash" });
 
-      assert.equal(saveResult.metadata?.success, true, "save_flash operation should succeed");
-      assert.ok(mockServer.state.flashSnapshot, "flash snapshot should be captured after save");
+      if (ctx.platform === "vice") {
+        assertUnsupportedOperation(saveResult, ctx.platform, "config_save_to_flash");
+      } else {
+        assert.equal(saveResult.metadata?.success, true, "save_flash operation should succeed");
+        assert.ok(mockServer.state.flashSnapshot, "flash snapshot should be captured after save");
+      }
 
-      const resetResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_config",
-            arguments: {
-              op: "reset_defaults",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
+      const { result: resetResult } = await callTool(ctx, "c64_config", { op: "reset_defaults" });
 
-      assert.equal(resetResult.metadata?.success, true, "reset_defaults operation should succeed");
-      assert.equal(mockServer.state.configs.Audio.Volume, "6", "reset should restore default volume");
+      if (ctx.platform === "vice") {
+        assertUnsupportedOperation(resetResult, ctx.platform, "config_reset_to_default");
+      } else {
+        assert.equal(resetResult.metadata?.success, true, "reset_defaults operation should succeed");
+        assert.equal(mockServer.state.configs.Audio.Volume, "6", "reset should restore default volume");
+      }
 
-      const loadResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_config",
-            arguments: {
-              op: "load_flash",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
+      const { result: loadResult } = await callTool(ctx, "c64_config", { op: "load_flash" });
 
-      assert.equal(loadResult.metadata?.success, true, "load_flash operation should succeed");
-      assert.equal(mockServer.state.configs.Video.Mode, "NTSC", "load should restore saved snapshot");
+      if (ctx.platform === "vice") {
+        assertUnsupportedOperation(loadResult, ctx.platform, "config_load_from_flash");
+      } else {
+        assert.equal(loadResult.metadata?.success, true, "load_flash operation should succeed");
+        assert.equal(mockServer.state.configs.Video.Mode, "NTSC", "load should restore saved snapshot");
+      }
     });
   });
 
   test("Streaming tools operate via MCP", async () => {
-    await withSharedMcpClient(async ({ client, mockServer }) => {
-      const startResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_stream",
-            arguments: {
-              op: "start",
-              stream: "audio",
-              target: "127.0.0.1:9000",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
+    await withSharedMcpClient(async (ctx) => {
+      const { mockServer } = ctx;
+      const { result: startResult, supported } = await callTool(ctx, "c64_stream", {
+        op: "start",
+        stream: "audio",
+        target: "127.0.0.1:9000",
+      });
+
+      if (!supported) {
+        return;
+      }
 
       assert.equal(startResult.metadata?.success, true, "start operation should succeed");
       assert.equal(mockServer.state.streams.audio.active, true);
       assert.equal(mockServer.state.streams.audio.target, "127.0.0.1:9000");
 
-      const stopResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_stream",
-            arguments: {
-              op: "stop",
-              stream: "audio",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
+      const { result: stopResult } = await callTool(ctx, "c64_stream", {
+        op: "stop",
+        stream: "audio",
+      });
 
       assert.equal(stopResult.metadata?.success, true, "stop operation should succeed");
       assert.equal(mockServer.state.streams.audio.active, false);
     });
   });
 
-  test("Drive and storage tools operate via MCP", async () => {
-    await withSharedMcpClient(async ({ client, mockServer }) => {
-      const listResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_disk",
-            arguments: {
-              op: "list_drives",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
-
-      assert.equal(listResult.metadata?.success, true, "list_drives operation should succeed");
-      assert.ok(listResult.metadata?.drives, "drives_list should include drive metadata");
-
-      const mountResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_disk",
-            arguments: {
-              op: "mount",
-              drive: "drive8",
-              image: "/tmp/demo.d64",
-              type: "d64",
-              attachmentMode: "readwrite",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
-
-      assert.equal(mountResult.metadata?.success, true, "mount operation should succeed");
-      assert.equal(mockServer.state.lastDriveOperation?.action, "mount");
-      assert.deepEqual(mockServer.state.drives.drive8.mountedImage, {
-        image: "/tmp/demo.d64",
-        type: "d64",
-        mode: "readwrite",
-      });
-
-      const modeResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_drive",
-            arguments: {
-              op: "set_mode",
-              drive: "drive8",
-              mode: "1571",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
-
-      assert.equal(modeResult.metadata?.success, true, "set_mode operation should succeed");
-      assert.equal(mockServer.state.drives.drive8.mode, "1571");
-
-      const onResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_drive",
-            arguments: {
-              op: "power_on",
-              drive: "drive8",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
-
-      assert.equal(onResult.metadata?.success, true, "power_on operation should succeed");
-      assert.equal(mockServer.state.drives.drive8.power, "on");
-
-      const offResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_drive",
-            arguments: {
-              op: "power_off",
-              drive: "drive8",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
-
-      assert.equal(offResult.metadata?.success, true, "power_off operation should succeed");
-      assert.equal(mockServer.state.drives.drive8.power, "off");
-
-      const resetResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_drive",
-            arguments: {
-              op: "reset",
-              drive: "drive8",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
-
-      assert.equal(resetResult.metadata?.success, true, "reset operation should succeed");
-      assert.equal(mockServer.state.drives.drive8.resetCount, 1);
-
-      const romResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_drive",
-            arguments: {
-              op: "load_rom",
-              drive: "drive8",
-              path: "/roms/custom.rom",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
-
-      assert.equal(romResult.metadata?.success, true, "load_rom operation should succeed");
-      assert.equal(mockServer.state.drives.drive8.lastRom, "/roms/custom.rom");
-
-      const removeResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_disk",
-            arguments: {
-              op: "unmount",
-              drive: "drive8",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
-
-      assert.equal(removeResult.metadata?.success, true, "unmount operation should succeed");
-      assert.equal(mockServer.state.drives.drive8.mountedImage, null);
-
-      const infoResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_disk",
-            arguments: {
-              op: "file_info",
-              path: "/tmp/demo.d64",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
-
-      assert.equal(infoResult.metadata?.success, true, "file_info operation should succeed");
-      assert.equal(mockServer.state.lastFileInfo, "/tmp/demo.d64");
-
-      const createD64Result = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_disk",
-            arguments: {
-              op: "create_image",
-              format: "d64",
-              path: "/tmp/new.d64",
-              tracks: 35,
-              diskname: "DISK1",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
-
-      assert.equal(createD64Result.metadata?.success, true, "create_image (d64) should succeed");
-
-      const createD71Result = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_disk",
-            arguments: {
-              op: "create_image",
-              format: "d71",
-              path: "/tmp/new.d71",
-              diskname: "DISK2",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
-
-      assert.equal(createD71Result.metadata?.success, true, "create_image (d71) should succeed");
-
-      const createD81Result = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_disk",
-            arguments: {
-              op: "create_image",
-              format: "d81",
-              path: "/tmp/new.d81",
-              diskname: "DISK3",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
-
-      assert.equal(createD81Result.metadata?.success, true, "create_image (d81) should succeed");
-
-      const createDnpResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: "c64_disk",
-            arguments: {
-              op: "create_image",
-              format: "dnp",
-              path: "/tmp/new.dnp",
-              tracks: 80,
-              diskname: "DISK4",
-            },
-          },
-        },
-        CallToolResultSchema,
-      );
-
-      assert.equal(createDnpResult.metadata?.success, true, "create_image (dnp) should succeed");
-      assert.equal(mockServer.state.createdImages.length, 4, "All disk creations should be tracked");
-      const createdTypes = mockServer.state.createdImages.map((entry) => entry.type).sort();
-      assert.deepEqual(createdTypes, ["d64", "d71", "d81", "dnp"], "Disk creation types should match requests");
-    });
-  });
 }

@@ -4,6 +4,7 @@ import { programModule } from "./program.js";
 import { memoryModuleGroup as memoryModule } from "./memory.js";
 import { soundModuleGroup as soundModule } from "./sound.js";
 import { systemModuleGroup as systemModule } from "./system.js";
+import { platformModuleGroup } from "./platform.js";
 import { graphicsModuleGroup as graphicsModule } from "./graphics.js";
 import { ragModuleGroup as ragModule } from "./rag.js";
 import { diskModuleGroup as diskModule } from "./disk.js";
@@ -12,6 +13,8 @@ import { printerModuleGroup as printerModule } from "./printer.js";
 import { configModuleGroup as configModule } from "./config.js";
 import { extractModule } from "./extract.js";
 import { streamModule } from "./stream.js";
+import { debugModuleGroup as debugModule } from "../debug.js";
+import { viceModuleGroup as viceModule } from "../vice.js";
 
 interface RegisteredTool {
   readonly module: ToolModule;
@@ -31,6 +34,7 @@ const modules: readonly ToolModule[] = [
   memoryModule,
   soundModule,
   systemModule,
+  platformModuleGroup,
   graphicsModule,
   ragModule,
   diskModule,
@@ -39,6 +43,8 @@ const modules: readonly ToolModule[] = [
   configModule,
   extractModule,
   streamModule,
+  debugModule,
+  viceModule,
 ];
 
 const toolMap: Map<string, RegisteredTool> = new Map();

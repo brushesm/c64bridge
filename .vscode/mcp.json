@@ -3,7 +3,13 @@
     "c64bridge": {
       "command": "node",
       "args": ["${workspaceFolder}/scripts/start.mjs"],
-      "type": "stdio"
+      "type": "stdio",
+      "env": {
+        "VICE_BINARY": "/usr/local/bin/x64sc",
+        "VICE_DIRECTORY": "/usr/local/share/vice",
+        "VICE_VISIBLE": "true",
+        "VICE_WARP": "false"
+      }
     }
   }
 }

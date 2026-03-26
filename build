@@ -1,0 +1,318 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# --- defaults ---
+SKIP_INSTALL=false
+SKIP_BUILD=false
+SKIP_TESTS=false
+PLATFORM=""
+TARGET=""
+BASE_URL=""
+RELEASE_VERSION=""
+PRIMARY_ACTION=""
+
+# --- helpers ---
+log() { printf '==> %s\n' "$*"; }
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Error: required command '$1' not found in PATH" >&2
+    exit 1
+  fi
+}
+
+npm_run() {
+  (cd "$ROOT_DIR" && npm run "$@")
+}
+
+# --- usage ---
+usage() {
+  cat <<'EOF'
+build — c64bridge MCP server build helper
+
+Usage:
+  ./build [primary-action] [options]
+
+Default (no primary action):
+  install + build + test:matrix — full CI-equivalent run
+
+Primary actions:
+  install               Install npm dependencies
+  build                 Compile TypeScript, run prebuild/postbuild hooks,
+                        regenerate MCP interface files and README tables
+  test                  Run tests (default: all mock-backend legs; use
+                        --platform / --target to restrict to one leg)
+  test:matrix           Run the full test matrix:
+                          c64u/mock · vice/mock · vice/device
+  coverage              Merged coverage report across all three matrix legs
+                        (emits coverage/lcov.info)
+  coverage:single       Single-leg Bun coverage report
+                        (requires --platform and --target)
+  check                 build + test:matrix (no install step)
+  check:package         Validate the published package layout
+  check:node-compat     Node.js compatibility self-test
+  check:run-local       MCP end-to-end smoke test using the local binary
+  check:run-npm         MCP end-to-end smoke test using the published npm package
+  mcp:generate          Regenerate mcp/ static interface files from the server
+  rag:rebuild           Rebuild all RAG embeddings from data/
+  rag:fetch             Fetch external RAG source documents into external/
+  rag:discover          Discover candidate RAG sources (requires GITHUB_TOKEN)
+  api:generate          Regenerate generated/ REST client from OpenAPI spec
+  vice:smoke            VICE Binary Monitor smoke test (readiness + HELLO run)
+  changelog             Regenerate CHANGELOG.md draft from git history
+  release               Prepare a release: bump version, regenerate MCP manifest,
+                        prepend changelog notes (requires --version)
+  compare:rest          Compare REST API surface between spec and runtime
+
+Default-action modifiers (only apply when no primary action is given):
+  --skip-install        Skip dependency installation
+  --skip-build          Skip TypeScript compilation
+  --skip-tests          Skip the test matrix
+
+Test modifiers (apply to: test, test:matrix, check, coverage:single):
+  --platform c64u|vice  Restrict tests to a single platform
+  --target mock|device  Restrict tests to a single target
+  --base-url <url>      Override base URL for real-hardware tests
+                        (default: http://c64u)
+  --real                Shorthand for --target device
+
+Release modifier:
+  --version <semver>    Version string for the release (e.g. 1.2.3)
+
+  -h, --help            Show this help
+
+Examples:
+  ./build                                        # full CI run
+  ./build --skip-tests                           # install + build only
+  ./build --skip-install --skip-tests            # build only
+  ./build build                                  # TypeScript compile + doc gen
+  ./build test                                   # all mock-backend legs
+  ./build test --platform vice --target mock     # single test leg
+  ./build test --real --base-url http://c64u     # test against real hardware
+  ./build test:matrix                            # explicit full matrix
+  ./build coverage                               # full coverage report
+  ./build coverage:single --platform c64u --target mock
+  ./build check                                  # build + test:matrix
+  ./build check:run-local                        # local MCP smoke
+  ./build mcp:generate                           # regenerate MCP JSON files
+  ./build rag:rebuild                            # rebuild RAG embeddings
+  ./build api:generate                           # regenerate REST client
+  ./build vice:smoke                             # VICE smoke test
+  ./build changelog                              # regenerate changelog draft
+  ./build release --version 1.2.3               # prepare release
+
+Note: Starting the MCP server is not managed by this script.
+      Use 'npm start' (source) or 'npx -y c64bridge@latest' (published).
+EOF
+}
+
+# --- argument parsing ---
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    install|build|test|test:matrix|coverage|coverage:single|check|check:package|check:node-compat|check:run-local|check:run-npm|mcp:generate|rag:rebuild|rag:fetch|rag:discover|api:generate|vice:smoke|changelog|release|compare:rest)
+      if [[ -n "$PRIMARY_ACTION" ]]; then
+        echo "Error: multiple primary actions specified: '$PRIMARY_ACTION' and '$1'" >&2
+        echo "Run './build --help' for usage." >&2
+        exit 1
+      fi
+      PRIMARY_ACTION="$1"
+      shift
+      ;;
+    --skip-install)  SKIP_INSTALL=true;        shift ;;
+    --skip-build)    SKIP_BUILD=true;           shift ;;
+    --skip-tests)    SKIP_TESTS=true;           shift ;;
+    --platform)      PLATFORM="${2:?'--platform requires a value'}";  shift 2 ;;
+    --target)        TARGET="${2:?'--target requires a value'}";      shift 2 ;;
+    --base-url)      BASE_URL="${2:?'--base-url requires a value'}";  shift 2 ;;
+    --real)          TARGET="device";           shift ;;
+    --version)       RELEASE_VERSION="${2:?'--version requires a value'}"; shift 2 ;;
+    -h|--help)       usage; exit 0 ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      echo "Run './build --help' for usage." >&2
+      exit 1
+      ;;
+  esac
+done
+
+# --- validation ---
+require_cmd node
+
+if [[ -n "$PLATFORM" && "$PLATFORM" != "c64u" && "$PLATFORM" != "vice" ]]; then
+  echo "Error: --platform must be 'c64u' or 'vice', got '$PLATFORM'" >&2
+  exit 1
+fi
+
+if [[ -n "$TARGET" && "$TARGET" != "mock" && "$TARGET" != "device" ]]; then
+  echo "Error: --target must be 'mock' or 'device', got '$TARGET'" >&2
+  exit 1
+fi
+
+if [[ "$PRIMARY_ACTION" == "release" && -z "$RELEASE_VERSION" ]]; then
+  echo "Error: 'release' requires --version <semver>" >&2
+  exit 1
+fi
+
+if [[ "$PRIMARY_ACTION" == "coverage:single" ]]; then
+  if [[ -z "$PLATFORM" || -z "$TARGET" ]]; then
+    echo "Error: 'coverage:single' requires both --platform and --target" >&2
+    exit 1
+  fi
+fi
+
+# Warn if skip flags are used alongside a primary action (they are no-ops in that case)
+if [[ -n "$PRIMARY_ACTION" && ( "$SKIP_INSTALL" == "true" || "$SKIP_BUILD" == "true" || "$SKIP_TESTS" == "true" ) ]]; then
+  echo "Warning: --skip-* flags are only meaningful for the default action and will be ignored." >&2
+fi
+
+# --- build test flags array ---
+build_test_flags() {
+  local -a flags=()
+  [[ -n "$PLATFORM" ]] && flags+=("--platform=$PLATFORM")
+  [[ -n "$TARGET" ]]   && flags+=("--target=$TARGET")
+  [[ -n "$BASE_URL" ]] && flags+=("--base-url=$BASE_URL")
+  printf '%s\n' "${flags[@]+"${flags[@]}"}"
+}
+
+# --- action runners ---
+
+do_install() {
+  log "Installing dependencies"
+  (cd "$ROOT_DIR" && npm install --no-audit --no-fund)
+}
+
+do_build() {
+  log "Building (TypeScript compile + prebuild/postbuild + doc generation)"
+  npm_run build
+}
+
+do_test() {
+  local -a flags=()
+  mapfile -t flags < <(build_test_flags)
+  if [[ ${#flags[@]} -gt 0 ]]; then
+    log "Running tests (${flags[*]})"
+    npm_run test -- "${flags[@]}"
+  else
+    log "Running tests (all mock-backend legs)"
+    npm_run test
+  fi
+}
+
+do_test_matrix() {
+  log "Running test matrix (c64u/mock + vice/mock + vice/device)"
+  npm_run test:matrix
+}
+
+do_coverage() {
+  log "Running coverage (merged matrix)"
+  npm_run coverage
+}
+
+do_coverage_single() {
+  log "Running coverage (platform=$PLATFORM target=$TARGET)"
+  npm_run coverage:single -- "--platform=$PLATFORM" "--target=$TARGET"
+}
+
+do_check() {
+  log "Running check (build + test:matrix)"
+  npm_run check
+}
+
+do_check_package() {
+  log "Checking package layout"
+  npm_run check:package
+}
+
+do_check_node_compat() {
+  log "Checking Node.js compatibility"
+  npm_run check:node-compat
+}
+
+do_check_run_local() {
+  log "Running MCP smoke test (local binary)"
+  npm_run check:run-local
+}
+
+do_check_run_npm() {
+  log "Running MCP smoke test (published npm package)"
+  npm_run check:run-npm
+}
+
+do_mcp_generate() {
+  log "Regenerating MCP static interface files"
+  npm_run mcp:generate
+}
+
+do_rag_rebuild() {
+  log "Rebuilding RAG embeddings"
+  npm_run rag:rebuild
+}
+
+do_rag_fetch() {
+  log "Fetching external RAG sources"
+  npm_run rag:fetch
+}
+
+do_rag_discover() {
+  log "Discovering RAG sources"
+  npm_run rag:discover
+}
+
+do_api_generate() {
+  log "Regenerating REST client from OpenAPI spec"
+  npm_run api:generate
+}
+
+do_vice_smoke() {
+  log "Running VICE smoke test"
+  npm_run vice:smoke
+}
+
+do_changelog() {
+  log "Regenerating changelog"
+  npm_run changelog:generate
+}
+
+do_release() {
+  log "Preparing release $RELEASE_VERSION"
+  npm_run release:prepare -- "$RELEASE_VERSION"
+}
+
+do_compare_rest() {
+  log "Comparing REST API surface"
+  npm_run compare:rest
+}
+
+# --- dispatch ---
+case "$PRIMARY_ACTION" in
+  "")
+    # Default: install (unless --skip-install) + build (unless --skip-build) + test:matrix (unless --skip-tests)
+    [[ "$SKIP_INSTALL" == "false" ]] && do_install
+    [[ "$SKIP_BUILD" == "false" ]]   && do_build
+    [[ "$SKIP_TESTS" == "false" ]]   && do_test_matrix
+    ;;
+  install)         do_install ;;
+  build)           do_build ;;
+  test)            do_test ;;
+  test:matrix)     do_test_matrix ;;
+  coverage)        do_coverage ;;
+  coverage:single) do_coverage_single ;;
+  check)           do_check ;;
+  check:package)   do_check_package ;;
+  check:node-compat)  do_check_node_compat ;;
+  check:run-local) do_check_run_local ;;
+  check:run-npm)   do_check_run_npm ;;
+  mcp:generate)    do_mcp_generate ;;
+  rag:rebuild)     do_rag_rebuild ;;
+  rag:fetch)       do_rag_fetch ;;
+  rag:discover)    do_rag_discover ;;
+  api:generate)    do_api_generate ;;
+  vice:smoke)      do_vice_smoke ;;
+  changelog)       do_changelog ;;
+  release)         do_release ;;
+  compare:rest)    do_compare_rest ;;
+esac
+
+log "Done"

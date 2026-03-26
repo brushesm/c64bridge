@@ -421,6 +421,20 @@ test("sid_reset soft and hard", async () => {
   assert.equal(hard, 1);
 });
 
+test("sid_reset reports firmware failure and unexpected errors", async () => {
+  const failure = await audioModule.invoke("sid_reset", { hard: true }, {
+    client: { sidReset: async () => ({ success: false, details: "denied" }) },
+    logger: createLogger(),
+  });
+  assert.equal(failure.isError, true);
+
+  const unexpected = await audioModule.invoke("sid_reset", {}, {
+    client: { sidReset: async () => { throw new Error("boom"); } },
+    logger: createLogger(),
+  });
+  assert.equal(unexpected.isError, true);
+});
+
 test("sid_note_on passes parameters and returns metadata", async () => {
   const calls = [];
   const ctx = {
@@ -442,6 +456,20 @@ test("sid_note_on surfaces firmware failure", async () => {
   assert.equal(res.isError, true);
 });
 
+test("sid_note_on uses default PAL reminder when system is omitted", async () => {
+  const res = await audioModule.invoke("sid_note_on", {
+    voice: 1,
+    note: "C4",
+  }, {
+    client: { sidNoteOn: async () => ({ success: true, details: { address: "d400" } }) },
+    logger: createLogger(),
+  });
+
+  assert.equal(res.isError, undefined);
+  assert.equal(res.metadata.system, "PAL");
+  assert.ok(String(res.content[0].text).includes("Using PAL timing"));
+});
+
 test("sid_note_off and silence_all", async () => {
   const ctx = {
     client: {
@@ -454,6 +482,25 @@ test("sid_note_off and silence_all", async () => {
   const silence = await audioModule.invoke("sid_silence_all", {}, ctx);
   assert.equal(off.isError, undefined);
   assert.equal(silence.isError, undefined);
+});
+
+test("sid_note_off reports firmware failure", async () => {
+  const res = await audioModule.invoke("sid_note_off", { voice: 2 }, {
+    client: { sidNoteOff: async () => ({ success: false, details: "busy" }) },
+    logger: createLogger(),
+  });
+
+  assert.equal(res.isError, true);
+});
+
+test("sid_note_off wraps unexpected errors", async () => {
+  const res = await audioModule.invoke("sid_note_off", { voice: 2 }, {
+    client: { sidNoteOff: async () => { throw new Error("note off boom"); } },
+    logger: createLogger(),
+  });
+
+  assert.equal(res.isError, true);
+  assert.ok(String(res.content[0].text).includes("note off boom"));
 });
 
 test("sid_silence_all verify reports silence metrics", async () => {
@@ -506,6 +553,74 @@ test("sid_silence_all verify fails when residual audio remains", async () => {
   assert.ok(result.content[0].text.includes("residual audio"));
 });
 
+test("sid_silence_all verify fails when analyzer omits RMS metrics", async () => {
+  const result = await audioModule.invoke("sid_silence_all", { verify: true }, {
+    client: {
+      sidSilenceAll: async () => ({ success: true }),
+      recordAndAnalyzeAudio: async () => ({
+        analysis: {
+          durationSeconds: 1.5,
+          global_metrics: {},
+        },
+      }),
+    },
+    logger: createLogger(),
+  });
+
+  assert.equal(result.isError, true);
+  assert.ok(String(result.content[0].text).includes("RMS metrics"));
+});
+
+test("sid_silence_all surfaces firmware failure before verification", async () => {
+  const result = await audioModule.invoke("sid_silence_all", { verify: true }, {
+    client: {
+      sidSilenceAll: async () => ({ success: false }),
+    },
+    logger: createLogger(),
+  });
+
+  assert.equal(result.isError, true);
+  assert.ok(String(result.content[0].text).includes("silencing SID"));
+});
+
+test("sidplay_file and modplay_file surface execution failures", async () => {
+  const sidResult = await audioModule.invoke("sidplay_file", { path: "/music/bad.sid" }, {
+    client: {
+      sidplayFile: async () => ({ success: false, details: "offline" }),
+    },
+    logger: createLogger(),
+  });
+  assert.equal(sidResult.isError, true);
+
+  const modResult = await audioModule.invoke("modplay_file", { path: "/music/bad.mod" }, {
+    client: {
+      modplayFile: async () => { throw new Error("mod boom"); },
+    },
+    logger: createLogger(),
+  });
+  assert.equal(modResult.isError, true);
+});
+
+test("sidplay_file wraps unexpected failures and modplay_file surfaces firmware failures", async () => {
+  const sidResult = await audioModule.invoke("sidplay_file", { path: "/music/crash.sid" }, {
+    client: {
+      sidplayFile: async () => { throw new Error("sid crash"); },
+    },
+    logger: createLogger(),
+  });
+  assert.equal(sidResult.isError, true);
+  assert.ok(String(sidResult.content[0].text).includes("sid crash"));
+
+  const modResult = await audioModule.invoke("modplay_file", { path: "/music/fail.mod" }, {
+    client: {
+      modplayFile: async () => ({ success: false }),
+    },
+    logger: createLogger(),
+  });
+  assert.equal(modResult.isError, true);
+  assert.ok(String(modResult.content[0].text).includes("MOD playback"));
+});
+
 test("analyze_audio returns guidance when no keywords detected", async () => {
   const res = await audioModule.invoke("analyze_audio", { request: "just print status" }, { client: {} });
   assert.equal(res.isError, undefined);
@@ -517,12 +632,97 @@ test("analyze_audio wraps backend errors when keywords present", async () => {
   assert.equal(res.isError, true);
 });
 
+test("analyze_audio reports missing analysis and moderate pitch drift feedback", async () => {
+  const missing = await audioModule.invoke("analyze_audio", { request: "please check if the music sounds right" }, {
+    client: {
+      recordAndAnalyzeAudio: async () => ({}),
+    },
+    logger: createLogger(),
+  });
+  assert.equal(missing.isError, undefined);
+  assert.ok(String(missing.content[0].text).includes("no musical content"));
+
+  const moderate = await audioModule.invoke("analyze_audio", { request: "does the music sound right?" }, {
+    client: {
+      recordAndAnalyzeAudio: async () => ({
+        analysis: {
+          durationSeconds: 2,
+          voices: [{ id: 1, detected_notes: [{ note: "A4", frequency: 440 }], average_deviation: 30 }],
+          global_metrics: {
+            average_pitch_deviation: 30,
+            detected_bpm: 128,
+          },
+        },
+      }),
+    },
+    logger: createLogger(),
+  });
+  assert.equal(moderate.isError, undefined);
+  assert.ok(String(moderate.content[0].text).includes("Detected tempo: 128 BPM"));
+  assert.ok(String(moderate.content[0].text).includes("some pitch variation"));
+});
+
 test("record_and_analyze_audio returns error when backend missing", async () => {
   const res = await audioModule.invoke("record_and_analyze_audio", { durationSeconds: 0.5 }, { client: {} });
   assert.equal(res.isError, true);
 });
 
+test("record_and_analyze_audio validates schema-level errors", async () => {
+  const res = await audioModule.invoke("record_and_analyze_audio", { durationSeconds: 0.1 }, { client: {} });
+  assert.equal(res.isError, true);
+  assert.ok(String(res.content[0].text).length > 0);
+});
+
 test("music_generate validates pattern input", async () => {
   const res = await audioModule.invoke("music_generate", { root: "C4", pattern: "", steps: 1, tempoMs: 50, waveform: "pulse" }, { client: {} });
   assert.equal(res.isError, true);
+});
+
+test("music_compile_and_play accepts cpg text input on dry run", async () => {
+  const sidwaveText = `
+song:
+  title: Test Song
+  tempo: 110
+  mode: PAL
+  length_bars: 1
+voices:
+  - id: 1
+    name: Lead
+    waveform: triangle
+    adsr: [2, 2, 10, 3]
+    pulse_width: 2048
+    patterns:
+      main:
+        type: arpeggio
+        notes: [C4, E4, G4]
+timeline:
+  - section: A
+    bars: 1
+    layers:
+      v1: main
+`;
+  const result = await audioModule.invoke("music_compile_and_play", {
+    cpg: sidwaveText,
+    dryRun: true,
+  }, {
+    client: {},
+    logger: createLogger(),
+  });
+
+  assert.equal(result.isError, undefined);
+  assert.equal(result.metadata.dryRun, true);
+  assert.equal(result.metadata.ranOnC64, false);
+});
+
+test("music_compile_and_play rejects empty sidwave strings", async () => {
+  const result = await audioModule.invoke("music_compile_and_play", {
+    sidwave: "   ",
+    dryRun: true,
+  }, {
+    client: {},
+    logger: createLogger(),
+  });
+
+  assert.equal(result.isError, true);
+  assert.ok(String(result.content[0].text).includes("must not be empty"));
 });

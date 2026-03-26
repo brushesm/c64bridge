@@ -9,6 +9,7 @@ test("verify_and_write_memory writes and verifies", async () => {
   let paused = false;
   let resumed = false;
   const ctx = {
+    platform: { id: "c64u" },
     client: {
       async pause() { paused = true; return { success: true }; },
       async resume() { resumed = true; return { success: true }; },
@@ -29,6 +30,7 @@ test("verify_and_write_memory writes and verifies", async () => {
 test("verify_and_write_memory aborts on pre-verify mismatch", async () => {
   let resumed = false;
   const ctx = {
+    platform: { id: "c64u" },
     client: {
       async pause() { return { success: true }; },
       async resume() { resumed = true; return { success: true }; },

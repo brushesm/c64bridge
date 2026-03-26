@@ -1,6 +1,7 @@
 import test from "#test/runner";
 import assert from "#test/assert";
 import { machineControlModule } from "../src/tools/machineControl.js";
+import { getPlatformStatus, setPlatform } from "../src/platform.js";
 
 function createLogger() {
   return { debug() {}, info() {}, warn() {}, error() {} };
@@ -16,6 +17,20 @@ function createMockClient(overrides = {}) {
     async menuButton() { return { success: true, details: { message: "menu toggled" } }; },
     ...overrides,
   };
+}
+
+const platform = (process.env.C64_MODE ?? "").toLowerCase() === "vice" ? "vice" : "c64u";
+const isVice = platform === "vice";
+const testC64uOnly = isVice ? test.skip : test;
+
+async function runWithPlatform(target, fn) {
+  const original = getPlatformStatus().id;
+  try {
+    setPlatform(target);
+    await fn();
+  } finally {
+    setPlatform(original);
+  }
 }
 
 // --- reset_c64 ---
@@ -106,7 +121,7 @@ test("reboot_c64 handles exception", async () => {
 
 // --- pause ---
 
-test("pause succeeds with valid response", async () => {
+testC64uOnly("pause succeeds with valid response", async () => {
   const ctx = {
     client: createMockClient(),
     logger: createLogger(),
@@ -117,7 +132,7 @@ test("pause succeeds with valid response", async () => {
   assert.equal(res.metadata?.success, true);
 });
 
-test("pause handles failure response", async () => {
+testC64uOnly("pause handles failure response", async () => {
   const ctx = {
     client: createMockClient({
       async pause() { return { success: false, details: undefined }; },
@@ -129,7 +144,7 @@ test("pause handles failure response", async () => {
   assert.equal(res.metadata?.error?.kind, "execution");
 });
 
-test("pause handles exception", async () => {
+testC64uOnly("pause handles exception", async () => {
   const ctx = {
     client: createMockClient({
       async pause() { throw new Error("timeout"); },
@@ -143,7 +158,7 @@ test("pause handles exception", async () => {
 
 // --- resume ---
 
-test("resume succeeds with valid response", async () => {
+testC64uOnly("resume succeeds with valid response", async () => {
   const ctx = {
     client: createMockClient(),
     logger: createLogger(),
@@ -154,7 +169,7 @@ test("resume succeeds with valid response", async () => {
   assert.equal(res.metadata?.success, true);
 });
 
-test("resume handles failure response", async () => {
+testC64uOnly("resume handles failure response", async () => {
   const ctx = {
     client: createMockClient({
       async resume() { return { success: false, details: { code: 500 } }; },
@@ -166,7 +181,7 @@ test("resume handles failure response", async () => {
   assert.equal(res.metadata?.error?.kind, "execution");
 });
 
-test("resume handles exception", async () => {
+testC64uOnly("resume handles exception", async () => {
   const ctx = {
     client: createMockClient({
       async resume() { throw new Error("hardware error"); },
@@ -215,9 +230,29 @@ test("poweroff handles exception", async () => {
   assert.equal(res.metadata?.error?.kind, "unknown");
 });
 
+if (isVice) {
+  test("poweroff succeeds on vice", () =>
+    runWithPlatform("vice", async () => {
+      const calls = [];
+      const ctx = {
+        client: createMockClient({
+          async poweroff() {
+            calls.push("poweroff");
+            return { success: true, details: { shutdown: true } };
+          },
+        }),
+        logger: createLogger(),
+      };
+
+      const res = await machineControlModule.invoke("poweroff", {}, ctx);
+      assert.equal(res.metadata?.success, true);
+      assert.deepEqual(calls, ["poweroff"]);
+    }));
+}
+
 // --- menu_button ---
 
-test("menu_button succeeds with valid response", async () => {
+testC64uOnly("menu_button succeeds with valid response", async () => {
   const ctx = {
     client: createMockClient(),
     logger: createLogger(),
@@ -228,7 +263,7 @@ test("menu_button succeeds with valid response", async () => {
   assert.equal(res.metadata?.success, true);
 });
 
-test("menu_button handles failure response", async () => {
+testC64uOnly("menu_button handles failure response", async () => {
   const ctx = {
     client: createMockClient({
       async menuButton() { return { success: false, details: "disabled" }; },
@@ -240,7 +275,7 @@ test("menu_button handles failure response", async () => {
   assert.equal(res.metadata?.error?.kind, "execution");
 });
 
-test("menu_button handles exception", async () => {
+testC64uOnly("menu_button handles exception", async () => {
   const ctx = {
     client: createMockClient({
       async menuButton() { throw new Error("not available"); },
@@ -251,3 +286,44 @@ test("menu_button handles exception", async () => {
   assert.equal(res.isError, true);
   assert.equal(res.metadata?.error?.kind, "unknown");
 });
+
+if (isVice) {
+  test("pause is unsupported on vice", () =>
+    runWithPlatform("vice", async () => {
+      const ctx = {
+        client: createMockClient(),
+        logger: createLogger(),
+      };
+
+      await assert.rejects(
+        () => machineControlModule.invoke("pause", {}, ctx),
+        (error) => error?.name === "ToolUnsupportedPlatformError",
+      );
+    }));
+
+  test("resume is unsupported on vice", () =>
+    runWithPlatform("vice", async () => {
+      const ctx = {
+        client: createMockClient(),
+        logger: createLogger(),
+      };
+
+      await assert.rejects(
+        () => machineControlModule.invoke("resume", {}, ctx),
+        (error) => error?.name === "ToolUnsupportedPlatformError",
+      );
+    }));
+
+  test("menu_button is unsupported on vice", () =>
+    runWithPlatform("vice", async () => {
+      const ctx = {
+        client: createMockClient(),
+        logger: createLogger(),
+      };
+
+      await assert.rejects(
+        () => machineControlModule.invoke("menu_button", {}, ctx),
+        (error) => error?.name === "ToolUnsupportedPlatformError",
+      );
+    }));
+}

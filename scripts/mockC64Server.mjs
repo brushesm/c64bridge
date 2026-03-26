@@ -1,7 +1,15 @@
 import { createServer } from "node:http";
+import dgram from "node:dgram";
 import { once } from "node:events";
 import { Buffer } from "node:buffer";
-import { getChargenGlyphs } from "../dist/chargen.js";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+const moduleDir = new URL(".", import.meta.url);
+const distUrl = new URL("../dist/chargen.js", moduleDir);
+const srcUrl = new URL("../src/chargen.js", moduleDir);
+const chargenModuleUrl = existsSync(fileURLToPath(distUrl)) ? distUrl : srcUrl;
+const { getChargenGlyphs } = await import(chargenModuleUrl.href);
 
 function parseNumeric(value, defaultRadix = 16) {
   if (!value) {
@@ -82,6 +90,7 @@ function createInitialState() {
   poweroffs: 0,
     memory: new Uint8Array(0x10000),
     lastWrite: null,
+    writeLog: [],
     lastRequest: null,
     drives: {},
     lastDriveOperation: null,
@@ -104,11 +113,20 @@ function createInitialState() {
   menuToggleCount: 0,
   lastMenuTarget: null,
     streams: {
-      video: { active: false, target: null },
-      audio: { active: false, target: null },
-      debug: { active: false, target: null },
+      video: { active: false, target: null, packetsSent: 0 },
+      audio: { active: false, target: null, packetsSent: 0 },
+      debug: { active: false, target: null, packetsSent: 0 },
     },
     lastStreamAction: null,
+    streamActionLog: [],
+  };
+}
+
+function createStreamRuntime() {
+  return {
+    video: { interval: null, socket: null, sequence: 0, frameNumber: 0, sampleIndex: 0 },
+    audio: { interval: null, socket: null, sequence: 0, frameNumber: 0, sampleIndex: 0 },
+    debug: { interval: null, socket: null, sequence: 0, frameNumber: 0, sampleIndex: 0 },
   };
 }
 
@@ -148,6 +166,7 @@ function seedReadyPrompt(state) {
 
 export async function startMockC64Server(options = {}) {
   const state = createInitialState();
+  const streamRuntime = createStreamRuntime();
   state.networkPassword = typeof options.networkPassword === "string" && options.networkPassword.trim()
     ? options.networkPassword
     : null;
@@ -171,10 +190,70 @@ export async function startMockC64Server(options = {}) {
   ensureDriveState("drive8");
 
   function resetState() {
+    stopAllStreams();
     const fresh = createInitialState();
     Object.assign(state, fresh);
     seedReadyPrompt(state);
     ensureDriveState("drive8");
+  }
+
+  function stopAllStreams() {
+    for (const stream of Object.keys(streamRuntime)) {
+      stopStreamEmitter(stream);
+    }
+  }
+
+  function stopStreamEmitter(stream) {
+    const runtime = streamRuntime[stream];
+    if (!runtime) {
+      return;
+    }
+    if (runtime.interval) {
+      clearInterval(runtime.interval);
+      runtime.interval = null;
+    }
+    if (runtime.socket) {
+      runtime.socket.close();
+      runtime.socket = null;
+    }
+  }
+
+  function startStreamEmitter(stream, target) {
+    stopStreamEmitter(stream);
+    if (!target || (stream !== "video" && stream !== "audio")) {
+      return;
+    }
+
+    const runtime = streamRuntime[stream];
+    const { host, port } = parseStreamTarget(target, stream === "video" ? 11000 : 11001);
+    const socket = dgram.createSocket("udp4");
+    runtime.socket = socket;
+
+    if (stream === "video") {
+      const sendFrame = () => {
+        const packets = buildMockVideoFramePackets(runtime.frameNumber, runtime.sequence);
+        runtime.frameNumber = (runtime.frameNumber + 1) & 0xffff;
+        runtime.sequence = (runtime.sequence + packets.length) & 0xffff;
+        for (const packet of packets) {
+          socket.send(packet, port, host);
+          state.streams.video.packetsSent += 1;
+        }
+      };
+      sendFrame();
+      runtime.interval = setInterval(sendFrame, 30);
+      return;
+    }
+
+    const sendAudioPacket = () => {
+      const packet = buildMockAudioPacket(runtime.sequence, runtime.sampleIndex);
+      runtime.sequence = (runtime.sequence + 1) & 0xffff;
+      runtime.sampleIndex += 192;
+      socket.send(packet, port, host);
+      state.streams.audio.packetsSent += 1;
+    };
+
+    sendAudioPacket();
+    runtime.interval = setInterval(sendAudioPacket, 4);
   }
 
   const server = createServer(async (req, res) => {
@@ -386,6 +465,7 @@ export async function startMockC64Server(options = {}) {
 
       state.memory.set(bytes, address);
       state.lastWrite = { address, bytes };
+      state.writeLog.push({ address, bytes: Buffer.from(bytes) });
 
       sendJson(res, { result: "wrote", address, length: bytes.length });
       return;
@@ -404,6 +484,7 @@ export async function startMockC64Server(options = {}) {
 
       state.memory.set(bytes, address);
       state.lastWrite = { address, bytes };
+      state.writeLog.push({ address, bytes: Buffer.from(bytes) });
 
       sendJson(res, { result: "wrote", address, length: bytes.length });
       return;
@@ -512,15 +593,19 @@ export async function startMockC64Server(options = {}) {
         if (action === "start" && method === "PUT") {
           const body = await readJson(req);
           const target = routeUrl.searchParams.get("ip") ?? routeUrl.searchParams.get("target") ?? body?.ip ?? body?.target ?? null;
-          state.streams[stream] = { active: true, target };
+          state.streams[stream] = { active: true, target, packetsSent: 0 };
           state.lastStreamAction = { action: "start", stream, target };
+          state.streamActionLog.push({ action: "start", stream, target });
+          startStreamEmitter(stream, target);
           sendJson(res, { result: "started", stream, target });
           return;
         }
 
         if (action === "stop" && method === "PUT") {
-          state.streams[stream] = { active: false, target: null };
+          stopStreamEmitter(stream);
+          state.streams[stream] = { active: false, target: null, packetsSent: state.streams[stream]?.packetsSent ?? 0 };
           state.lastStreamAction = { action: "stop", stream };
+          state.streamActionLog.push({ action: "stop", stream });
           sendJson(res, { result: "stopped", stream });
           return;
         }
@@ -678,9 +763,80 @@ export async function startMockC64Server(options = {}) {
     baseUrl: `http://127.0.0.1:${address.port}`,
     state,
     async close() {
+      stopAllStreams();
       server.close();
       await once(server, "close");
     },
     reset: resetState,
   };
+}
+
+function parseStreamTarget(value, defaultPort) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) {
+    return { host: "127.0.0.1", port: defaultPort };
+  }
+  const separator = trimmed.lastIndexOf(":");
+  if (separator <= 0 || separator === trimmed.length - 1) {
+    return { host: trimmed, port: defaultPort };
+  }
+  const host = trimmed.slice(0, separator);
+  const port = Number.parseInt(trimmed.slice(separator + 1), 10);
+  return {
+    host,
+    port: Number.isFinite(port) && port > 0 && port <= 65535 ? port : defaultPort,
+  };
+}
+
+function buildMockVideoFramePackets(frameNumber, sequenceStart) {
+  const width = 384;
+  const height = 272;
+  const linesPerPacket = 4;
+  const bytesPerLine = width / 2;
+  const packets = [];
+  let sequence = sequenceStart & 0xffff;
+
+  for (let line = 0; line < height; line += linesPerPacket) {
+    const header = Buffer.alloc(12);
+    header.writeUInt16LE(sequence, 0);
+    header.writeUInt16LE(frameNumber & 0xffff, 2);
+    const isLastPacket = line + linesPerPacket >= height;
+    header.writeUInt16LE(isLastPacket ? (line | 0x8000) : line, 4);
+    header.writeUInt16LE(width, 6);
+    header.writeUInt8(linesPerPacket, 8);
+    header.writeUInt8(4, 9);
+    header.writeUInt16LE(0, 10);
+
+    const payload = Buffer.alloc(bytesPerLine * linesPerPacket);
+    let offset = 0;
+    for (let y = 0; y < linesPerPacket; y += 1) {
+      const absoluteLine = line + y;
+      for (let x = 0; x < width; x += 2) {
+        const low = (frameNumber + absoluteLine + x) & 0x0f;
+        const high = (frameNumber + absoluteLine + x + 1) & 0x0f;
+        payload[offset++] = low | (high << 4);
+      }
+    }
+
+    packets.push(Buffer.concat([header, payload]));
+    sequence = (sequence + 1) & 0xffff;
+  }
+
+  return packets;
+}
+
+function buildMockAudioPacket(sequence, sampleIndex) {
+  const header = Buffer.alloc(2);
+  header.writeUInt16LE(sequence & 0xffff, 0);
+
+  const payload = Buffer.alloc(768);
+  for (let index = 0; index < 192; index += 1) {
+    const phase = ((sampleIndex + index) % 256) - 128;
+    const left = phase * 128;
+    const right = -left;
+    payload.writeInt16LE(left, index * 4);
+    payload.writeInt16LE(right, index * 4 + 2);
+  }
+
+  return Buffer.concat([header, payload]);
 }

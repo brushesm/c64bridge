@@ -1,0 +1,292 @@
+{
+  "prompts": [
+    {
+      "name": "hello-world",
+      "title": "Hello World Workflow",
+      "description": "Route ultra-fast hello-world and smoke-test requests to the canonical greeting skill.",
+      "_meta": {
+        "requiredResources": [
+          "c64://context/bootstrap",
+          "c64://context/fast-paths",
+          "c64://docs/index"
+        ],
+        "optionalResources": [],
+        "tools": [
+          "c64_program"
+        ],
+        "tags": [
+          "hello",
+          "demo",
+          "greeting",
+          "smoke-test"
+        ],
+        "argumentOptions": {}
+      }
+    },
+    {
+      "name": "basic-program",
+      "title": "BASIC Program Workflow",
+      "description": "Route bespoke Commodore BASIC v2 requests to the canonical BASIC skill.",
+      "_meta": {
+        "requiredResources": [
+          "c64://specs/basic",
+          "c64://context/bootstrap",
+          "c64://docs/index"
+        ],
+        "optionalResources": [
+          "c64://context/fast-paths"
+        ],
+        "tools": [
+          "c64_program",
+          "c64_memory"
+        ],
+        "tags": [
+          "basic",
+          "program"
+        ],
+        "argumentOptions": {}
+      }
+    },
+    {
+      "name": "cross-platform-demo",
+      "title": "Cross-Platform Demo Workflow",
+      "description": "Route quick visible demo requests to the cross-platform demo skill.",
+      "_meta": {
+        "requiredResources": [
+          "c64://context/bootstrap",
+          "c64://context/fast-paths",
+          "c64://docs/index"
+        ],
+        "optionalResources": [],
+        "tools": [
+          "c64_program"
+        ],
+        "tags": [
+          "demo",
+          "platform",
+          "greeting"
+        ],
+        "argumentOptions": {}
+      }
+    },
+    {
+      "name": "preset-music-demo",
+      "title": "Preset Music Demo Workflow",
+      "description": "Route quick recognizable tune requests to the SID music skill.",
+      "_meta": {
+        "requiredResources": [
+          "c64://specs/sid",
+          "c64://specs/sidwave",
+          "c64://context/fast-paths"
+        ],
+        "optionalResources": [
+          "c64://docs/sid/best-practices"
+        ],
+        "tools": [
+          "c64_sound"
+        ],
+        "tags": [
+          "sid",
+          "music",
+          "demo"
+        ],
+        "argumentOptions": {}
+      }
+    },
+    {
+      "name": "assembly-program",
+      "title": "Assembly Program Workflow",
+      "description": "Route 6502/6510 routine requests to the canonical assembly skill.",
+      "arguments": [
+        {
+          "name": "hardware",
+          "description": "Optional focus area for the routine (sid, vic, cia, or multi for combined work).",
+          "options": [
+            "sid",
+            "vic",
+            "cia",
+            "multi"
+          ]
+        }
+      ],
+      "_meta": {
+        "requiredResources": [
+          "c64://specs/assembly",
+          "c64://specs/vic",
+          "c64://specs/sid",
+          "c64://context/bootstrap"
+        ],
+        "optionalResources": [
+          "c64://docs/sid/best-practices"
+        ],
+        "tools": [
+          "c64_program",
+          "c64_memory"
+        ],
+        "tags": [
+          "assembly",
+          "program"
+        ],
+        "argumentOptions": {
+          "hardware": [
+            "sid",
+            "vic",
+            "cia",
+            "multi"
+          ]
+        }
+      }
+    },
+    {
+      "name": "sid-music",
+      "title": "SID Composition Workflow",
+      "description": "Route SID playback and composition work to the canonical SID skill.",
+      "_meta": {
+        "requiredResources": [
+          "c64://specs/sid",
+          "c64://specs/sidwave",
+          "c64://docs/sid/file-structure",
+          "c64://docs/sid/best-practices"
+        ],
+        "optionalResources": [
+          "c64://context/fast-paths"
+        ],
+        "tools": [
+          "c64_sound"
+        ],
+        "tags": [
+          "sid",
+          "music"
+        ],
+        "argumentOptions": {}
+      }
+    },
+    {
+      "name": "graphics-demo",
+      "title": "Graphics Demo Workflow",
+      "description": "Route graphics requests to the canonical graphics skill.",
+      "arguments": [
+        {
+          "name": "mode",
+          "description": "Target VIC-II technique (text, multicolour, bitmap, or sprite).",
+          "options": [
+            "text",
+            "multicolour",
+            "bitmap",
+            "sprite"
+          ]
+        }
+      ],
+      "_meta": {
+        "requiredResources": [
+          "c64://specs/vic",
+          "c64://context/bootstrap"
+        ],
+        "optionalResources": [
+          "c64://specs/assembly",
+          "c64://specs/charset",
+          "c64://docs/petscii-style"
+        ],
+        "tools": [
+          "c64_program",
+          "c64_memory",
+          "c64_graphics"
+        ],
+        "tags": [
+          "graphics",
+          "vic"
+        ],
+        "argumentOptions": {
+          "mode": [
+            "text",
+            "multicolour",
+            "bitmap",
+            "sprite"
+          ]
+        }
+      }
+    },
+    {
+      "name": "printer-job",
+      "title": "Printer Job Workflow",
+      "description": "Route printer work to the canonical printer skill.",
+      "arguments": [
+        {
+          "name": "printerType",
+          "description": "Select Commodore (device 4) or Epson FX workflow helpers.",
+          "options": [
+            "commodore",
+            "epson"
+          ]
+        }
+      ],
+      "_meta": {
+        "requiredResources": [
+          "c64://specs/printer",
+          "c64://docs/printer/guide",
+          "c64://docs/printer/prompts"
+        ],
+        "optionalResources": [
+          "c64://docs/printer/commodore-text",
+          "c64://docs/printer/commodore-bitmap",
+          "c64://docs/printer/epson-text",
+          "c64://docs/printer/epson-bitmap"
+        ],
+        "tools": [
+          "c64_printer"
+        ],
+        "tags": [
+          "printer"
+        ],
+        "argumentOptions": {
+          "printerType": [
+            "commodore",
+            "epson"
+          ]
+        }
+      }
+    },
+    {
+      "name": "memory-debug",
+      "title": "Memory Debug Workflow",
+      "description": "Route reversible memory inspection or patching work to the canonical memory skill.",
+      "_meta": {
+        "requiredResources": [
+          "c64://context/bootstrap",
+          "c64://specs/assembly",
+          "c64://docs/index"
+        ],
+        "optionalResources": [],
+        "tools": [
+          "c64_memory",
+          "c64_system"
+        ],
+        "tags": [
+          "memory",
+          "debug"
+        ],
+        "argumentOptions": {}
+      }
+    },
+    {
+      "name": "drive-manager",
+      "title": "Drive Manager Workflow",
+      "description": "Route disk-image and drive-state requests to the canonical drive skill.",
+      "_meta": {
+        "requiredResources": [
+          "c64://context/bootstrap"
+        ],
+        "optionalResources": [],
+        "tools": [
+          "c64_disk",
+          "c64_drive"
+        ],
+        "tags": [
+          "drive",
+          "storage"
+        ],
+        "argumentOptions": {}
+      }
+    }
+  ]
+}

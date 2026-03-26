@@ -1,6 +1,6 @@
 # Agent Integration Guide
 
-LLM-facing reference for using this MCP server. Keep it simple: start the server, discover tools, call them safely.
+LLM-facing reference for using this MCP server. Keep it simple: start the server, discover tools safely, and route execution through `.github/skills`.
 
 ## Quick Start
 
@@ -25,6 +25,22 @@ Example:
 
 When Ultimate firmware network protection is enabled, `networkPassword` is sent as the `X-Password` header on every REST request.
 
+### Runtime Backend Switching
+
+When both `c64u` and `vice` are configured, the server can keep both backends live at the same time.
+Use `c64_select_backend` to switch the active backend without restarting the MCP server.
+The `c64://platform/status` resource always reports the currently active backend and the configured backend set.
+State the desired backend directly in the prompt when you want to pin execution, for example: `use vice`, `vice: load this PRG`, `use c64u`, or `run this on hardware`.
+When using the VS Code `C64` agent, keep the backend request in the same prompt so tool routing can call `c64_select_backend` before backend-specific operations.
+
+### Fast Discovery Rules
+
+When the prompt is already specific and backend-pinned, execute the matching skill immediately instead of re-reading general documentation.
+Example: `vice: write a small BASIC program that clears the screen and prints HELLO VICE` should route straight to `.github/skills/hello-world/SKILL.md` and use that skill's minimal path.
+If the current agent cannot directly see `c64bridge` MCP tools such as `c64_program`, immediately hand the request to the `C64` agent instead of inspecting repository files or MCP manifests first.
+For a visible single-backend VICE greeting, prefer a no-probe fast path and avoid screenshot capture or Binary Monitor verification unless the user explicitly requests confirmation artifacts.
+Once the MCP server is connected and tools are available in-session, do not spend extra turns inspecting README sections or tool manifests for routine `c64_select_backend`, `c64_program`, or `c64_memory` operations.
+
 3) VS Code Copilot Chat (MCP)
 
 Add to Settings (JSON):
@@ -41,50 +57,57 @@ Add to Settings (JSON):
 
 Keep the server running; tools are discovered automatically in the chat session.
 
+4) Shared agent instructions
+
+`AGENTS.md` is the canonical cross-tool contract for this repository.
+`CLAUDE.md` imports it for Claude Code, and Copilot/Codex-style agents can read it directly.
+
+5) Skill architecture
+
+Execution logic lives only in `.github/skills/*/SKILL.md`.
+Prompt files under `.github/prompts/` and MCP prompts from `src/prompts/registry.ts` are routing-only.
+If a workflow description starts listing tool calls outside `.github/skills`, treat that as stale and move it into the matching skill.
+
 ## MCP Discovery & Calling
 
-- Discover tools: use the client’s ListTools. You will see domains like `c64_program`, `c64_memory`, `c64_system`, etc., each with an `op` multiplexing parameter.
-- Discover resources/prompts: use ListResources and ListPrompts for knowledge and reusable patterns.
-- Call pattern (all tools): pass a JSON object with `op` plus operation‑specific inputs shown by ListTools.
-
-Examples (MCP tool calls; HTTP only for illustration):
-
-```json
-// c64_program — upload and run BASIC
-{
-  "op": "upload_run_basic",
-  "program": "10 PRINT \"HELLO\"\n20 GOTO 10"
-}
-```
-
-```json
-// c64_memory — wait for output on the screen (ASCII)
-{
-  "op": "wait_for_text",
-  "pattern": "HELLO"
-}
-```
-
-```json
-// c64_rag — retrieve BASIC or ASM references from local knowledge
-{
-  "op": "basic",
-  "q": "draw a bouncing sprite"
-}
-```
+- Discover tools with the client’s ListTools.
+- Discover resources and prompts with ListResources and ListPrompts.
+- Use the matching skill in `.github/skills/` to decide the actual tool sequence, validation, and safety behavior.
+- After discovery has already happened for the active session, prefer execution over repeated rediscovery for unambiguous requests.
+- Treat `c64_program`, `c64_memory`, `c64_graphics`, `c64_sound`, `c64_system`, `c64_config`, `c64_rag`, `c64_extract`, and similar grouped MCP tools as discriminated unions: every direct call must include `op`.
+- Never call a grouped tool with `{}` or with only secondary arguments. Choose the sub-operation first, then send `{ op: "...", ... }`.
+- When a skill tells you to execute a grouped tool, copy the exact `op` string from the skill instead of inferring it from the tool name.
 
 ## Capabilities
 
 - Program runners: `c64_program` (`upload_run_basic`, `upload_run_asm`, `run_prg`, `run_crt`, `bundle_run`, `batch_run`)
+- Fast demo workflow: `c64_program` (`cross_platform_greeting`) for one-call greetings on VICE and/or C64U with screenshot capture and verification
 - Screen & memory: `c64_memory` (`read`, `write`, `read_screen`, `wait_for_text`)
 - System control: `c64_system` (`pause`, `resume`, `reset`, `reboot`, `poweroff`, `menu`, tasks)
 - Configuration: `c64_config` (get/set, `batch_update`, `snapshot`, `restore`, `diff`, `shuffle`)
 - Drives & files: `c64_disk`, `c64_drive`
-- SID / music: `c64_sound` (playback, generate, analyze)
+- SID / music: `c64_sound` (`play_preset`, playback, generate, analyze)
 - Graphics: `c64_graphics` (PETSCII, sprites)
 - Knowledge & RAG: `c64_rag` (BASIC and ASM lookups)
 
 Tools and parameters are listed dynamically via ListTools.
+
+## Skill Routing
+
+| Intent | Skill |
+| --- | --- |
+| Ultra-fast hello world or smoke test | `.github/skills/hello-world/SKILL.md` |
+| Quick visible greeting or smoke test | `.github/skills/cross-platform-demo/SKILL.md` |
+| Custom BASIC program | `.github/skills/basic-program/SKILL.md` |
+| Custom assembly routine | `.github/skills/assembly-program/SKILL.md` |
+| SID demo or composition | `.github/skills/sid-music/SKILL.md` |
+| Graphics workflow | `.github/skills/graphics-demo/SKILL.md` |
+| Memory inspection or patching | `.github/skills/memory-debug/SKILL.md` |
+| Disk and drive management | `.github/skills/drive-manager/SKILL.md` |
+| Existing software launch | `.github/skills/software-launch/SKILL.md` |
+| Printer workflow | `.github/skills/printer-job/SKILL.md` |
+| Streaming workflow | `.github/skills/stream-control/SKILL.md` |
+| Machine or config control | `.github/skills/system-control/SKILL.md` |
 
 ## Knowledge Resources
 
@@ -100,34 +123,10 @@ Use ListResources to discover built-in knowledge, then read specific URIs to enr
 
 Pull RAG snippets via `c64_rag` (ops `basic`/`asm`) for targeted examples.
 
-## Expert Workflow (recommended)
+## Operating Rule
 
-- Plan → Run → Verify: generate code, run via `c64_program`, then verify with `c64_memory.read_screen`/`wait_for_text` and optional RAM checks.
-- Prefer stdio transport; only use the HTTP bridge for manual inspection.
-- Use `c64_rag` to fetch relevant BASIC/ASM snippets and specs before coding.
-- BASIC tips: tokenised keywords, short variable names, careful quoting; keep lines ≤ 2 screen rows; prefer `PRINT` with explicit spacing.
-- ASM tips: avoid unstable rasters; use zero page consciously; confirm register maps via `c64://specs/assembly`, `c64://specs/memory-map`, `c64://specs/vic` resources.
-- Safety: only call reset/power/drive operations intentionally; confirm preconditions for mounts/writes; log reversible steps in chat.
-
-Error handling patterns:
-
-- If a run stalls, `c64_system.reset` then re-run; verify with `wait_for_text`.
-- On memory write validation failure, re-read with `c64_memory.read` and compare.
-- For long tasks, prefer background tasks (`c64_system.start_task`) and poll.
-
-## HTTP Examples (optional)
-
-The stdio transport is preferred. The legacy HTTP bridge is deprecated and disabled by default; enable manually before using curl.
-
-```bash
-curl -s -X POST -H 'Content-Type: application/json' \
-  -d '{"op":"upload_run_basic","program":"10 PRINT \"HELLO\"\n20 GOTO 10"}' \
-  http://localhost:8000/tools/c64_program | jq
-
-curl -s -X POST -H 'Content-Type: application/json' \
-  -d '{"op":"read_screen"}' \
-  http://localhost:8000/tools/c64_memory | jq
-```
+Prefer stdio transport end to end.
+For execution details, follow the matching skill rather than duplicating tool steps in prompts, agent files, or ad hoc instructions.
 
 ## Safety Notes
 
@@ -140,9 +139,9 @@ Use these starting points to seed agent context. Templates live in `.github/prom
 
 | Persona | Focus | Starter prompt |
 | --- | --- | --- |
-| BASIC Agent | Commodore BASIC v2, PETSCII, simple I/O, printing | [.github/prompts/basic-program-session.prompt.md](.github/prompts/basic-program-session.prompt.md) |
+| BASIC Agent | Commodore BASIC v2 and simple I/O | [.github/prompts/basic-program-session.prompt.md](.github/prompts/basic-program-session.prompt.md) |
 | ASM Agent | 6502/6510 assembly, raster, sprites, IRQs | [.github/prompts/assembly-routine-session.prompt.md](.github/prompts/assembly-routine-session.prompt.md) |
-| SID Composer | SID playback/composition, ADSR, waveforms | [.github/prompts/sid-music-session.prompt.md](.github/prompts/sid-music-session.prompt.md) |
-| Drive Manager | Disk images, drive modes, resets | [.github/prompts/drive-management-session.prompt.md](.github/prompts/drive-management-session.prompt.md) |
-| VIC Painter | PETSCII/bitmap art, sprites | [.github/prompts/petscii-art-session.prompt.md](.github/prompts/petscii-art-session.prompt.md) |
-| Memory Debugger | RAM inspection, screen/colour RAM checks | Use `c64_memory` tools + `c64://specs/memory-map` |
+| SID Composer | SID playback and composition | [.github/prompts/sid-music-session.prompt.md](.github/prompts/sid-music-session.prompt.md) |
+| Drive Manager | Disk images and drive state | [.github/prompts/drive-management-session.prompt.md](.github/prompts/drive-management-session.prompt.md) |
+| VIC Painter | PETSCII, bitmap art, and sprites | [.github/prompts/petscii-art-session.prompt.md](.github/prompts/petscii-art-session.prompt.md) |
+| Software Launcher | Existing PRG, CRT, or disk software | [.github/prompts/play-classic-game.prompt.md](.github/prompts/play-classic-game.prompt.md) |

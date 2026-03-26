@@ -7,6 +7,11 @@ import { normalizeErrorDetails } from "./util.js";
 import { promises as fs } from "node:fs";
 import { dirname, resolve as resolvePath } from "node:path";
 
+function supportsMachinePause(ctx: { platform?: { id?: string }; client?: { type?: string } }): boolean {
+  const platformId = ctx.platform?.id ?? ctx.client?.type;
+  return platformId !== "vice";
+}
+
 function parseAddressNumeric(value: string): number {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new ToolValidationError("Address must be a non-empty string", { path: "$.address" });
@@ -242,10 +247,11 @@ export const tools: ToolDefinition[] = [
           throw new ToolValidationError("Stride must be at least 63 bytes to avoid overlapping sprites", { path: "$.stride" });
         }
 
-        const pauseResume = pauseDuringRead
+        const canPause = pauseDuringRead && supportsMachinePause(ctx as any);
+        const pauseResume = canPause
           ? await (ctx.client as any).pause()
           : { success: true };
-        if (pauseDuringRead && !pauseResume.success) {
+        if (canPause && !pauseResume.success) {
           throw new ToolExecutionError("Pause failed before sprite scan", { details: normalizeErrorDetails(pauseResume.details) });
         }
 
@@ -295,12 +301,13 @@ export const tools: ToolDefinition[] = [
               length,
               stride,
               candidates,
+              paused: canPause,
             },
             sprites,
             outputFiles,
           }, { success: true });
         } finally {
-          if (pauseDuringRead) {
+          if (canPause) {
             await (ctx.client as any).resume();
           }
         }
@@ -357,10 +364,11 @@ export const tools: ToolDefinition[] = [
           scanLocations.push(...commonLocations);
         }
 
-        const pauseResume = pauseDuringRead
+        const canPause = pauseDuringRead && supportsMachinePause(ctx as any);
+        const pauseResume = canPause
           ? await (ctx.client as any).pause()
           : { success: true };
-        if (pauseDuringRead && !pauseResume.success) {
+        if (canPause && !pauseResume.success) {
           throw new ToolExecutionError("Pause failed before charset scan", { details: normalizeErrorDetails(pauseResume.details) });
         }
 
@@ -418,9 +426,10 @@ export const tools: ToolDefinition[] = [
             charset: analysisWithoutBytes,
             candidates: candidates.length,
             outputFile,
+            paused: canPause,
           }, { success: true });
         } finally {
-          if (pauseDuringRead) {
+          if (canPause) {
             await (ctx.client as any).resume();
           }
         }

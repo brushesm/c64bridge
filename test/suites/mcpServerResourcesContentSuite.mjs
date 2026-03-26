@@ -21,6 +21,7 @@ const PLATFORM_RESOURCE_URI = "c64://platform/status";
 const EXPECTED_RESOURCE_URIS = [
   // Orientation
   "c64://context/bootstrap",
+  "c64://context/fast-paths",
   // Languages
   "c64://specs/basic",
   "c64://docs/basic/pitfalls",

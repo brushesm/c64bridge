@@ -8,15 +8,36 @@ Field notes for the stdio-based Model Context Protocol server. Use these checks 
 # 1. Is the MCP server running?
 ps -ef | grep "c64bridge" | grep -v grep
 
-# 2. Do startup logs show the connectivity probe?
+# 2. Do startup logs show the diagnostics file and connectivity probe?
 tail -n20 ~/.c64bridge.log  # or the terminal running npm start
 
-# 3. Can we reach the configured REST endpoint directly?
+# 3. Inspect the persistent MCP diagnostics trail
+ls -1t ~/.c64bridge/diagnostics | head
+tail -n50 ~/.c64bridge/diagnostics/<latest-file>.ndjson
+
+# 4. Can we reach the configured REST endpoint directly?
 curl -s http://<your-c64-host>/v1/info | jq .version
 
-# 4. When using the mock server
+# 5. When using the mock server
 npm test -- --mock
 ```
+
+## Persistent Diagnostics
+
+The MCP server now writes a newline-delimited JSON diagnostics file for each session.
+
+- Default location: `~/.c64bridge/diagnostics/`
+- Override location: set `C64BRIDGE_DIAGNOSTICS_DIR=/path/to/dir`
+- Disable only if necessary: set `C64BRIDGE_DISABLE_DIAGNOSTICS=1`
+
+Each file records:
+
+- MCP startup and readiness
+- tool, prompt, and resource request lifecycle events
+- unhandled rejections, warnings, and uncaught exceptions
+- VICE/Xvfb startup failures with captured stderr and stdout tails
+
+When VS Code or Copilot appears to crash, preserve the newest `.ndjson` file before restarting. It is the fastest way to tell whether the MCP server was failing, hanging, or repeatedly restarting.
 
 ## Common Issues & Fixes
 
@@ -47,6 +68,13 @@ npm test -- --mock
 2. Verify the settings JSON matches the snippet in `AGENTS.md` (`command`, `args`, `type: "stdio"`).
 3. Keep `npm start` (or `npx c64bridge`) running; Copilot terminates the stdio process when the chat closes.
 4. Inspect the Copilot output channel for connection errors and ensure the stdio server entry is configured and running.
+5. Correlate the VS Code/Copilot timestamp with the newest file under `~/.c64bridge/diagnostics/`.
+
+If the entire VS Code window crashes rather than just the MCP session, also collect:
+
+- VS Code logs from `Help` -> `Open Logs Folder`
+- extension host logs and crash dumps from the same time window
+- the matching `.ndjson` file from `~/.c64bridge/diagnostics/`
 
 ### 3. Tests Fail Because Mock Server Is Missing
 
@@ -151,9 +179,10 @@ Use these checks to validate the full stack:
 ## Key Lessons Learned
 
 1. Connectivity logs are the fastest signal—watch the console during startup.
-2. Keep configuration files small and explicit; mismatched hosts cause silent timeouts.
-3. Automated tests cover most workflows; run `npm test` before suspecting hardware.
-4. Copilot Chat terminates the stdio server when the session ends—restart `npm start` as needed.
+2. The diagnostics `.ndjson` file is now the authoritative crash trail for MCP sessions.
+3. Keep configuration files small and explicit; mismatched hosts cause silent timeouts.
+4. Automated tests cover most workflows; run `npm test` before suspecting hardware.
+5. Copilot Chat terminates the stdio server when the session ends—restart `npm start` as needed.
 
 ## Emergency Recovery
 

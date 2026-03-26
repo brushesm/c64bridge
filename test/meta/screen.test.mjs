@@ -63,6 +63,7 @@ test("extract_sprites_from_ram finds sprites and writes files", async () => {
   await fs.rm(out.dir, { recursive: true, force: true });
 
   const ctx = {
+    platform: { id: "c64u" },
     client: {
       async pause() { pauseCalls += 1; return { success: true }; },
       async resume() { resumeCalls += 1; return { success: true }; },
@@ -106,6 +107,7 @@ test("extract_sprites_from_ram surfaces firmware failures", async () => {
   let pauseCalls = 0;
   let resumeCalls = 0;
   const ctx = {
+    platform: { id: "c64u" },
     client: {
       async pause() { pauseCalls += 1; return { success: true }; },
       async resume() { resumeCalls += 1; return { success: true }; },
@@ -155,6 +157,7 @@ test("rip_charset_from_ram extracts charset from specific address", async () => 
   const outputPath = `${out.dir}/charset.bin`;
 
   const ctx = {
+    platform: { id: "c64u" },
     client: {
       async pause() { pauseCalls += 1; return { success: true }; },
       async resume() { resumeCalls += 1; return { success: true }; },
@@ -202,6 +205,7 @@ test("rip_charset_from_ram reports not found when no valid charset", async () =>
   let resumeCalls = 0;
 
   const ctx = {
+    platform: { id: "c64u" },
     client: {
       async pause() { pauseCalls += 1; return { success: true }; },
       async resume() { resumeCalls += 1; return { success: true }; },
@@ -242,6 +246,7 @@ test("rip_charset_from_ram scans common locations", async () => {
   let readCalls = 0;
 
   const ctx = {
+    platform: { id: "c64u" },
     client: {
       async pause() { pauseCalls += 1; return { success: true }; },
       async resume() { resumeCalls += 1; return { success: true }; },

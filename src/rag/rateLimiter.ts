@@ -35,7 +35,7 @@ export class SlidingWindowRateLimiter {
     const arr = this.keyToTimestamps.get(key);
     if (!arr) return;
     let startIdx = 0;
-    while (startIdx < arr.length && arr[startIdx] < windowStart) startIdx++;
+    while (startIdx < arr.length && arr[startIdx] <= windowStart) startIdx++;
     if (startIdx > 0) arr.splice(0, startIdx);
   }
 
@@ -95,7 +95,7 @@ export class AdaptiveRateLimiter {
     if (!arr || arr.length === 0) return;
     const cutoff = now - 1000;
     let i = 0;
-    while (i < arr.length && arr[i] < cutoff) i++;
+    while (i < arr.length && arr[i] <= cutoff) i++;
     if (i > 0) arr.splice(0, i);
   }
 

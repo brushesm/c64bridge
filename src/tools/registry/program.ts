@@ -3,7 +3,7 @@ import {
   defineToolModule,
   discriminatedUnionSchema,
 } from "../types.js";
-import { programRunnersModule, programOperationHandlers as groupedProgramHandlers } from "../programRunners.js";
+import { programRunnersModule } from "../programRunners.js";
 import { metaModule } from "../meta/index.js";
 import {
   buildDescriptorIndex,
@@ -26,16 +26,16 @@ const programOperations: GroupedOperationConfig[] = [
       ensureDescriptor(programDescriptorIndex, "load_prg").inputSchema,
       { description: "Load a PRG from Ultimate storage without executing it." },
     ),
-    handler: groupedProgramHandlers.load_prg,
+    handler: async (rawArgs, ctx) => invokeModuleTool(programRunnersModule, "load_prg", rawArgs, ctx),
   },
   {
     op: "run_prg",
     schema: extendSchemaWithOp(
       "run_prg",
       ensureDescriptor(programDescriptorIndex, "run_prg").inputSchema,
-      { description: "Load and execute a PRG located on the Ultimate filesystem." },
+      { description: "Load and execute a PRG from Ultimate-visible storage on c64u or a host-local path on VICE." },
     ),
-    handler: groupedProgramHandlers.run_prg,
+    handler: async (rawArgs, ctx) => invokeModuleTool(programRunnersModule, "run_prg", rawArgs, ctx),
   },
   {
     op: "run_crt",
@@ -44,7 +44,7 @@ const programOperations: GroupedOperationConfig[] = [
       ensureDescriptor(programDescriptorIndex, "run_crt").inputSchema,
       { description: "Mount and run a CRT cartridge image." },
     ),
-    handler: groupedProgramHandlers.run_crt,
+    handler: async (rawArgs, ctx) => invokeModuleTool(programRunnersModule, "run_crt", rawArgs, ctx),
   },
   {
     op: "upload_run_basic",
@@ -53,7 +53,7 @@ const programOperations: GroupedOperationConfig[] = [
       ensureDescriptor(programDescriptorIndex, "upload_run_basic").inputSchema,
       { description: "Upload Commodore BASIC v2 source and execute it immediately." },
     ),
-    handler: groupedProgramHandlers.upload_run_basic,
+    handler: async (rawArgs, ctx) => invokeModuleTool(programRunnersModule, "upload_run_basic", rawArgs, ctx),
   },
   {
     op: "upload_run_asm",
@@ -62,7 +62,7 @@ const programOperations: GroupedOperationConfig[] = [
       ensureDescriptor(programDescriptorIndex, "upload_run_asm").inputSchema,
       { description: "Assemble 6502/6510 source, upload the PRG, and execute it." },
     ),
-    handler: groupedProgramHandlers.upload_run_asm,
+    handler: async (rawArgs, ctx) => invokeModuleTool(programRunnersModule, "upload_run_asm", rawArgs, ctx),
   },
   {
     op: "batch_run",
@@ -82,6 +82,15 @@ const programOperations: GroupedOperationConfig[] = [
     ),
     handler: async (rawArgs, ctx) => invokeModuleTool(metaModule, "bundle_run_artifacts", rawArgs, ctx),
   },
+  {
+    op: "cross_platform_greeting",
+    schema: extendSchemaWithOp(
+      "cross_platform_greeting",
+      ensureDescriptor(metaDescriptorIndex, "cross_platform_greeting").inputSchema,
+      { description: "Show a platform-customized greeting on one or more configured backends, capture screenshots, and verify the results." },
+    ),
+    handler: async (rawArgs, ctx) => invokeModuleTool(metaModule, "cross_platform_greeting", rawArgs, ctx),
+  },
 ];
 
 const programOperationHandlers = createOperationHandlers(programOperations);
@@ -94,7 +103,8 @@ export const programModule = defineToolModule({
   defaultTags: ["programs", "execution"],
   workflowHints: [
     "Choose BASIC or assembly uploaders based on the language you just generated for the user.",
-    "Prefer PRG or CRT runners when the user supplies an Ultimate filesystem path instead of source text.",
+    "Prefer PRG or CRT runners when the user supplies a file path instead of source text; PRG paths are host-local on VICE and Ultimate-visible on c64u.",
+    "For a quick visible confirmation on VICE and/or C64U, prefer cross_platform_greeting instead of composing manual backend switches and BASIC upload steps.",
   ],
   supportedPlatforms: ["c64u", "vice"],
   tools: [
@@ -107,6 +117,13 @@ export const programModule = defineToolModule({
         variants: programOperations.map((operation) => operation.schema),
       }),
       tags: ["programs", "execution", "grouped"],
+      operationPlatforms: { load_prg: ["c64u"], run_crt: ["c64u"], bundle_run: ["c64u"] },
+      operationToolNames: {
+        load_prg: "load_prg",
+        run_crt: "run_crt",
+        bundle_run: "bundle_run_artifacts",
+        cross_platform_greeting: "cross_platform_greeting",
+      },
       examples: [
         {
           name: "Run PRG from storage",
@@ -117,6 +134,11 @@ export const programModule = defineToolModule({
           name: "Upload BASIC source",
           description: "Send inline BASIC to the C64 and run it",
           arguments: { op: "upload_run_basic", program: "10 PRINT \"HELLO\"\n20 GOTO 10" },
+        },
+        {
+          name: "Show greeting on both backends",
+          description: "Render a platform-specific greeting on VICE and C64U with screenshot verification",
+          arguments: { op: "cross_platform_greeting" },
         },
       ],
       execute: createOperationDispatcher<GenericOperationMap>(
