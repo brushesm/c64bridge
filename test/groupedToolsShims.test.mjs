@@ -1,11 +1,14 @@
 import test from "#test/runner";
 import assert from "#test/assert";
-import fs from "node:fs/promises";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { Jimp } from "jimp";
 import { toolRegistry } from "../src/tools/registry/index.js";
 import { metaModule } from "../src/tools/meta/index.js";
 import { ToolUnsupportedPlatformError, ToolValidationError } from "../src/tools/errors.js";
 import { getPlatformStatus, setPlatform } from "../src/platform.js";
+import { installProcessDiagnostics, writeDiagnosticEvent } from "../src/diagnostics.js";
 import { createLogger, tmpPath } from "./meta/helpers.mjs";
 
 const originalPlatform = getPlatformStatus().id;
@@ -214,7 +217,7 @@ test("c64_program cross_platform_greeting delegates to the orchestration workflo
   const switches = [];
   let activeBackend = "vice";
   const { dir } = tmpPath("grouped-program", "cross-platform-greeting");
-  await fs.rm(dir, { recursive: true, force: true });
+  await fs.promises.rm(dir, { recursive: true, force: true });
 
   const stubClient = {
     getAvailableBackends() {
@@ -600,8 +603,8 @@ test("c64_system reset delegates to machine control", async () => {
 
 test("c64_system background task lifecycle proxies to meta tools", async () => {
   const { file, dir } = tmpPath("grouped-system", "tasks.json");
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(file, JSON.stringify({ tasks: [] }, null, 2));
+  await fs.promises.mkdir(dir, { recursive: true });
+  await fs.promises.writeFile(file, JSON.stringify({ tasks: [] }, null, 2));
   const previous = process.env.C64_TASK_STATE_FILE;
   process.env.C64_TASK_STATE_FILE = file;
 
@@ -1640,7 +1643,7 @@ test("c64_graphics render_sprite proxies to sprite helper", async () => {
 
 test("c64_graphics render_bitmap imports images and delegates to displayBitmap", async () => {
   const { dir, file } = tmpPath("graphics", "grouped-bitmap.png");
-  await fs.mkdir(dir, { recursive: true });
+  await fs.promises.mkdir(dir, { recursive: true });
   const image = new Jimp({ width: 8, height: 8, color: 0x813338FF });
   await image.write(file);
 

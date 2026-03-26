@@ -244,7 +244,7 @@ test("mcp-server initialises platform state from the active backend", async (t) 
         assert.equal(parsePlatformStatus(text), "vice");
 
         const complete = await waitForDiagnosticEvent(diagnosticsDir, "rag_init_complete");
-        assert.ok(complete.timestamp);
+        assert.ok(complete.ts);
       },
     );
   });
