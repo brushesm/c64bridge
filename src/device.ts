@@ -98,6 +98,35 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function coalesceMemoryWriteBlocks(
+  blocks: ReadonlyArray<{ address: number; bytes: Uint8Array }>,
+): Array<{ address: number; bytes: Uint8Array }> {
+  const merged: Array<{ address: number; bytes: Uint8Array }> = [];
+
+  for (const block of blocks) {
+    if (!Number.isInteger(block.address) || block.address < 0 || block.address > 0xffff) {
+      throw new Error("Address must be within 0x0000-0xFFFF");
+    }
+    if (!(block.bytes instanceof Uint8Array) || block.bytes.length === 0) {
+      throw new Error("Bytes must be a non-empty Uint8Array");
+    }
+
+    const previous = merged[merged.length - 1];
+    const previousEnd = previous ? previous.address + previous.bytes.length : -1;
+    if (previous && previousEnd === block.address) {
+      const bytes = new Uint8Array(previous.bytes.length + block.bytes.length);
+      bytes.set(previous.bytes, 0);
+      bytes.set(block.bytes, previous.bytes.length);
+      previous.bytes = bytes;
+      continue;
+    }
+
+    merged.push({ address: block.address, bytes: Uint8Array.from(block.bytes) });
+  }
+
+  return merged;
+}
+
 function readConfigFile(): C64BridgeConfigFile | null {
   const envPath = process.env.C64BRIDGE_CONFIG;
   const candidates: string[] = [];
@@ -240,7 +269,8 @@ class C64uBackend implements C64Facade {
     }
   }
   async writeMemoryBlocks(blocks: ReadonlyArray<{ address: number; bytes: Uint8Array }>): Promise<void> {
-    await Promise.all(blocks.map(({ address, bytes }) => this.writeMemory(address, bytes)));
+    const mergedBlocks = coalesceMemoryWriteBlocks(blocks);
+    await Promise.all(mergedBlocks.map(({ address, bytes }) => this.writeMemory(address, bytes)));
   }
   async reset(): Promise<RunResult> { const res = await this.api.v1.machineResetUpdate(":reset"); return { success: true, details: res.data }; }
   async reboot(): Promise<RunResult> { const res = await this.api.v1.machineRebootUpdate(":reboot"); return { success: true, details: res.data }; }
@@ -569,17 +599,9 @@ export class ViceBackend implements C64Facade {
   }
 
   async writeMemoryBlocks(blocks: ReadonlyArray<{ address: number; bytes: Uint8Array }>): Promise<void> {
-    if (!Array.isArray(blocks) || blocks.length === 0) {
-      throw new Error("Blocks must be a non-empty array");
-    }
+    const mergedBlocks = coalesceMemoryWriteBlocks(blocks);
     await this.withClient(async (client) => {
-      for (const { address, bytes } of blocks) {
-        if (!Number.isInteger(address) || address < 0 || address > 0xffff) {
-          throw new Error("Address must be within 0x0000-0xFFFF");
-        }
-        if (!(bytes instanceof Uint8Array) || bytes.length === 0) {
-          throw new Error("Bytes must be a non-empty Uint8Array");
-        }
+      for (const { address, bytes } of mergedBlocks) {
         await client.memSet(address, Buffer.from(bytes));
       }
     });

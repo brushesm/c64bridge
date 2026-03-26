@@ -152,6 +152,31 @@ test("C64Client against mock server", async (t) => {
     assert.ok(mock.state.streams.video.packetsSent >= 68);
   });
 
+  await t.test("prepareVideoCapture reuses a single C64U video stream across captures", async () => {
+    const startsBefore = mock.state.streamActionLog.filter((entry) => entry.action === "start" && entry.stream === "video").length;
+    const stopsBefore = mock.state.streamActionLog.filter((entry) => entry.action === "stop" && entry.stream === "video").length;
+
+    await client.prepareVideoCapture({ keepAliveMs: 5_000 });
+    assert.equal(mock.state.streams.video.active, true);
+    assert.equal(mock.state.streamActionLog.filter((entry) => entry.action === "start" && entry.stream === "video").length - startsBefore, 1);
+
+    const first = await client.captureFrames({ count: 1, reuseSession: true, keepAliveMs: 5_000 });
+    const second = await client.captureFrames({ count: 1, reuseSession: true, keepAliveMs: 5_000 });
+
+    assert.equal(first.backend, "c64u");
+    assert.equal(first.frames.length, 1);
+    assert.equal(second.backend, "c64u");
+    assert.equal(second.frames.length, 1);
+    assert.equal(mock.state.streams.video.active, true);
+    assert.equal(mock.state.streamActionLog.filter((entry) => entry.action === "start" && entry.stream === "video").length - startsBefore, 1);
+    assert.equal(mock.state.streamActionLog.filter((entry) => entry.action === "stop" && entry.stream === "video").length - stopsBefore, 0);
+
+    await client.releaseVideoCapture();
+
+    assert.equal(mock.state.streams.video.active, false);
+    assert.equal(mock.state.streamActionLog.filter((entry) => entry.action === "stop" && entry.stream === "video").length - stopsBefore, 1);
+  });
+
   await t.test("captureSamples collects stereo PCM pairs from streamed audio", async () => {
     const result = await client.captureSamples({ count: 256 });
 
@@ -479,6 +504,23 @@ test("renderGreetingScreen reuses the cached DD00 value across repeated renders"
   assert.equal(first.success, true);
   assert.equal(second.success, true);
   assert.equal(readMemoryCalls, 1);
+});
+
+test("renderGreetingScreen coalesces contiguous C64U register writes", async () => {
+  const mock = await startMockC64Server();
+
+  try {
+    const client = new C64Client(mock.baseUrl);
+    const result = await client.renderGreetingScreen({ message: "HELLO MOCK" });
+
+    assert.equal(result.success, true);
+    assert.equal(mock.state.writeLog.length, 7);
+    const mergedRegisters = mock.state.writeLog.find((entry) => entry.address === 0xD020);
+    assert.ok(mergedRegisters);
+    assert.equal(mergedRegisters.bytes.length, 2);
+  } finally {
+    await mock.close();
+  }
 });
 
 test("C64Client against real C64", async (t) => {

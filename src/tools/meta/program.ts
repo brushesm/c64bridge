@@ -403,6 +403,13 @@ export const tools: ToolDefinition[] = [
             const program = buildGreetingProgram(expectedText);
             const timeline: Array<Record<string, unknown>> = [];
             let executionMode = "direct_screen_write";
+            let preparedCaptureSession = false;
+            const client = ctx.client as ToolExecutionContext["client"] & {
+              renderGreetingScreen?: (options: { message: string }) => Promise<{ success: boolean; details?: unknown }>;
+              prepareVideoCapture?: (options?: { keepAliveMs?: number }) => Promise<void>;
+              releaseVideoCapture?: () => Promise<void>;
+              captureFrames: (options?: { count?: number; reuseSession?: boolean; keepAliveMs?: number }) => Promise<{ frames: readonly CapturedFrame[] }>;
+            };
             const timedStep = async <T>(name: string, fn: () => Promise<T> | T): Promise<T> => {
               const startedAt = Date.now();
               try {
@@ -425,10 +432,17 @@ export const tools: ToolDefinition[] = [
               ctx.setPlatform(backend);
             });
 
+            let prepareCapturePromise: Promise<void> | undefined;
+            if (captureScreenshot && backend === "c64u" && typeof client.prepareVideoCapture === "function") {
+              prepareCapturePromise = timedStep("prepare_capture", async () => {
+                await client.prepareVideoCapture?.({ keepAliveMs: Math.max(500, timeoutMs) });
+                preparedCaptureSession = true;
+              }).catch(() => {
+                preparedCaptureSession = false;
+              });
+            }
+
             const runResult = await timedStep("render_greeting_screen", async () => {
-              const client = ctx.client as ToolExecutionContext["client"] & {
-                renderGreetingScreen?: (options: { message: string }) => Promise<{ success: boolean; details?: unknown }>;
-              };
               if (typeof client.renderGreetingScreen === "function") {
                 executionMode = "direct_screen_write";
                 return client.renderGreetingScreen({ message: expectedText });
@@ -437,6 +451,9 @@ export const tools: ToolDefinition[] = [
               executionMode = "basic_program";
               return ctx.client.uploadAndRunBasic(program);
             });
+            if (prepareCapturePromise) {
+              await prepareCapturePromise;
+            }
             const backendResult: Record<string, unknown> = {
               backend,
               expectedText,
@@ -446,6 +463,13 @@ export const tools: ToolDefinition[] = [
             };
 
             if (!runResult.success) {
+              if (preparedCaptureSession && typeof client.releaseVideoCapture === "function") {
+                try {
+                  await timedStep("release_capture", () => client.releaseVideoCapture?.());
+                } catch {
+                  // Preserve the original render failure and best-effort cleanup.
+                }
+              }
               backendResult.success = false;
               backendResult.error = "basic_run_failed";
               backendResult.details = runResult.details ?? null;
@@ -472,7 +496,11 @@ export const tools: ToolDefinition[] = [
 
             if (captureScreenshot) {
               try {
-                const capture = await timedStep("capture_screenshot", () => ctx.client.captureFrames({ count: 1 }));
+                const capture = await timedStep("capture_screenshot", () => client.captureFrames({
+                  count: 1,
+                  reuseSession: preparedCaptureSession,
+                  keepAliveMs: preparedCaptureSession ? Math.max(500, timeoutMs) : 0,
+                }));
                 const frame = capture.frames[0];
                 if (!frame) {
                   throw new Error("No video frame returned by backend capture");
@@ -489,6 +517,14 @@ export const tools: ToolDefinition[] = [
                 });
               } catch (error) {
                 screenshotError = error instanceof Error ? error.message : String(error);
+              } finally {
+                if (preparedCaptureSession && typeof client.releaseVideoCapture === "function") {
+                  try {
+                    await timedStep("release_capture", () => client.releaseVideoCapture?.());
+                  } catch {
+                    // Surface screenshot failures, but do not overwrite a successful capture result.
+                  }
+                }
               }
             }
 

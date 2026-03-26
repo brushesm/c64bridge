@@ -70,6 +70,24 @@ export interface SampleCaptureResult {
   readonly samples: Int16Array;
 }
 
+interface C64uVideoCaptureSession {
+  readonly facade: C64Facade;
+  readonly socket: Socket;
+  readonly bindAddress: string;
+  readonly target: string;
+  readonly packets: Array<ReturnType<typeof parseVideoPacket>>;
+  readonly waiters: Array<{
+    count: number;
+    startIndex: number;
+    resolve: (frames: readonly CapturedFrame[]) => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>;
+  stopTimer: ReturnType<typeof setTimeout> | null;
+  closed: boolean;
+  error: Error | null;
+}
+
 export interface BitmapDisplayResult {
   readonly mode: "hires" | "multicolor";
   readonly bank: number;
@@ -134,6 +152,7 @@ export class C64Client {
   private readonly warmupPromises = new Map<DeviceType, Promise<boolean>>();
   private readonly greetingDd00Cache = new Map<DeviceType, number>();
   private readonly greetingDd00Warmups = new Map<DeviceType, Promise<number>>();
+  private c64uVideoCaptureSession: C64uVideoCaptureSession | null = null;
   private readonly initPromise: Promise<void>;
   private activeType: DeviceType = "c64u";
   private facadePromise: Promise<C64Facade>;
@@ -228,6 +247,9 @@ export class C64Client {
     // Platform state is owned by the caller so tool-level flows can update global routing explicitly.
     this.facadePromise = nextFacade;
     this.activeType = type;
+    if (type !== "c64u" && this.c64uVideoCaptureSession) {
+      void this.releaseVideoCapture().catch(() => {});
+    }
     writeDiagnosticEvent("client_switch_backend", { backend: type });
   }
 
@@ -965,15 +987,32 @@ export class C64Client {
     try { const facade = await this.facadePromise; return await facade.streamStop(stream); } catch (error) { return { success: false, details: this.normaliseError(error) }; }
   }
 
-  async captureFrames(options?: { readonly count?: number }): Promise<FrameCaptureResult> {
-    return withDiagnosticSpan("client", "capture_frames", { count: options?.count ?? 1 }, async () => {
+  async prepareVideoCapture(options?: { readonly keepAliveMs?: number }): Promise<void> {
+    const keepAliveMs = Math.max(0, Math.trunc(options?.keepAliveMs ?? 1_000));
+    const facade = await this.facadePromise;
+    if (facade.type !== "c64u") {
+      throw new Error("Reusable video capture is only available on C64 Ultimate");
+    }
+    await this.ensureC64uVideoCaptureSession(facade);
+    this.scheduleC64uVideoCaptureStop(keepAliveMs);
+  }
+
+  async releaseVideoCapture(): Promise<void> {
+    await this.stopC64uVideoCaptureSession();
+  }
+
+  async captureFrames(options?: { readonly count?: number; readonly reuseSession?: boolean; readonly keepAliveMs?: number }): Promise<FrameCaptureResult> {
+    return withDiagnosticSpan("client", "capture_frames", { count: options?.count ?? 1, reuseSession: options?.reuseSession === true }, async () => {
       const requestedCount = Math.max(1, Math.min(32, Math.trunc(options?.count ?? 1)));
       const facade = await this.facadePromise;
       if (facade.type === "vice") {
         return this.captureViceFrames(requestedCount);
       }
 
-      return this.captureC64uVideoFrames(facade, requestedCount);
+      return this.captureC64uVideoFrames(facade, requestedCount, {
+        reuseSession: options?.reuseSession === true,
+        keepAliveMs: Math.max(0, Math.trunc(options?.keepAliveMs ?? 0)),
+      });
     });
   }
 
@@ -1088,7 +1127,15 @@ export class C64Client {
   private async captureC64uVideoFrames(
     facade: C64Facade,
     count: number,
+    options: { readonly reuseSession?: boolean; readonly keepAliveMs?: number } = {},
   ): Promise<FrameCaptureResult> {
+    if (options.reuseSession) {
+      const session = await this.ensureC64uVideoCaptureSession(facade);
+      const frames = await this.collectFramesFromC64uVideoCaptureSession(session, count, { fresh: true });
+      this.scheduleC64uVideoCaptureStop(options.keepAliveMs ?? 0);
+      return { backend: "c64u", frames };
+    }
+
     const host = new URL(this.baseUrl).hostname;
     const bindAddress = await this.resolveLocalCaptureAddress(host);
     const socket = createSocket("udp4");
@@ -1108,7 +1155,11 @@ export class C64Client {
 
         socket.on("message", (msg) => {
           try {
-            packets.push(parseVideoPacket(Buffer.from(msg)));
+            const packet = this.parseVideoPacketOrNull(Buffer.from(msg));
+            if (!packet) {
+              return;
+            }
+            packets.push(packet);
             const frames = collectCompleteVideoFrames(packets, count);
             if (frames.length >= count) {
               clearTimeout(timer);
@@ -1137,6 +1188,177 @@ export class C64Client {
       if (stopError) {
         throw stopError;
       }
+    }
+  }
+
+  private async ensureC64uVideoCaptureSession(facade: C64Facade): Promise<C64uVideoCaptureSession> {
+    const existing = this.c64uVideoCaptureSession;
+    if (existing && !existing.closed && existing.facade === facade) {
+      if (existing.stopTimer) {
+        clearTimeout(existing.stopTimer);
+        existing.stopTimer = null;
+      }
+      if (existing.error) {
+        throw existing.error;
+      }
+      return existing;
+    }
+
+    await this.stopC64uVideoCaptureSession();
+
+    const host = new URL(this.baseUrl).hostname;
+    const bindAddress = await this.resolveLocalCaptureAddress(host);
+    const socket = createSocket("udp4");
+    await this.bindCaptureSocket(socket, bindAddress);
+    const target = this.socketEndpoint(socket, bindAddress);
+
+    const session: C64uVideoCaptureSession = {
+      facade,
+      socket,
+      bindAddress,
+      target,
+      packets: [],
+      waiters: [],
+      stopTimer: null,
+      closed: false,
+      error: null,
+    };
+
+    socket.on("message", (msg) => {
+      if (session.closed) {
+        return;
+      }
+      const packet = this.parseVideoPacketOrNull(Buffer.from(msg));
+      if (!packet) {
+        return;
+      }
+      session.packets.push(packet);
+      this.flushC64uVideoCaptureWaiters(session);
+    });
+
+    socket.on("error", (error) => {
+      const err = error instanceof Error ? error : new Error(String(error));
+      session.error = err;
+      this.rejectC64uVideoCaptureWaiters(session, err);
+    });
+
+    try {
+      await this.ensureStreamSuccess(await facade.streamStart("video", target), "start video stream");
+    } catch (error) {
+      session.closed = true;
+      socket.close();
+      throw error;
+    }
+
+    this.c64uVideoCaptureSession = session;
+    return session;
+  }
+
+  private async collectFramesFromC64uVideoCaptureSession(
+    session: C64uVideoCaptureSession,
+    count: number,
+    options: { readonly fresh?: boolean } = {},
+  ): Promise<readonly CapturedFrame[]> {
+    if (session.error) {
+      throw session.error;
+    }
+    const startIndex = options.fresh ? session.packets.length : 0;
+    const existingFrames = collectCompleteVideoFrames(session.packets.slice(startIndex), count);
+    if (existingFrames.length >= count) {
+      return existingFrames;
+    }
+
+    return await new Promise<readonly CapturedFrame[]>((resolve, reject) => {
+      const timeoutMs = Math.max(1_500, count * 750);
+      const timer = setTimeout(() => {
+        const waiterIndex = session.waiters.indexOf(waiter);
+        if (waiterIndex >= 0) {
+          session.waiters.splice(waiterIndex, 1);
+        }
+        reject(new Error(`Timed out after ${timeoutMs}ms while capturing ${count} video frame(s)`));
+      }, timeoutMs);
+
+      const waiter = {
+        count,
+        startIndex,
+        resolve: (frames: readonly CapturedFrame[]) => {
+          clearTimeout(timer);
+          resolve(frames);
+        },
+        reject: (error: Error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+        timer,
+      };
+
+      session.waiters.push(waiter);
+      this.flushC64uVideoCaptureWaiters(session);
+    });
+  }
+
+  private flushC64uVideoCaptureWaiters(session: C64uVideoCaptureSession): void {
+    for (let index = session.waiters.length - 1; index >= 0; index -= 1) {
+      const waiter = session.waiters[index];
+      const frames = collectCompleteVideoFrames(session.packets.slice(waiter.startIndex), waiter.count);
+      if (frames.length >= waiter.count) {
+        session.waiters.splice(index, 1);
+        waiter.resolve(frames);
+      }
+    }
+  }
+
+  private rejectC64uVideoCaptureWaiters(session: C64uVideoCaptureSession, error: Error): void {
+    while (session.waiters.length > 0) {
+      const waiter = session.waiters.pop();
+      if (waiter) {
+        waiter.reject(error);
+      }
+    }
+  }
+
+  private scheduleC64uVideoCaptureStop(keepAliveMs: number): void {
+    const session = this.c64uVideoCaptureSession;
+    if (!session || session.closed) {
+      return;
+    }
+    if (session.stopTimer) {
+      clearTimeout(session.stopTimer);
+      session.stopTimer = null;
+    }
+    if (keepAliveMs <= 0) {
+      void this.stopC64uVideoCaptureSession().catch(() => {});
+      return;
+    }
+    session.stopTimer = setTimeout(() => {
+      void this.stopC64uVideoCaptureSession().catch(() => {});
+    }, keepAliveMs);
+  }
+
+  private async stopC64uVideoCaptureSession(): Promise<void> {
+    const session = this.c64uVideoCaptureSession;
+    if (!session) {
+      return;
+    }
+    this.c64uVideoCaptureSession = null;
+    session.closed = true;
+    if (session.stopTimer) {
+      clearTimeout(session.stopTimer);
+      session.stopTimer = null;
+    }
+
+    let stopError: Error | null = null;
+    try {
+      await this.ensureStreamSuccess(await session.facade.streamStop("video"), "stop video stream");
+    } catch (error) {
+      stopError = error instanceof Error ? error : new Error(String(error));
+    } finally {
+      session.socket.close();
+      this.rejectC64uVideoCaptureWaiters(session, stopError ?? new Error("Video capture session closed"));
+    }
+
+    if (stopError) {
+      throw stopError;
     }
   }
 
@@ -1314,6 +1536,18 @@ export class C64Client {
       return;
     }
     throw new Error(`Failed to ${action}: ${JSON.stringify(result.details ?? null)}`);
+  }
+
+  private parseVideoPacketOrNull(payload: Buffer): ReturnType<typeof parseVideoPacket> | null {
+    try {
+      return parseVideoPacket(payload);
+    } catch (error) {
+      writeDiagnosticEvent("capture_video_packet_ignored", {
+        message: error instanceof Error ? error.message : String(error),
+        bytes: payload.length,
+      });
+      return null;
+    }
   }
 
   private normaliseViceDisplaySnapshot(snapshot: {

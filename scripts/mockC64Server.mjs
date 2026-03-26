@@ -90,6 +90,7 @@ function createInitialState() {
   poweroffs: 0,
     memory: new Uint8Array(0x10000),
     lastWrite: null,
+    writeLog: [],
     lastRequest: null,
     drives: {},
     lastDriveOperation: null,
@@ -117,6 +118,7 @@ function createInitialState() {
       debug: { active: false, target: null, packetsSent: 0 },
     },
     lastStreamAction: null,
+    streamActionLog: [],
   };
 }
 
@@ -463,6 +465,7 @@ export async function startMockC64Server(options = {}) {
 
       state.memory.set(bytes, address);
       state.lastWrite = { address, bytes };
+      state.writeLog.push({ address, bytes: Buffer.from(bytes) });
 
       sendJson(res, { result: "wrote", address, length: bytes.length });
       return;
@@ -481,6 +484,7 @@ export async function startMockC64Server(options = {}) {
 
       state.memory.set(bytes, address);
       state.lastWrite = { address, bytes };
+      state.writeLog.push({ address, bytes: Buffer.from(bytes) });
 
       sendJson(res, { result: "wrote", address, length: bytes.length });
       return;
@@ -591,6 +595,7 @@ export async function startMockC64Server(options = {}) {
           const target = routeUrl.searchParams.get("ip") ?? routeUrl.searchParams.get("target") ?? body?.ip ?? body?.target ?? null;
           state.streams[stream] = { active: true, target, packetsSent: 0 };
           state.lastStreamAction = { action: "start", stream, target };
+          state.streamActionLog.push({ action: "start", stream, target });
           startStreamEmitter(stream, target);
           sendJson(res, { result: "started", stream, target });
           return;
@@ -600,6 +605,7 @@ export async function startMockC64Server(options = {}) {
           stopStreamEmitter(stream);
           state.streams[stream] = { active: false, target: null, packetsSent: state.streams[stream]?.packetsSent ?? 0 };
           state.lastStreamAction = { action: "stop", stream };
+          state.streamActionLog.push({ action: "stop", stream });
           sendJson(res, { result: "stopped", stream });
           return;
         }

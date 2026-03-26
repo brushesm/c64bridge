@@ -182,6 +182,75 @@ test("cross_platform_greeting falls back to BASIC upload when direct greeting re
   assert.equal(res.structuredContent?.data?.results?.[0]?.executionMode, "basic_program");
 });
 
+test("cross_platform_greeting reuses and releases a prepared C64U capture session", async () => {
+  let activeBackend = "c64u";
+  let prepared = 0;
+  let released = 0;
+  const captureArgs = [];
+
+  const ctx = {
+    client: {
+      getAvailableBackends() {
+        return ["c64u"];
+      },
+      async getActiveBackendType() {
+        return activeBackend;
+      },
+      switchBackend(backend) {
+        activeBackend = backend;
+      },
+      async renderGreetingScreen() {
+        return { success: true };
+      },
+      async prepareVideoCapture() {
+        prepared += 1;
+      },
+      async releaseVideoCapture() {
+        released += 1;
+      },
+      async readScreen() {
+        return "READY.\nHAVE A GREAT DAY, C64U!";
+      },
+      async captureFrames(options) {
+        captureArgs.push(options ?? {});
+        return {
+          backend: activeBackend,
+          frames: [
+            {
+              frameNumber: null,
+              width: 2,
+              height: 2,
+              bitsPerPixel: 4,
+              pixels: Uint8Array.from([0, 1, 2, 3]),
+              complete: true,
+            },
+          ],
+        };
+      },
+    },
+    logger: createLogger(),
+    setPlatform(target) {
+      activeBackend = target;
+      return { id: target, features: [], limitedFeatures: [] };
+    },
+  };
+
+  const res = await metaModule.invoke("cross_platform_greeting", {
+    platforms: ["c64u"],
+    outputPath: tmpPath("program", "capture-reuse").dir,
+    timeoutMs: 100,
+    pollIntervalMs: 50,
+  }, ctx);
+
+  assert.equal(res.metadata?.success, true);
+  assert.equal(prepared, 1);
+  assert.equal(released, 1);
+  assert.equal(captureArgs.length, 1);
+  assert.equal(captureArgs[0].reuseSession, true);
+  assert.equal(res.structuredContent?.data?.results?.[0]?.timeline?.some((phase) => phase.name === "prepare_capture"), true);
+  assert.equal(res.structuredContent?.data?.results?.[0]?.timeline?.some((phase) => phase.name === "release_capture"), true);
+});
+
 test("program_shuffle discovers and runs programs", async () => {
   let resetCount = 0;
   let runPrgCount = 0;
