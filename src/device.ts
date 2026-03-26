@@ -104,16 +104,27 @@ function readConfigFile(): C64BridgeConfigFile | null {
   } catch {}
   const home = process.env.HOME || os.homedir();
   if (home) candidates.push(path.join(home, ".c64bridge.json"));
+  let foundCandidate = false;
+  const merged: C64BridgeConfigFile = {};
   for (const p of candidates) {
     try {
       if (fs.existsSync(p)) {
+        foundCandidate = true;
         const text = fs.readFileSync(p, "utf8");
         const json = JSON.parse(text);
-        return json ?? null;
+        if (!merged.c64u && json?.c64u && typeof json.c64u === "object" && !Array.isArray(json.c64u)) {
+          merged.c64u = json.c64u as C64uConfig;
+        }
+        if (!merged.vice && json?.vice && typeof json.vice === "object" && !Array.isArray(json.vice)) {
+          merged.vice = json.vice as ViceConfig;
+        }
+        if (merged.c64u && merged.vice) {
+          break;
+        }
       }
     } catch {}
   }
-  return null;
+  return foundCandidate ? merged : null;
 }
 
 class C64uBackend implements C64Facade {
@@ -123,9 +134,30 @@ class C64uBackend implements C64Facade {
   private readonly api: Api<unknown>;
 
   constructor(config: C64uConfig) {
-    const baseUrl = resolveBaseUrl(config);
+    const envHost = configuredString(process.env.C64U_HOST);
+    const envPort = configuredPort(process.env.C64U_PORT);
+    const configBaseUrl = normaliseBaseUrl(config.baseUrl);
+    const parsedConfigBaseUrl = configBaseUrl ? parseEndpoint(configBaseUrl) : {};
+    const baseUrl = envHost !== undefined || envPort !== undefined
+      ? buildBaseUrl(
+          firstDefined(
+            envHost,
+            configuredString(config.host),
+            configuredString(config.hostname),
+            parsedConfigBaseUrl.hostname,
+          ) ?? DEFAULT_C64U_HOST,
+          firstDefined(
+            envPort,
+            configuredPort(config.port),
+            parsedConfigBaseUrl.port,
+          ) ?? DEFAULT_C64U_PORT,
+        )
+      : resolveBaseUrl(config);
     this.baseUrl = baseUrl;
-    this.networkPassword = configuredString(config.networkPassword);
+    this.networkPassword = firstDefined(
+      configuredString(process.env.C64U_PASSWORD),
+      configuredString(config.networkPassword),
+    );
     const http = createLoggingHttpClient({
       baseURL: baseUrl,
       timeout: 10_000,
@@ -760,6 +792,12 @@ export interface FacadeOptions {
   preferredC64uNetworkPassword?: string;
 }
 
+export interface AllFacadesResult {
+  primary: FacadeSelection;
+  secondary: C64Facade | null;
+  secondaryType: DeviceType | null;
+}
+
 export async function createFacade(logger?: { info: (...a: any[]) => void }, options?: FacadeOptions): Promise<FacadeSelection> {
   // Caller-forced preference: use c64u with provided base URL (used by tests and server wiring)
   if (options?.preferredC64uBaseUrl) {
@@ -818,6 +856,37 @@ export async function createFacade(logger?: { info: (...a: any[]) => void }, opt
   logger?.info?.("Active backend: vice (fallback – hardware unavailable)");
   const endpoint = backend.getEndpoint();
   return { facade: backend, selected: "vice", reason: "fallback (hardware unavailable)", details: { host: endpoint.host, port: endpoint.port } };
+}
+
+export async function createAllFacades(
+  logger?: { info: (...a: any[]) => void },
+  options?: FacadeOptions,
+): Promise<AllFacadesResult> {
+  const primary = await createFacade(logger, options);
+  const config = readConfigFile();
+  const secondaryType = primary.selected === "c64u" ? "vice" : "c64u";
+
+  if (secondaryType === "c64u" && config?.c64u) {
+    return {
+      primary,
+      secondary: new C64uBackend(config.c64u),
+      secondaryType,
+    };
+  }
+
+  if (secondaryType === "vice" && config?.vice) {
+    return {
+      primary,
+      secondary: new ViceBackend(config.vice),
+      secondaryType,
+    };
+  }
+
+  return {
+    primary,
+    secondary: null,
+    secondaryType: null,
+  };
 }
 
 function resolveBaseUrl(config: C64uConfig): string {

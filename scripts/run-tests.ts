@@ -6,17 +6,6 @@ import process from "node:process";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-type BunChild = { exited: Promise<number | null | undefined> };
-type BunRuntime = {
-  spawn(options: {
-    cmd: string[];
-    cwd: string;
-    env: Record<string, string>;
-    stdout: "inherit";
-    stderr: "inherit";
-  }): BunChild;
-};
-
 const DEFAULT_TARGET = "mock";
 const DEFAULT_PLATFORM = "c64u";
 const DEFAULT_BUN_FILE_LIMIT = 4;
@@ -60,6 +49,9 @@ export function parseRunTestsArgs(args: string[]): RunTestsArgs {
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
+    if (!arg || !arg.trim()) {
+      continue;
+    }
     if (arg === "--mock") {
       target = "mock";
       continue;
@@ -169,6 +161,26 @@ async function runNodeFallback(target: string, explicitBaseUrl: string | null, p
   });
 }
 
+async function runExternalCommand(command: string, args: string[], env: Record<string, string>): Promise<number> {
+  return await new Promise<number>((resolve) => {
+    const childProcess = spawn(command, args, {
+      cwd: repoRoot,
+      env,
+      stdio: "inherit",
+    }) as unknown as {
+      on(event: "error", listener: (error: Error) => void): void;
+      on(event: "exit", listener: (code: number | null) => void): void;
+    };
+    childProcess.on("error", (error) => {
+      console.error("[run-tests] Failed to launch test runner:", error);
+      resolve(1);
+    });
+    childProcess.on("exit", (code) => {
+      resolve(typeof code === "number" ? code : 1);
+    });
+  });
+}
+
 async function main(): Promise<number> {
   const { target, platform, explicitBaseUrl, runCoverage, passthrough } = parseRunTestsArgs(process.argv.slice(2));
 
@@ -203,14 +215,14 @@ async function main(): Promise<number> {
     passthrough,
   });
 
-  const bunRuntime = (globalThis as { Bun?: BunRuntime }).Bun;
-  if (!bunRuntime || typeof bunRuntime.spawn !== "function") {
+  const bunRuntime = (globalThis as { Bun?: unknown }).Bun;
+  if (!bunRuntime) {
     console.warn("[run-tests] Bun runtime not detected; falling back to Node runner");
     return await runNodeFallback(target, explicitBaseUrl, passthrough, env, runCoverage);
   }
 
   if (!runCoverage && passthrough.length === 0) {
-    return await runBunBatches(bunRuntime, env, buildBunTestBatches([], env), {
+    return await runBunBatches(env, buildBunTestBatches([], env), {
       coverage: false,
       labelPrefix: "default-suite",
     });
@@ -218,7 +230,7 @@ async function main(): Promise<number> {
 
   if (shouldUseNodeFallback(runCoverage, passthrough, env)) {
     if (!runCoverage) {
-      return await runBunBatches(bunRuntime, env, buildBunTestBatches(passthrough, env), {
+      return await runBunBatches(env, buildBunTestBatches(passthrough, env), {
         coverage: false,
         labelPrefix: "sharded-suite",
       });
@@ -226,9 +238,7 @@ async function main(): Promise<number> {
     return await runNodeFallback(target, explicitBaseUrl, passthrough, env, runCoverage);
   }
 
-  const bunExecutable = process.execPath;
-  const cmd = [
-    bunExecutable,
+  const bunArgs = [
     "test",
     ...(runCoverage
       ? [
@@ -239,16 +249,7 @@ async function main(): Promise<number> {
       : []),
     ...(passthrough.length > 0 ? passthrough : defaultTestFiles),
   ];
-  const child = bunRuntime.spawn({
-    cmd,
-    cwd: repoRoot,
-    env,
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-
-  const exitCode = await child.exited;
-  return typeof exitCode === "number" ? exitCode : 1;
+  return await runExternalCommand(process.execPath, bunArgs, env);
 }
 
 if (import.meta.main) {
@@ -330,7 +331,6 @@ function chunkFiles(files: string[], chunkSize: number): string[][] {
 }
 
 async function runBunBatches(
-  bunRuntime: BunRuntime,
   env: Record<string, string>,
   batches: string[][],
   options: { coverage: boolean; labelPrefix: string },
@@ -342,16 +342,9 @@ async function runBunBatches(
   for (let index = 0; index < batches.length; index += 1) {
     const batch = batches[index] ?? [];
     console.log(`[run-tests] ${options.labelPrefix} batch ${index + 1}/${batches.length} (${batch.length} entries)`);
-    const child = bunRuntime.spawn({
-      cmd: [process.execPath, "test", ...coverageArgs, ...batch],
-      cwd: repoRoot,
-      env,
-      stdout: "inherit",
-      stderr: "inherit",
-    });
-    const exitCode = await child.exited;
-    if (typeof exitCode !== "number" || exitCode !== 0) {
-      return typeof exitCode === "number" ? exitCode : 1;
+    const exitCode = await runExternalCommand(process.execPath, ["test", ...coverageArgs, ...batch], env);
+    if (exitCode !== 0) {
+      return exitCode;
     }
   }
 

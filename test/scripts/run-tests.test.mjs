@@ -1,6 +1,10 @@
 import test from "#test/runner";
 import assert from "#test/assert";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { buildBunTestBatches, parseRunTestsArgs, shouldUseNodeFallback } from "../../scripts/run-tests.ts";
+import { buildNodeTestArgs } from "../../scripts/run-tests.mjs";
 
 test("run-tests parses CLI args for matrix selection and passthrough", () => {
   const parsed = parseRunTestsArgs([
@@ -21,6 +25,12 @@ test("run-tests parses CLI args for matrix selection and passthrough", () => {
     runCoverage: true,
     passthrough: ["test/logger.test.mjs", "--timeout", "5000"],
   });
+});
+
+test("run-tests ignores blank passthrough args from shell wrappers", () => {
+  const parsed = parseRunTestsArgs(["", "   ", "--platform=c64u"]);
+  assert.deepEqual(parsed.passthrough, []);
+  assert.equal(parsed.platform, "c64u");
 });
 
 test("run-tests prefers Node for broad default Bun suites", () => {
@@ -73,4 +83,46 @@ test("run-tests shards explicit Bun file lists and preserves shared args", () =>
     ["test/a.test.mjs", "test/b.test.mjs", "--timeout", "5000"],
     ["test/c.test.mjs", "--timeout", "5000"],
   ]);
+});
+
+test("run-tests.mjs scopes bare Node fallback runs to the repo test tree", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "run-tests-node-fallback-"));
+  fs.mkdirSync(path.join(root, "test"), { recursive: true });
+  fs.writeFileSync(path.join(root, "test", "alpha.test.mjs"), "export {};\n", "utf8");
+  fs.mkdirSync(path.join(root, "ignored"), { recursive: true });
+  fs.writeFileSync(path.join(root, "ignored", "beta.test.mjs"), "export {};\n", "utf8");
+
+  try {
+    const parsed = buildNodeTestArgs([], root);
+    assert.equal(parsed.target, "mock");
+    assert.equal(parsed.explicitBaseUrl, null);
+    assert.deepEqual(parsed.nodeArgs, [
+      parsed.nodeArgs[0],
+      parsed.nodeArgs[1],
+      parsed.nodeArgs[2],
+      "test/alpha.test.mjs",
+    ]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("run-tests.mjs preserves explicit files instead of appending defaults", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "run-tests-node-explicit-"));
+  fs.mkdirSync(path.join(root, "test"), { recursive: true });
+  fs.writeFileSync(path.join(root, "test", "alpha.test.mjs"), "export {};\n", "utf8");
+
+  try {
+    const parsed = buildNodeTestArgs([
+      "--target=device",
+      "--base-url=http://example.test",
+      "test/custom.test.mjs",
+    ], root);
+    assert.equal(parsed.target, "device");
+    assert.equal(parsed.explicitBaseUrl, "http://example.test");
+    assert.equal(parsed.nodeArgs.includes("test/alpha.test.mjs"), false);
+    assert.equal(parsed.nodeArgs.includes("test/custom.test.mjs"), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

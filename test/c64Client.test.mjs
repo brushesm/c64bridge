@@ -1,6 +1,9 @@
 import test from "#test/runner";
 import assert from "#test/assert";
 import { Buffer } from "node:buffer";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { C64Client } from "../src/c64Client.js";
 import {
   buildPrinterBasicProgram,
@@ -10,9 +13,11 @@ import {
 } from "../src/c64Client.js";
 import { basicToPrg } from "../src/basicConverter.js";
 import { startMockC64Server } from "../scripts/mockC64Server.mjs";
+import { startViceMockServer } from "../src/vice/mockServer.js";
 
 const SCREEN_BASE = "$0400";
 const SAFE_RAM_BASE = "$C000";
+const REPO_CONFIG_PATH = path.resolve(".c64bridge.json");
 
 function asciiToHexBytes(text) {
   return Buffer.from(text, "ascii").toString("hex").toUpperCase();
@@ -22,6 +27,77 @@ async function writeMessageAt(client, baseAddress, message) {
   const hex = asciiToHexBytes(message);
   const write = await client.writeMemory(baseAddress, `$${hex}`);
   return { write, hex: `$${hex}` };
+}
+
+async function withEnv(overrides, fn) {
+  const previous = new Map(Object.keys(overrides).map((key) => [key, process.env[key]]));
+  try {
+    for (const [key, value] of Object.entries(overrides)) {
+      if (value === undefined || value === null) {
+        delete process.env[key];
+      } else {
+        process.env[key] = String(value);
+      }
+    }
+    return await fn();
+  } finally {
+    for (const [key, value] of previous.entries()) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+async function withConfigScenario({
+  envConfig,
+  repoConfig,
+  homeConfig,
+  mode,
+}, fn) {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "c64bridge-client-config-"));
+  const envConfigPath = path.join(tempRoot, "env.json");
+  const homeDir = path.join(tempRoot, "home");
+  const homeConfigPath = path.join(homeDir, ".c64bridge.json");
+  const hadRepoConfig = fs.existsSync(REPO_CONFIG_PATH);
+  const originalRepoConfig = hadRepoConfig ? fs.readFileSync(REPO_CONFIG_PATH, "utf8") : null;
+
+  fs.mkdirSync(homeDir, { recursive: true });
+
+  try {
+    if (repoConfig === null) {
+      fs.rmSync(REPO_CONFIG_PATH, { force: true });
+    } else if (repoConfig !== undefined) {
+      fs.writeFileSync(REPO_CONFIG_PATH, JSON.stringify(repoConfig), "utf8");
+    }
+
+    if (homeConfig !== undefined) {
+      if (homeConfig === null) {
+        fs.rmSync(homeConfigPath, { force: true });
+      } else {
+        fs.writeFileSync(homeConfigPath, JSON.stringify(homeConfig), "utf8");
+      }
+    }
+
+    if (envConfig !== undefined && envConfig !== null) {
+      fs.writeFileSync(envConfigPath, JSON.stringify(envConfig), "utf8");
+    }
+
+    return await withEnv({
+      HOME: homeDir,
+      C64BRIDGE_CONFIG: envConfig !== undefined ? envConfigPath : undefined,
+      C64_MODE: mode ?? undefined,
+    }, fn);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    if (hadRepoConfig) {
+      fs.writeFileSync(REPO_CONFIG_PATH, originalRepoConfig, "utf8");
+    } else {
+      fs.rmSync(REPO_CONFIG_PATH, { force: true });
+    }
+  }
 }
 
 const target = (process.env.C64_TEST_TARGET ?? "mock").toLowerCase();
@@ -410,5 +486,125 @@ test("C64Client against real C64", async (t) => {
   await t.test("reboot real C64", async () => {
     const response = await client.reboot();
     assert.equal(response.success, true, `Reboot failed: ${JSON.stringify(response.details)}`);
+  });
+});
+
+test("C64Client backend selection and switching", async (t) => {
+  await t.test("single c64u config exposes only c64u", async () => {
+    const mock = await startMockC64Server();
+    t.after(async () => {
+      await mock.close();
+    });
+
+    await withConfigScenario(
+      {
+        envConfig: { c64u: { baseUrl: mock.baseUrl } },
+        repoConfig: null,
+        homeConfig: null,
+      },
+      async () => {
+        const client = new C64Client("http://unused.local", { forceC64uFacade: false });
+
+        assert.equal(await client.getActiveBackendType(), "c64u");
+        assert.equal(await client.getBackendType(), "c64u");
+        assert.deepEqual(client.getAvailableBackends(), ["c64u"]);
+
+        const info = await client.info();
+        assert.ok(info && typeof info === "object");
+        await assert.rejects(() => client.viceCheckpointList(), /VICE-specific operation requested/);
+      },
+    );
+  });
+
+  await t.test("single vice config exposes only vice", async () => {
+    const vice = await startViceMockServer({ host: "127.0.0.1", port: 0 });
+    t.after(async () => {
+      await vice.stop();
+    });
+
+    await withConfigScenario(
+      {
+        envConfig: { vice: { host: "127.0.0.1", port: vice.port } },
+        repoConfig: null,
+        homeConfig: null,
+      },
+      async () => {
+        const client = new C64Client("http://unused.local", { forceC64uFacade: false });
+
+        assert.equal(await client.getActiveBackendType(), "vice");
+        assert.equal(await client.getBackendType(), "vice");
+        assert.deepEqual(client.getAvailableBackends(), ["vice"]);
+
+        const info = await client.info();
+        assert.equal(info?.emulator, "vice");
+        assert.equal(info?.port, vice.port);
+      },
+    );
+  });
+
+  await t.test("both configured initialises both facades and switchBackend swaps the active facade", async () => {
+    const c64u = await startMockC64Server();
+    const vice = await startViceMockServer({ host: "127.0.0.1", port: 0 });
+    t.after(async () => {
+      await Promise.all([c64u.close(), vice.stop()]);
+    });
+
+    await withConfigScenario(
+      {
+        repoConfig: { c64u: { baseUrl: c64u.baseUrl } },
+        homeConfig: { vice: { host: "127.0.0.1", port: vice.port } },
+        mode: "vice",
+      },
+      async () => {
+        const client = new C64Client("http://unused.local", { forceC64uFacade: false });
+
+        assert.equal(await client.getActiveBackendType(), "vice");
+        assert.deepEqual(client.getAvailableBackends().sort(), ["c64u", "vice"]);
+
+        const viceFrames = await client.captureFrames({ count: 1 });
+        assert.equal(viceFrames.backend, "vice");
+        assert.equal(viceFrames.frames.length, 1);
+
+        const viceInfo = await client.info();
+        assert.equal(viceInfo?.emulator, "vice");
+        assert.equal((await client.version())?.emulator, "vice");
+        assert.equal(await client.getBackendType(), "vice");
+
+        client.switchBackend("c64u");
+        assert.equal(await client.getActiveBackendType(), "c64u");
+        assert.equal(await client.getBackendType(), "c64u");
+
+        const c64uInfo = await client.info();
+        assert.ok(c64uInfo && typeof c64uInfo === "object");
+        assert.equal(c64u.state.lastRequest?.method, "GET");
+        assert.match(c64u.state.lastRequest?.url ?? "", /\/v1\/info$/);
+
+        client.switchBackend("vice");
+        assert.equal(await client.getActiveBackendType(), "vice");
+        assert.equal(await client.getBackendType(), "vice");
+        assert.equal((await client.info())?.emulator, "vice");
+      },
+    );
+  });
+
+  await t.test("switchBackend throws for an unconfigured backend", async () => {
+    const mock = await startMockC64Server();
+    t.after(async () => {
+      await mock.close();
+    });
+
+    await withConfigScenario(
+      {
+        envConfig: { c64u: { baseUrl: mock.baseUrl } },
+        repoConfig: null,
+        homeConfig: null,
+      },
+      async () => {
+        const client = new C64Client("http://unused.local", { forceC64uFacade: false });
+        await client.getActiveBackendType();
+
+        assert.throws(() => client.switchBackend("vice"), /not configured/);
+      },
+    );
   });
 });

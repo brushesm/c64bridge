@@ -24,6 +24,7 @@ const READY_PATTERN = Uint8Array.of(0x12, 0x05, 0x01, 0x04, 0x19, 0x2E);
 const WAIT_READY_TIMEOUT_MS = useViceMock ? 1_000 : 10_000;
 const WAIT_READY_INTERVAL_MS = useViceMock ? 25 : 200;
 const WAIT_READY_SCAN_LENGTH = 1_000; // full text screen
+const REPO_CONFIG_PATH = path.resolve(".c64bridge.json");
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -47,6 +48,55 @@ async function withEnv(overrides, fn) {
       } else {
         process.env[key] = value;
       }
+    }
+  }
+}
+
+async function withConfigScenario({
+  envConfig,
+  repoConfig,
+  homeConfig,
+  mode,
+}, fn) {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "c64bridge-config-scenario-"));
+  const envConfigPath = path.join(tempRoot, "env.json");
+  const homeDir = path.join(tempRoot, "home");
+  const homeConfigPath = path.join(homeDir, ".c64bridge.json");
+  const hadRepoConfig = fs.existsSync(REPO_CONFIG_PATH);
+  const originalRepoConfig = hadRepoConfig ? fs.readFileSync(REPO_CONFIG_PATH, "utf8") : null;
+
+  fs.mkdirSync(homeDir, { recursive: true });
+
+  try {
+    if (repoConfig === null) {
+      fs.rmSync(REPO_CONFIG_PATH, { force: true });
+    } else if (repoConfig !== undefined) {
+      fs.writeFileSync(REPO_CONFIG_PATH, JSON.stringify(repoConfig), "utf8");
+    }
+
+    if (homeConfig !== undefined) {
+      if (homeConfig === null) {
+        fs.rmSync(homeConfigPath, { force: true });
+      } else {
+        fs.writeFileSync(homeConfigPath, JSON.stringify(homeConfig), "utf8");
+      }
+    }
+
+    if (envConfig !== undefined && envConfig !== null) {
+      fs.writeFileSync(envConfigPath, JSON.stringify(envConfig), "utf8");
+    }
+
+    return await withEnv({
+      HOME: homeDir,
+      C64BRIDGE_CONFIG: envConfig !== undefined ? envConfigPath : undefined,
+      C64_MODE: mode ?? undefined,
+    }, fn);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    if (hadRepoConfig) {
+      fs.writeFileSync(REPO_CONFIG_PATH, originalRepoConfig, "utf8");
+    } else {
+      fs.rmSync(REPO_CONFIG_PATH, { force: true });
     }
   }
 }
@@ -383,96 +433,55 @@ viceSuite("device: ViceBackend basic operations", async (t) => {
 });
 
 test("device: createFacade with config file", async (t) => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "c64bridge-test-"));
-  const configPath = path.join(tmpDir, ".c64bridge.json");
-  
-  t.after(() => {
-    try {
-      fs.unlinkSync(configPath);
-      fs.rmdirSync(tmpDir);
-    } catch {}
-  });
-
   await t.test("c64u config only", async () => {
-    const oldEnv = process.env.C64BRIDGE_CONFIG;
-    const oldMode = process.env.C64_MODE;
-    process.env.C64BRIDGE_CONFIG = configPath;
-    delete process.env.C64_MODE;
-    
-    t.after(() => {
-      if (oldEnv !== undefined) {
-        process.env.C64BRIDGE_CONFIG = oldEnv;
-      } else {
-        delete process.env.C64BRIDGE_CONFIG;
-      }
-      if (oldMode !== undefined) {
-        process.env.C64_MODE = oldMode;
-      }
-    });
-
-    fs.writeFileSync(configPath, JSON.stringify({
-      c64u: { hostname: "test.local", port: 8080 }
-    }));
-
-    const { facade, selected, reason } = await createFacade();
-    assert.equal(selected, "c64u");
-    assert.equal(reason, "config only");
-    assert.equal(facade.type, "c64u");
+    await withConfigScenario(
+      {
+        envConfig: { c64u: { hostname: "test.local", port: 8080 } },
+        repoConfig: null,
+        homeConfig: null,
+      },
+      async () => {
+        const { facade, selected, reason } = await createFacade();
+        assert.equal(selected, "c64u");
+        assert.equal(reason, "config only");
+        assert.equal(facade.type, "c64u");
+      },
+    );
   });
 
   await t.test("vice config only", async () => {
-    const oldEnv = process.env.C64BRIDGE_CONFIG;
-    const oldMode = process.env.C64_MODE;
-    process.env.C64BRIDGE_CONFIG = configPath;
-    delete process.env.C64_MODE;
-    
-    t.after(() => {
-      if (oldEnv !== undefined) {
-        process.env.C64BRIDGE_CONFIG = oldEnv;
-      } else {
-        delete process.env.C64BRIDGE_CONFIG;
-      }
-      if (oldMode !== undefined) {
-        process.env.C64_MODE = oldMode;
-      }
-    });
-
-    fs.writeFileSync(configPath, JSON.stringify({
-      vice: { exe: "/usr/bin/x64sc" }
-    }));
-
-    const { facade, selected, reason } = await createFacade();
-    assert.equal(selected, "vice");
-    assert.equal(reason, "config only");
-    assert.equal(facade.type, "vice");
+    await withConfigScenario(
+      {
+        envConfig: { vice: { exe: "/usr/bin/x64sc" } },
+        repoConfig: null,
+        homeConfig: null,
+      },
+      async () => {
+        const { facade, selected, reason } = await createFacade();
+        assert.equal(selected, "vice");
+        assert.equal(reason, "config only");
+        assert.equal(facade.type, "vice");
+      },
+    );
   });
 
   await t.test("both configs prefer c64u", async () => {
-    const oldEnv = process.env.C64BRIDGE_CONFIG;
-    const oldMode = process.env.C64_MODE;
-    process.env.C64BRIDGE_CONFIG = configPath;
-    delete process.env.C64_MODE;
-    
-    t.after(() => {
-      if (oldEnv !== undefined) {
-        process.env.C64BRIDGE_CONFIG = oldEnv;
-      } else {
-        delete process.env.C64BRIDGE_CONFIG;
-      }
-      if (oldMode !== undefined) {
-        process.env.C64_MODE = oldMode;
-      }
-    });
-
-    fs.writeFileSync(configPath, JSON.stringify({
-      c64u: { hostname: "test.local" },
-      vice: { exe: "/usr/bin/x64sc" }
-    }));
-
-    const { facade, selected, reason } = await createFacade();
-    assert.equal(selected, "c64u");
-    assert.equal(reason, "both defined (prefer c64u)");
-    assert.equal(facade.type, "c64u");
+    await withConfigScenario(
+      {
+        envConfig: {
+          c64u: { hostname: "test.local" },
+          vice: { exe: "/usr/bin/x64sc" },
+        },
+        repoConfig: null,
+        homeConfig: null,
+      },
+      async () => {
+        const { facade, selected, reason } = await createFacade();
+        assert.equal(selected, "c64u");
+        assert.equal(reason, "both defined (prefer c64u)");
+        assert.equal(facade.type, "c64u");
+      },
+    );
   });
 
   await t.test("c64u config forwards networkPassword to REST backend", async () => {
@@ -481,33 +490,22 @@ test("device: createFacade with config file", async (t) => {
       await mock.close();
     });
 
-    const oldEnv = process.env.C64BRIDGE_CONFIG;
-    const oldMode = process.env.C64_MODE;
-    process.env.C64BRIDGE_CONFIG = configPath;
-    delete process.env.C64_MODE;
-
-    t.after(() => {
-      if (oldEnv !== undefined) {
-        process.env.C64BRIDGE_CONFIG = oldEnv;
-      } else {
-        delete process.env.C64BRIDGE_CONFIG;
-      }
-      if (oldMode !== undefined) {
-        process.env.C64_MODE = oldMode;
-      }
-    });
-
-    fs.writeFileSync(configPath, JSON.stringify({
-      c64u: { baseUrl: mock.baseUrl, networkPassword: "open-sesame" },
-    }));
-
-    const { facade, selected, reason } = await createFacade();
-    assert.equal(selected, "c64u");
-    assert.equal(reason, "config only");
-    assert.equal(await facade.ping(), true);
-    const info = await facade.info();
-    assert.ok(info && typeof info === "object");
-    assert.equal(mock.state.lastRequest.headers["x-password"], "open-sesame");
+    await withConfigScenario(
+      {
+        envConfig: { c64u: { baseUrl: mock.baseUrl, networkPassword: "open-sesame" } },
+        repoConfig: null,
+        homeConfig: null,
+      },
+      async () => {
+        const { facade, selected, reason } = await createFacade();
+        assert.equal(selected, "c64u");
+        assert.equal(reason, "config only");
+        assert.equal(await facade.ping(), true);
+        const info = await facade.info();
+        assert.ok(info && typeof info === "object");
+        assert.equal(mock.state.lastRequest.headers["x-password"], "open-sesame");
+      },
+    );
   });
 
   await t.test("c64u facade operations stay covered behind networkPassword", async () => {
@@ -516,89 +514,136 @@ test("device: createFacade with config file", async (t) => {
       await mock.close();
     });
 
-    const oldEnv = process.env.C64BRIDGE_CONFIG;
-    const oldMode = process.env.C64_MODE;
-    process.env.C64BRIDGE_CONFIG = configPath;
-    delete process.env.C64_MODE;
+    await withConfigScenario(
+      {
+        envConfig: { c64u: { baseUrl: mock.baseUrl, networkPassword: "open-sesame" } },
+        repoConfig: null,
+        homeConfig: null,
+      },
+      async () => {
+        const { facade, selected } = await createFacade();
+        assert.equal(selected, "c64u");
+        assert.equal(await facade.ping(), true);
+        assert.ok(await facade.version());
+        assert.ok(await facade.info());
 
-    t.after(() => {
-      if (oldEnv !== undefined) {
-        process.env.C64BRIDGE_CONFIG = oldEnv;
-      } else {
-        delete process.env.C64BRIDGE_CONFIG;
-      }
-      if (oldMode !== undefined) {
-        process.env.C64_MODE = oldMode;
-      }
-    });
+        const before = await facade.readMemory(0x0400, 4);
+        assert.equal(before.length, 4);
 
-    fs.writeFileSync(configPath, JSON.stringify({
-      c64u: { baseUrl: mock.baseUrl, networkPassword: "open-sesame" },
-    }));
+        await facade.writeMemory(0x0400, Uint8Array.from([0x01, 0x02, 0x03, 0x04]));
+        const after = await facade.readMemory(0x0400, 4);
+        assert.deepEqual(Array.from(after), [0x01, 0x02, 0x03, 0x04]);
 
-    const { facade, selected } = await createFacade();
-    assert.equal(selected, "c64u");
-    assert.equal(await facade.ping(), true);
-    assert.ok(await facade.version());
-    assert.ok(await facade.info());
+        const runPrg = await facade.runPrg(Buffer.from([0x01, 0x08, 0x00, 0x00]));
+        assert.equal(runPrg.success, true);
+        assert.equal((await facade.sidplayFile("/tmp/test.sid", 2)).success, true);
+        assert.equal((await facade.sidplayAttachment(Buffer.from([1, 2, 3]), { songnr: 1, songlengths: Buffer.from([4, 5]) })).success, true);
+        assert.equal((await facade.modplayFile("/tmp/test.mod")).success, true);
+        assert.equal((await facade.pause()).success, true);
+        assert.equal((await facade.resume()).success, true);
+        assert.equal((await facade.reset()).success, true);
+        assert.equal((await facade.reboot()).success, true);
+        assert.equal((await facade.poweroff()).success, true);
+        assert.equal((await facade.menuButton()).success, true);
 
-    const before = await facade.readMemory(0x0400, 4);
-    assert.equal(before.length, 4);
+        const debugWrite = await facade.debugregWrite("CD");
+        assert.equal(debugWrite.success, true);
+        const debugRead = await facade.debugregRead();
+        assert.equal(debugRead.success, true);
+        assert.equal(debugRead.value?.toUpperCase(), "CD");
 
-    await facade.writeMemory(0x0400, Uint8Array.from([0x01, 0x02, 0x03, 0x04]));
-    const after = await facade.readMemory(0x0400, 4);
-    assert.deepEqual(Array.from(after), [0x01, 0x02, 0x03, 0x04]);
+        const drives = await facade.drivesList();
+        assert.ok(drives && typeof drives === "object");
+        assert.equal((await facade.driveOn("8")).success, true);
+        assert.equal((await facade.driveSetMode("8", "1571")).success, true);
+        assert.equal((await facade.driveMount("8", "/tmp/disk.d64", { type: "d64", mode: "readonly" })).success, true);
+        assert.equal((await facade.driveLoadRom("8", "/tmp/1541.rom")).success, true);
+        assert.equal((await facade.driveReset("8")).success, true);
+        assert.equal((await facade.driveRemove("8")).success, true);
+        assert.equal((await facade.driveOff("8")).success, true);
 
-    const runPrg = await facade.runPrg(Buffer.from([0x01, 0x08, 0x00, 0x00]));
-    assert.equal(runPrg.success, true);
-    assert.equal((await facade.sidplayFile("/tmp/test.sid", 2)).success, true);
-    assert.equal((await facade.sidplayAttachment(Buffer.from([1, 2, 3]), { songnr: 1, songlengths: Buffer.from([4, 5]) })).success, true);
-    assert.equal((await facade.modplayFile("/tmp/test.mod")).success, true);
-    assert.equal((await facade.pause()).success, true);
-    assert.equal((await facade.resume()).success, true);
-    assert.equal((await facade.reset()).success, true);
-    assert.equal((await facade.reboot()).success, true);
-    assert.equal((await facade.poweroff()).success, true);
-    assert.equal((await facade.menuButton()).success, true);
+        const configList = await facade.configsList();
+        assert.ok(configList && typeof configList === "object");
+        const configCategory = await facade.configGet("video");
+        assert.ok(configCategory && typeof configCategory === "object");
+        assert.equal((await facade.configSet("video", "palette", "colodore")).success, true);
+        assert.equal((await facade.configBatchUpdate({ audio: { volume: "10" } })).success, true);
+        assert.equal((await facade.configSaveToFlash()).success, true);
+        assert.equal((await facade.configLoadFromFlash()).success, true);
+        assert.equal((await facade.configResetToDefault()).success, true);
 
-    const debugWrite = await facade.debugregWrite("CD");
-    assert.equal(debugWrite.success, true);
-    const debugRead = await facade.debugregRead();
-    assert.equal(debugRead.success, true);
-    assert.equal(debugRead.value?.toUpperCase(), "CD");
+        const fileInfo = await facade.filesInfo("/tmp/demo.prg");
+        assert.ok(fileInfo && typeof fileInfo === "object");
+        assert.equal((await facade.filesCreateD64("/tmp/demo.d64", { tracks: 35, diskname: "DEMO" })).success, true);
+        assert.equal((await facade.filesCreateD71("/tmp/demo.d71", { diskname: "DEMO71" })).success, true);
+        assert.equal((await facade.filesCreateD81("/tmp/demo.d81", { diskname: "DEMO81" })).success, true);
+        assert.equal((await facade.filesCreateDnp("/tmp/demo.dnp", 160, { diskname: "DEMODNP" })).success, true);
 
-    const drives = await facade.drivesList();
-    assert.ok(drives && typeof drives === "object");
-    assert.equal((await facade.driveOn("8")).success, true);
-    assert.equal((await facade.driveSetMode("8", "1571")).success, true);
-    assert.equal((await facade.driveMount("8", "/tmp/disk.d64", { type: "d64", mode: "readonly" })).success, true);
-    assert.equal((await facade.driveLoadRom("8", "/tmp/1541.rom")).success, true);
-    assert.equal((await facade.driveReset("8")).success, true);
-    assert.equal((await facade.driveRemove("8")).success, true);
-    assert.equal((await facade.driveOff("8")).success, true);
+        assert.equal((await facade.streamStart("video", "127.0.0.1")).success, true);
+        assert.equal((await facade.streamStop("video")).success, true);
 
-    const configList = await facade.configsList();
-    assert.ok(configList && typeof configList === "object");
-    const configCategory = await facade.configGet("video");
-    assert.ok(configCategory && typeof configCategory === "object");
-    assert.equal((await facade.configSet("video", "palette", "colodore")).success, true);
-    assert.equal((await facade.configBatchUpdate({ audio: { volume: "10" } })).success, true);
-    assert.equal((await facade.configSaveToFlash()).success, true);
-    assert.equal((await facade.configLoadFromFlash()).success, true);
-    assert.equal((await facade.configResetToDefault()).success, true);
-
-    const fileInfo = await facade.filesInfo("/tmp/demo.prg");
-    assert.ok(fileInfo && typeof fileInfo === "object");
-    assert.equal((await facade.filesCreateD64("/tmp/demo.d64", { tracks: 35, diskname: "DEMO" })).success, true);
-    assert.equal((await facade.filesCreateD71("/tmp/demo.d71", { diskname: "DEMO71" })).success, true);
-    assert.equal((await facade.filesCreateD81("/tmp/demo.d81", { diskname: "DEMO81" })).success, true);
-    assert.equal((await facade.filesCreateDnp("/tmp/demo.dnp", 160, { diskname: "DEMODNP" })).success, true);
-
-    assert.equal((await facade.streamStart("video", "127.0.0.1")).success, true);
-    assert.equal((await facade.streamStop("video")).success, true);
-
-    assert.equal(mock.state.lastRequest.headers["x-password"], "open-sesame");
+        assert.equal(mock.state.lastRequest.headers["x-password"], "open-sesame");
+      },
+    );
   });
+});
+
+test("device: createFacade merges backend sections across config candidates", async () => {
+  await withConfigScenario(
+    {
+      repoConfig: { vice: { exe: "/usr/bin/x64sc" } },
+      homeConfig: null,
+    },
+    async () => {
+      const { facade, selected, reason } = await createFacade();
+      assert.equal(selected, "vice");
+      assert.equal(reason, "config only");
+      assert.equal(facade.type, "vice");
+    },
+  );
+
+  await withConfigScenario(
+    {
+      repoConfig: {},
+      homeConfig: { vice: { exe: "/usr/bin/x64sc" } },
+    },
+    async () => {
+      const { facade, selected, reason } = await createFacade();
+      assert.equal(selected, "vice");
+      assert.equal(reason, "config only");
+      assert.equal(facade.type, "vice");
+    },
+  );
+
+  await withConfigScenario(
+    {
+      repoConfig: { c64u: { host: "repo.local", port: 8081 } },
+      homeConfig: { vice: { host: "127.0.0.1", port: 6509 } },
+      mode: "vice",
+    },
+    async () => {
+      const { facade, selected, reason, details } = await createFacade();
+      assert.equal(selected, "vice");
+      assert.equal(reason, "env override");
+      assert.equal(facade.type, "vice");
+      assert.deepEqual(details, { host: "127.0.0.1", port: 6509 });
+    },
+  );
+
+  await withConfigScenario(
+    {
+      envConfig: { c64u: { host: "env.local", port: 8082 } },
+      repoConfig: { c64u: { host: "repo.local", port: 8081 }, vice: { exe: "/usr/bin/x64sc" } },
+      homeConfig: { vice: { host: "127.0.0.1", port: 6510 } },
+    },
+    async () => {
+      const { facade, selected, reason } = await createFacade();
+      assert.equal(selected, "c64u");
+      assert.equal(reason, "both defined (prefer c64u)");
+      assert.equal(facade.type, "c64u");
+      assert.equal(facade.getBaseUrl(), "http://env.local:8082");
+    },
+  );
 });
 
 test("device: createFacade with env overrides", async (t) => {
@@ -639,37 +684,145 @@ test("device: createFacade with env overrides", async (t) => {
   });
 });
 
-test("device: createFacade fallback behavior", async (t) => {
-  await t.test("falls back to vice or c64u when no config", async () => {
-    const oldEnv = process.env.C64BRIDGE_CONFIG;
-    const oldMode = process.env.C64_MODE;
-    const oldHome = process.env.HOME;
-    
-    // Point to non-existent config
-    process.env.C64BRIDGE_CONFIG = "/tmp/nonexistent-config.json";
-    delete process.env.C64_MODE;
-    process.env.HOME = "/tmp/nonexistent-home";
-    
-    t.after(() => {
-      if (oldEnv !== undefined) {
-        process.env.C64BRIDGE_CONFIG = oldEnv;
-      } else {
-        delete process.env.C64BRIDGE_CONFIG;
-      }
-      if (oldMode !== undefined) {
-        process.env.C64_MODE = oldMode;
-      }
-      if (oldHome !== undefined) {
-        process.env.HOME = oldHome;
-      } else {
-        delete process.env.HOME;
-      }
+test("device: C64uBackend env overrides", async (t) => {
+  await t.test("env vars alone configure host, port, and password", async () => {
+    const mock = await startMockC64Server({ networkPassword: "env-secret" });
+    const mockPort = new URL(mock.baseUrl).port;
+    t.after(async () => {
+      await mock.close();
     });
 
-    const { facade, selected } = await createFacade();
-    // Should select either vice (fallback) or c64u (if reachable)
-    assert.ok(selected === "vice" || selected === "c64u");
-    assert.ok(facade.type === "vice" || facade.type === "c64u");
+    await withConfigScenario(
+      {
+        envConfig: null,
+        repoConfig: null,
+        homeConfig: null,
+        mode: "c64u",
+      },
+      async () => {
+        await withEnv({
+          C64U_HOST: "127.0.0.1",
+          C64U_PORT: mockPort,
+          C64U_PASSWORD: "env-secret",
+        }, async () => {
+          const { facade, selected, reason } = await createFacade();
+
+          assert.equal(selected, "c64u");
+          assert.equal(reason, "env override");
+          assert.equal(facade.type, "c64u");
+          assert.equal(facade.getBaseUrl(), mock.baseUrl);
+          assert.equal(await facade.ping(), true);
+          await facade.info();
+          assert.equal(mock.state.lastRequest.headers["x-password"], "env-secret");
+        });
+      },
+    );
+  });
+
+  await t.test("config alone still configures c64u backend", async () => {
+    const mock = await startMockC64Server({ networkPassword: "config-secret" });
+    t.after(async () => {
+      await mock.close();
+    });
+
+    await withConfigScenario(
+      {
+        envConfig: { c64u: { baseUrl: mock.baseUrl, networkPassword: "config-secret" } },
+        repoConfig: null,
+        homeConfig: null,
+        mode: "c64u",
+      },
+      async () => {
+        await withEnv({
+          C64U_HOST: undefined,
+          C64U_PORT: undefined,
+          C64U_PASSWORD: undefined,
+        }, async () => {
+          const { facade } = await createFacade();
+
+          assert.equal(facade.type, "c64u");
+          assert.equal(facade.getBaseUrl(), mock.baseUrl);
+          assert.equal(await facade.ping(), true);
+          await facade.info();
+          assert.equal(mock.state.lastRequest.headers["x-password"], "config-secret");
+        });
+      },
+    );
+  });
+
+  await t.test("env vars beat config values", async () => {
+    const configMock = await startMockC64Server({ networkPassword: "config-secret" });
+    const envMock = await startMockC64Server({ networkPassword: "env-secret" });
+    const envMockPort = new URL(envMock.baseUrl).port;
+    t.after(async () => {
+      await configMock.close();
+      await envMock.close();
+    });
+
+    await withConfigScenario(
+      {
+        envConfig: { c64u: { baseUrl: configMock.baseUrl, networkPassword: "config-secret" } },
+        repoConfig: null,
+        homeConfig: null,
+        mode: "c64u",
+      },
+      async () => {
+        await withEnv({
+          C64U_HOST: "127.0.0.1",
+          C64U_PORT: envMockPort,
+          C64U_PASSWORD: "env-secret",
+        }, async () => {
+          const { facade } = await createFacade();
+
+          assert.equal(facade.type, "c64u");
+          assert.equal(facade.getBaseUrl(), envMock.baseUrl);
+          assert.equal(await facade.ping(), true);
+          await facade.info();
+          assert.equal(envMock.state.lastRequest.headers["x-password"], "env-secret");
+          assert.equal(configMock.state.lastRequest, null);
+        });
+      },
+    );
+  });
+
+  await t.test("defaults apply when env vars and config are absent", async () => {
+    await withConfigScenario(
+      {
+        envConfig: null,
+        repoConfig: null,
+        homeConfig: null,
+        mode: "c64u",
+      },
+      async () => {
+        await withEnv({
+          C64U_HOST: undefined,
+          C64U_PORT: undefined,
+          C64U_PASSWORD: undefined,
+        }, async () => {
+          const { facade } = await createFacade();
+
+          assert.equal(facade.type, "c64u");
+          assert.equal(facade.getBaseUrl(), "http://c64u");
+        });
+      },
+    );
+  });
+});
+
+test("device: createFacade fallback behavior", async (t) => {
+  await t.test("falls back to vice or c64u when no config", async () => {
+    await withConfigScenario(
+      {
+        envConfig: null,
+        repoConfig: null,
+        homeConfig: null,
+      },
+      async () => {
+        const { facade, selected } = await createFacade();
+        assert.ok(selected === "vice" || selected === "c64u");
+        assert.ok(facade.type === "vice" || facade.type === "c64u");
+      },
+    );
   });
 
   await t.test("preferred baseUrl forces c64u backend and forwards password", async () => {
@@ -703,66 +856,41 @@ test("device: createFacade fallback behavior", async (t) => {
       await server.stop();
     });
 
-    const oldEnv = process.env.C64BRIDGE_CONFIG;
-    const oldMode = process.env.C64_MODE;
-    const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), "vice-env-config-"));
-    const cfgPath = path.join(cfgDir, "c64bridge.json");
-    fs.writeFileSync(cfgPath, JSON.stringify({ vice: { host: "127.0.0.1", port: server.port } }), "utf8");
-    process.env.C64BRIDGE_CONFIG = cfgPath;
-    process.env.C64_MODE = "vice";
+    await withConfigScenario(
+      {
+        envConfig: { vice: { host: "127.0.0.1", port: server.port } },
+        repoConfig: null,
+        homeConfig: null,
+        mode: "vice",
+      },
+      async () => {
+        const { facade, selected, reason, details } = await createFacade();
 
-    t.after(() => {
-      fs.rmSync(cfgDir, { recursive: true, force: true });
-      if (oldEnv !== undefined) {
-        process.env.C64BRIDGE_CONFIG = oldEnv;
-      } else {
-        delete process.env.C64BRIDGE_CONFIG;
-      }
-      if (oldMode !== undefined) {
-        process.env.C64_MODE = oldMode;
-      } else {
-        delete process.env.C64_MODE;
-      }
-    });
-
-    const { facade, selected, reason, details } = await createFacade();
-
-    assert.equal(selected, "vice");
-    assert.equal(reason, "env override");
-    assert.equal(facade.type, "vice");
-    assert.deepEqual(details, { host: "127.0.0.1", port: server.port });
-    assert.equal(await facade.ping(), true);
+        assert.equal(selected, "vice");
+        assert.equal(reason, "env override");
+        assert.equal(facade.type, "vice");
+        assert.deepEqual(details, { host: "127.0.0.1", port: server.port });
+        assert.equal(await facade.ping(), true);
+      },
+    );
   });
 
   await t.test("config host strings with embedded ports resolve to normalized base URLs", async () => {
-    const oldEnv = process.env.C64BRIDGE_CONFIG;
-    const oldMode = process.env.C64_MODE;
-    const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), "c64u-host-config-"));
-    const cfgPath = path.join(cfgDir, "c64bridge.json");
-    fs.writeFileSync(cfgPath, JSON.stringify({ c64u: { host: "demo.local:8081" } }), "utf8");
-    process.env.C64BRIDGE_CONFIG = cfgPath;
-    delete process.env.C64_MODE;
+    await withConfigScenario(
+      {
+        envConfig: { c64u: { host: "demo.local:8081" } },
+        repoConfig: null,
+        homeConfig: null,
+      },
+      async () => {
+        const { facade, selected, reason } = await createFacade();
 
-    t.after(() => {
-      fs.rmSync(cfgDir, { recursive: true, force: true });
-      if (oldEnv !== undefined) {
-        process.env.C64BRIDGE_CONFIG = oldEnv;
-      } else {
-        delete process.env.C64BRIDGE_CONFIG;
-      }
-      if (oldMode !== undefined) {
-        process.env.C64_MODE = oldMode;
-      } else {
-        delete process.env.C64_MODE;
-      }
-    });
-
-    const { facade, selected, reason } = await createFacade();
-
-    assert.equal(selected, "c64u");
-    assert.equal(reason, "config only");
-    assert.equal(facade.type, "c64u");
-    assert.equal(facade.getBaseUrl(), "http://demo.local:8081");
+        assert.equal(selected, "c64u");
+        assert.equal(reason, "config only");
+        assert.equal(facade.type, "c64u");
+        assert.equal(facade.getBaseUrl(), "http://demo.local:8081");
+      },
+    );
   });
 });
 

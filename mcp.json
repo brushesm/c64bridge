@@ -39,6 +39,18 @@
       "description": "Select active backend (c64u for Ultimate hardware, vice for emulator)",
       "default": "c64u"
     },
+    "C64U_HOST": {
+      "description": "Override the C64 Ultimate host name or IP address",
+      "default": "c64u"
+    },
+    "C64U_PORT": {
+      "description": "Override the C64 Ultimate REST port",
+      "default": "80"
+    },
+    "C64U_PASSWORD": {
+      "description": "Override the C64 Ultimate network password sent as X-Password",
+      "default": ""
+    },
     "RAG_EMBEDDINGS_DIR": {
       "description": "Directory containing RAG embedding JSON files",
       "default": "data"

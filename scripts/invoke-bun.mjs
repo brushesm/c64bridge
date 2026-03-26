@@ -3,13 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
-
-if (process.argv.length < 3) {
-  console.error("Usage: node scripts/invoke-bun.mjs <command> [args...]");
-  process.exit(1);
-}
-
-const bunArgs = process.argv.slice(2);
+import { fileURLToPath } from "node:url";
 
 function resolveBunExecutable() {
   const candidates = [
@@ -41,18 +35,70 @@ function resolveBunExecutable() {
   return "bun";
 }
 
-const bunExecutable = resolveBunExecutable();
-const child = spawn(bunExecutable, bunArgs, {
-  stdio: "inherit",
-  env: {
-    ...process.env,
-  },
-});
+const BUN_SUBCOMMANDS = new Set([
+  "test",
+  "run",
+  "x",
+  "install",
+  "add",
+  "remove",
+  "update",
+  "pm",
+  "build",
+  "create",
+  "exec",
+  "repl",
+  "help",
+]);
 
-child.on("exit", (code, signal) => {
-  if (signal) {
-    process.kill(process.pid, signal);
-    return;
+function looksLikeScriptPath(value) {
+  return typeof value === "string"
+    && value.length > 0
+    && !value.startsWith("-")
+    && /\.(?:[cm]?[jt]s|tsx?)$/i.test(value);
+}
+
+export function buildBunArgs(args) {
+  const [firstArg, ...rest] = args;
+  if (!firstArg) {
+    return [];
   }
-  process.exit(code ?? 1);
-});
+
+  if (BUN_SUBCOMMANDS.has(firstArg) || !looksLikeScriptPath(firstArg)) {
+    return args;
+  }
+
+  return ["run", firstArg, ...rest];
+}
+
+function isMainModule(moduleUrl) {
+  const entry = process.argv[1];
+  if (!entry) {
+    return false;
+  }
+  return fileURLToPath(moduleUrl) === path.resolve(entry);
+}
+
+if (isMainModule(import.meta.url)) {
+  if (process.argv.length < 3) {
+    console.error("Usage: node scripts/invoke-bun.mjs <command> [args...]");
+    process.exit(1);
+  }
+
+  const rawArgs = process.argv.slice(2);
+  const bunExecutable = resolveBunExecutable();
+  const child = spawn(bunExecutable, buildBunArgs(rawArgs), {
+    stdio: "inherit",
+    env: {
+      ...process.env,
+    },
+  });
+
+  child.on("exit", (code, signal) => {
+    if (signal) {
+      process.kill(process.pid, signal);
+      return;
+    }
+    process.exit(code ?? 1);
+  });
+}

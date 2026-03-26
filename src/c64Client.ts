@@ -13,7 +13,7 @@ import { basicToPrg } from "./basicConverter.js";
 import { assemblyToPrg } from "./assemblyConverter.js";
 import { screenCodesToAscii } from "./petscii.js";
 import { resolveAddressSymbol } from "./knowledge.js";
-import { C64Facade, createFacade, type DeviceType, ViceBackend } from "./device.js";
+import { C64Facade, createAllFacades, createFacade, type DeviceType, ViceBackend } from "./device.js";
 import { Api, HttpClient } from "../generated/c64/index.js";
 import { createLoggingHttpClient } from "./loggingHttpClient.js";
 import type {
@@ -129,7 +129,10 @@ export class C64Client {
   private readonly baseUrl: string;
   private readonly http: HttpClient<unknown>;
   private readonly api: Api<unknown>;
-  private readonly facadePromise: Promise<C64Facade>;
+  private readonly allFacades = new Map<DeviceType, Promise<C64Facade>>();
+  private readonly initPromise: Promise<void>;
+  private activeType: DeviceType = "c64u";
+  private facadePromise: Promise<C64Facade>;
 
   constructor(baseUrl: string, options: C64ClientOptions = {}) {
     this.baseUrl = baseUrl;
@@ -137,15 +140,27 @@ export class C64Client {
     this.http = createLoggingHttpClient({ baseURL: baseUrl, timeout: 10_000, headers });
     this.api = new Api(this.http);
     const forceC64uFacade = options.forceC64uFacade ?? true;
-    this.facadePromise = createFacade(
-      undefined,
-      forceC64uFacade
-        ? {
-            preferredC64uBaseUrl: baseUrl,
-            preferredC64uNetworkPassword: options.networkPassword,
-          }
-        : undefined,
-    ).then((sel) => sel.facade);
+    if (forceC64uFacade) {
+      this.facadePromise = createFacade(undefined, {
+        preferredC64uBaseUrl: baseUrl,
+        preferredC64uNetworkPassword: options.networkPassword,
+      }).then((sel) => sel.facade);
+      this.allFacades.set("c64u", this.facadePromise);
+      this.initPromise = Promise.resolve();
+      return;
+    }
+
+    const allFacadesPromise = createAllFacades();
+    this.facadePromise = allFacadesPromise.then(({ primary }) => primary.facade);
+    this.initPromise = allFacadesPromise.then(({ primary, secondary, secondaryType }) => {
+      const primaryPromise = Promise.resolve(primary.facade);
+      this.activeType = primary.selected;
+      this.facadePromise = primaryPromise;
+      this.allFacades.set(primary.selected, primaryPromise);
+      if (secondary && secondaryType) {
+        this.allFacades.set(secondaryType, Promise.resolve(secondary));
+      }
+    });
   }
 
   private async requireViceBackend(): Promise<ViceBackend> {
@@ -157,7 +172,26 @@ export class C64Client {
   }
 
   async getBackendType(): Promise<DeviceType> {
-    return (await this.facadePromise).type;
+    return this.getActiveBackendType();
+  }
+
+  async getActiveBackendType(): Promise<DeviceType> {
+    await this.initPromise;
+    return this.activeType;
+  }
+
+  getAvailableBackends(): DeviceType[] {
+    return Array.from(this.allFacades.keys());
+  }
+
+  switchBackend(type: DeviceType): void {
+    const nextFacade = this.allFacades.get(type);
+    if (!nextFacade) {
+      throw new Error(`Backend '${type}' is not configured`);
+    }
+    // Platform state is owned by the caller so tool-level flows can update global routing explicitly.
+    this.facadePromise = nextFacade;
+    this.activeType = type;
   }
 
   private async shouldUseC64uMockBypass(): Promise<boolean> {
@@ -717,13 +751,13 @@ export class C64Client {
   // --- Additional API wrappers to cover full REST surface ---
 
   async version(): Promise<unknown> {
-    const res = await this.api.v1.versionList();
-    return res.data;
+    const facade = await this.facadePromise;
+    return facade.version();
   }
 
   async info(): Promise<unknown> {
-    const res = await this.api.v1.infoList();
-    return res.data;
+    const facade = await this.facadePromise;
+    return facade.info();
   }
 
   async pause(): Promise<RunBasicResult> {
@@ -838,11 +872,6 @@ export class C64Client {
 
   async captureFrames(options?: { readonly count?: number }): Promise<FrameCaptureResult> {
     const requestedCount = Math.max(1, Math.min(32, Math.trunc(options?.count ?? 1)));
-    const activeMode = (process.env.C64_MODE ?? "").toLowerCase().trim();
-    if (activeMode === "vice") {
-      return this.captureViceFrames(requestedCount);
-    }
-
     const facade = await this.facadePromise;
     if (facade.type === "vice") {
       return this.captureViceFrames(requestedCount);
@@ -1015,15 +1044,7 @@ export class C64Client {
   }
 
   private async captureViceFrames(count: number): Promise<FrameCaptureResult> {
-    const facade = await this.facadePromise;
-    const viceFacade = facade.type === "vice"
-      ? facade as ViceBackend
-      : await createFacade(undefined).then((selection) => {
-          if (selection.facade.type !== "vice") {
-            throw new Error("VICE frame capture requested while the active backend is not VICE");
-          }
-          return selection.facade as ViceBackend;
-        });
+    const viceFacade = await this.requireViceBackend();
 
     const frames: CapturedFrame[] = [];
     for (let index = 0; index < count; index += 1) {
