@@ -1,0 +1,50 @@
+{
+  "prompts": {
+    "c64u": "c64u: write a small BASIC program that clears the screen and prints HELLO C64U",
+    "vice": "vice: write a small BASIC program that clears the screen and prints HELLO VICE"
+  },
+  "ocr": {
+    "c64u": {
+      "expected": "HELLO C64U",
+      "recognized": "HELLO C64U",
+      "origin": {
+        "x": 32,
+        "y": 35
+      },
+      "score": 0,
+      "characterScores": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "vice": {
+      "expected": "HELLO VICE",
+      "recognized": "HELLO VICE",
+      "origin": {
+        "x": 32,
+        "y": 35
+      },
+      "score": 0,
+      "characterScores": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  }
+}

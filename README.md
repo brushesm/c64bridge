@@ -1,6 +1,6 @@
-![Logo](./doc/img/logo.png)
-
 # C64 Bridge
+
+![Logo](./doc/img/logo.png)
 
 Your AI Command Bridge for the Commodore 64.
 
@@ -10,100 +10,171 @@ Your AI Command Bridge for the Commodore 64.
 [![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-forestgreen)](doc/developer.md)
 
+C64 Bridge is a Model Context Protocol ([MCP](https://modelcontextprotocol.io/docs/getting-started/intro)) server for controlling a real Commodore 64 Ultimate or Ultimate 64, and for switching into a VICE emulator session when you want emulator-backed workflows in the same MCP conversation.
+
+It is built on the official TypeScript `@modelcontextprotocol/sdk` and supports both `stdio` for local AI integration and an optional HTTP bridge for manual inspection.
+
+## Contents
+
+- [Overview](#overview)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+  - [Configuration File Order](#configuration-file-order)
+  - [Configuration Merge Rules](#configuration-merge-rules)
+  - [Backend Configuration: C64 Ultimate](#backend-configuration-c64-ultimate)
+  - [Backend Configuration: VICE](#backend-configuration-vice)
+  - [Runtime Backend Switching](#runtime-backend-switching)
+- [VS Code MCP Setup](#vs-code-mcp-setup)
+  - [Enable the C64 Agent](#enable-the-c64-agent)
+  - [Optional Overrides](#optional-overrides)
+  - [Environment Variables in MCP Client Configs](#environment-variables-in-mcp-client-configs)
+  - [Runtime Environment Variable Reference](#runtime-environment-variable-reference)
+- [Example Workflow](#example-workflow)
+- [HTTP Invocation](#http-invocation)
+- [Build and Test](#build-and-test)
+- [Documentation](#documentation)
+- [Static MCP Interface](#static-mcp-interface)
+- [MCP API Reference](#mcp-api-reference)
+
 ## Overview
 
-C64 Bridge is a Model Context Protocol ([MCP](https://modelcontextprotocol.io/docs/getting-started/intro)) server that drives a real Commodore 64 Ultimate or Ultimate 64 over their REST APIs.
+C64 Bridge gives an AI agent one place to drive program execution, memory access, graphics, sound, storage, printer workflows, and knowledge retrieval for a Commodore 64 environment.
 
-It is based on the official TypeScript `@modelcontextprotocol/sdk` and supports both **stdio** (for local AI integration) and **HTTP** (for remote access by other applications).
+The core workflow is simple:
+
+1. Start the MCP server.
+2. Point it at C64 Ultimate hardware, VICE, or both.
+3. Let the client call grouped MCP tools such as `c64_program`, `c64_memory`, `c64_graphics`, and `c64_sound`.
+4. Switch backends at runtime with `c64_select_backend` when both are configured.
 
 ## Features
 
-- **Program runners** for BASIC, 6510 assembly, and PRG/CRT  
-- **Full memory access** — read/write operations and text monitoring  
-- **System integration** covering drives, files, and printers  
-- **SID audio tools** for composition, playback, and analysis  
-- **Built-in knowledge base** for smarter AI prompting using local examples and docs  
-- **Multiple backends**: hardware **C64 Ultimate** (primary) and experimental **VICE** runner  
+- Program runners for BASIC, 6510 assembly, and PRG or CRT execution
+- Full memory access, including raw reads and writes plus screen polling
+- System integration for drives, files, printers, and task orchestration
+- SID music tools for playback, composition, generation, and verification
+- Built-in knowledge resources and prompts for safer LLM workflows
+- Mixed runtime support for hardware `c64u` and emulator `vice`
 
 ## Quick Start
 
-1) Install Node.js 24+ and npm
+If you want the shortest path, do these four things:
 
-- Linux (Ubuntu/Debian)
-  - Recommended:
+1. Install Node.js 24+ and npm.
+2. Start the server.
+3. Add backend configuration for C64 Ultimate, VICE, or both.
+4. Connect from VS Code or another MCP client.
 
-    ```bash
-    sudo apt update
-    sudo apt install -y curl ca-certificates
-    curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
-    sudo apt install -y nodejs
-    ```
+### 1. Install Node.js 24+ and npm
 
-  - Fallback (may be older): `sudo apt install -y nodejs npm`
+Linux (Ubuntu or Debian):
 
-- macOS
+Recommended:
 
-  ```bash
-  brew install node@24
-  brew link --overwrite node@24
-  ```
+```bash
+sudo apt update
+sudo apt install -y curl ca-certificates
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+sudo apt install -y nodejs
+```
 
-- Windows
+Fallback:
 
-  ```powershell
-  # winget
-  winget install OpenJS.NodeJS.LTS
-  # or Chocolatey
-  choco install nodejs-lts -y
-  ```
+```bash
+sudo apt install -y nodejs npm
+```
 
-Verify: `node --version` → v24.x
+macOS:
 
-2) Run the server (choose one)
+```bash
+brew install node@24
+brew link --overwrite node@24
+```
 
-- npx (zero setup)
+Windows:
 
-  ```bash
-  npx -y c64bridge@latest
-  ```
+```powershell
+# winget
+winget install OpenJS.NodeJS.LTS
+# or Chocolatey
+choco install nodejs-lts -y
+```
 
-- npm (project‑local)
+Verify the installation:
 
-  ```bash
-  mkdir -p ~/c64bridge && cd ~/c64bridge
-  npm init -y
-  npm install c64bridge
-  node ./node_modules/c64bridge/dist/index.js
-  ```
+```bash
+node --version
+```
 
-- From source (contributing/testing)
+Expected result: `v24.x`
 
-  ```bash
-  git clone https://github.com/chrisgleissner/c64bridge.git
-  cd c64bridge
-  ./build install
-  npm start
-  ```
+### 2. Start the Server
 
-On start, the server probes your target (REST + zero‑page read) and prints diagnostics before announcing that it is running on stdio.
+Use one of the following entry points.
+
+Run from `npx` with zero setup:
+
+```bash
+npx -y c64bridge@latest
+```
+
+Run from a local npm install:
+
+```bash
+mkdir -p ~/c64bridge && cd ~/c64bridge
+npm init -y
+npm install c64bridge
+node ./node_modules/c64bridge/dist/index.js
+```
+
+Run from source for development or testing:
+
+```bash
+git clone https://github.com/chrisgleissner/c64bridge.git
+cd c64bridge
+./build install
+npm start
+```
+
+On startup, the server probes the selected target, performs connectivity checks, and then announces that it is running on stdio.
+
+### 3. Add Backend Configuration
+
+The server can run against:
+
+- only C64 Ultimate hardware
+- only VICE
+- both backends in one session, with runtime switching
+
+The detailed lookup order, merge rules, backend examples, and override model are in the [Configuration](#configuration) section below.
+
+### 4. Connect from an MCP Client
+
+If you use VS Code, follow the [VS Code MCP Setup](#vs-code-mcp-setup) section below.
+
+If you use another MCP client, point it at the `stdio` server entry point and pass any required environment variables exactly as documented in this README and in [mcp.json](./mcp.json).
 
 ## Configuration
 
+### Configuration File Order
+
 The server reads configuration in this order:
 
-1. `C64BRIDGE_CONFIG` environment variable containing the path of the config file
+1. `C64BRIDGE_CONFIG`, if it points to a config file
 2. `.c64bridge.json` in the project root
-3. `~/.c64bridge.json` in your home directory
+3. `~/.c64bridge.json` in the home directory
 
-Configuration is merged per backend section while scanning those files in order:
+### Configuration Merge Rules
 
-- The first file that contains a `c64u` section supplies the C64 Ultimate config.
-- The first file that contains a `vice` section supplies the VICE config.
-- This means a project-local `.c64bridge.json` can provide `c64u` while `~/.c64bridge.json` provides `vice`, and both backends will be available at runtime.
+Configuration is merged per backend section while scanning those files in order.
 
-### C64 Ultimate
+- The first file that contains a `c64u` section supplies the C64 Ultimate configuration.
+- The first file that contains a `vice` section supplies the VICE configuration.
+- This allows a project-local `.c64bridge.json` to define `c64u` while `~/.c64bridge.json` defines `vice`, with both backends available at runtime.
 
-Use this for a C64 Ultimate:
+### Backend Configuration: C64 Ultimate
+
+Use this for a C64 Ultimate or Ultimate 64:
 
 ```json
 {
@@ -115,13 +186,13 @@ Use this for a C64 Ultimate:
 }
 ```
 
-- If no file is found, it defaults to `c64u:80` and no network password.
-- A `networkPassword` is only required if you specified one in the C64 Ultimate menu under `Network Settings`.
-- The `C64U_HOST`, `C64U_PORT`, and `C64U_PASSWORD` environment variables override the configured host, port, and network password.
+- If no file is found, the default target is `c64u:80` with no network password.
+- `networkPassword` is only needed when you enabled a password in the C64 Ultimate network settings.
+- `C64U_HOST`, `C64U_PORT`, and `C64U_PASSWORD` override the configured host, port, and network password.
 
-### VICE
+### Backend Configuration: VICE
 
-Use this for VICE:
+Use this for managed VICE launches:
 
 ```json
 {
@@ -133,24 +204,41 @@ Use this for VICE:
 ```
 
 - `directory` is optional. When omitted, C64 Bridge auto-detects a VICE resource directory by looking for the standard C64 ROM set near the emulator binary and in common system locations.
-- `VICE_DIRECTORY`, `VICE_HOST`, `VICE_PORT`, `VICE_VISIBLE`, `VICE_WARP`, and `VICE_ARGS` can override managed VICE startup without editing config files.
+- `VICE_BINARY`, `VICE_DIRECTORY`, `VICE_HOST`, `VICE_PORT`, `VICE_VISIBLE`, `VICE_WARP`, and `VICE_ARGS` override managed VICE startup without editing config files.
+- If no explicit binary is configured, the runtime prefers `/usr/local/bin/x64sc` when present, then falls back to `x64sc` or `x64` on `PATH` so the same setup remains portable across operating systems.
 
 > [!NOTE]
-> VICE supports only the operations marked with a VICE checkmark in the [MCP API Reference](#mcp-api-reference). All others return `unsupported_platform`.
+> VICE supports only the operations marked with a VICE checkmark in the [MCP API Reference](#mcp-api-reference). Unsupported operations return `unsupported_platform`.
 
 ### Runtime Backend Switching
 
-When both `c64u` and `vice` are configured, C64 Bridge starts with one active backend and keeps the other ready for runtime switching.
+When both `c64u` and `vice` are configured, C64 Bridge starts with one active backend and keeps the other available for runtime switching.
 
-- `C64_MODE` still chooses the initial backend (`c64u` or `vice`).
-- `c64_select_backend` switches between configured backends without restarting the MCP server.
-- `c64://platform/status` reports both the active backend and the full configured backend set.
-- To request a backend explicitly in chat, say things like `use vice`, `vice: run this program`, `use c64u`, or `run this on the real machine`.
-- In VS Code, the `C64` agent can route those requests directly; include the backend preference in the same prompt when you want to force emulator versus hardware execution.
+- `C64_MODE` chooses the initial backend: `c64u` or `vice`
+- `c64_select_backend` switches backends without restarting the MCP server
+- `c64://platform/status` reports the active backend and the full configured backend set
+- In prompts, say things like `use vice`, `vice: run this program`, `use c64u`, or `run this on the real machine`
+- In VS Code, include the backend preference in the same prompt when you want to force emulator versus hardware execution
+
+Prompt illustration:
+
+```text
+c64u: write a small BASIC program that clears the screen and prints HELLO C64U
+vice: write a small BASIC program that clears the screen and prints HELLO VICE
+```
+
+The screenshots below were captured from actual backend bitmap responses after those prompts ran, using the same `c64_graphics` `capture_frame` MCP tool on both backends. The C64U implementation captures streamed video frames, while the VICE implementation captures and normalizes the emulator display frame. Both images were then verified optically against the expected text with the C64 character generator, and both matched exactly.
+
+| Backend | Screenshot |
+| --- | --- |
+| C64 Ultimate | ![C64 Ultimate backend switch example](doc/img/backend-switch/hello-c64u.png) |
+| VICE | ![VICE backend switch example](doc/img/backend-switch/hello-vice.png) |
 
 ## VS Code MCP Setup
 
-If this repository is checked out locally, simply open the prepared [.vscode/mcp.json](./.vscode/mcp.json). Otherwise, put the following text in your `.vscode/mcp.json`:
+If this repository is checked out locally, open the prepared [.vscode/mcp.json](./.vscode/mcp.json).
+
+Otherwise, put the following into your own `.vscode/mcp.json`:
 
 ```json
 {
@@ -166,19 +254,19 @@ If this repository is checked out locally, simply open the prepared [.vscode/mcp
 }
 ```
 
-Then click the "Start" icon that appears above the `c64bridge` server entry.
+Then click the start button shown above the `c64bridge` entry.
 
-Your C64 Bridge MCP server should now be running:
+Your MCP server should now be running:
 
 ![VS Code Started MCP server](./doc/img/vscode/vscode-started-mcp-server.png)
 
 For more details, see the official [VS Code MCP Server documentation](https://code.visualstudio.com/docs/copilot/customization/mcp-servers).
 
-### Enable The C64 Agent
+### Enable the C64 Agent
 
-After the MCP server is running, switch to the `C64` agent in VS Code.
+After the server is running, switch to the `C64` agent in VS Code.
 
-This agent is useful because it is preconfigured for Commodore 64 tasks. It steers Copilot toward `c64bridge` workflows for BASIC, 6502 assembly, SID audio, VIC-II graphics, memory inspection, disk operations, printing, streaming, and device control.
+This agent is preconfigured for Commodore 64 work. It steers Copilot toward `c64bridge` workflows for BASIC, 6502 assembly, SID audio, VIC-II graphics, memory inspection, disk operations, printing, streaming, and device control.
 
 ![VS Code C64 agent](./doc/img/vscode/vscode-copilot-c64-agent.png)
 
@@ -208,29 +296,29 @@ You can add `env` entries in `.vscode/mcp.json` to select a config file, overrid
 }
 ```
 
-- `C64BRIDGE_CONFIG` points to a specific config file.
-- `C64U_HOST`, `C64U_PORT`, and `C64U_PASSWORD` override the C64 Ultimate connection from VS Code without editing config files.
-- `C64_MODE` forces `c64u` or `vice`.
-- `LOG_LEVEL=debug` enables verbose logging.
+- `C64BRIDGE_CONFIG` points to a specific config file
+- `C64U_HOST`, `C64U_PORT`, and `C64U_PASSWORD` override the C64 Ultimate connection without editing config files
+- `C64_MODE` forces the initial backend to `c64u` or `vice`
+- `LOG_LEVEL=debug` enables verbose logging
 
-### Environment Variables In MCP Client Configs
+### Environment Variables in MCP Client Configs
 
 Every runtime environment variable documented in the root [mcp.json](./mcp.json) can be supplied by your MCP client configuration, including `.vscode/mcp.json` under `servers.c64bridge.env`.
 
-When an environment variable maps to a JSON config field, the override order is always the same:
+When an environment variable maps to a JSON config field, the override order is always:
 
-1. The explicit environment variable from your MCP client config or shell.
-2. The merged JSON config section loaded from `C64BRIDGE_CONFIG`, the repo `.c64bridge.json`, then `~/.c64bridge.json`.
-3. The built-in default compiled into the server.
+1. the explicit environment variable from your MCP client config or shell
+2. the merged JSON config section loaded from `C64BRIDGE_CONFIG`, the repo `.c64bridge.json`, then `~/.c64bridge.json`
+3. the built-in default compiled into the server
 
-When an environment variable has no JSON config equivalent, the order is simply:
+When an environment variable has no JSON config equivalent, the order is:
 
-1. The explicit environment variable from your MCP client config or shell.
-2. The built-in default.
+1. the explicit environment variable from your MCP client config or shell
+2. the built-in default
 
-That rule applies uniformly across the documented runtime env vars below.
+That rule applies uniformly across the documented runtime environment variables below.
 
-Example: visible VICE with a specific ROM/resource directory, plus a hardware fallback that can still be selected instantly at runtime:
+Example: visible VICE with a specific ROM or resource directory, plus a hardware fallback that can still be selected instantly at runtime:
 
 ```json
 {
@@ -253,7 +341,7 @@ Example: visible VICE with a specific ROM/resource directory, plus a hardware fa
 }
 ```
 
-Example: keep JSON config files for backend endpoints, but override only diagnostics, polling, and RAG behavior from VS Code:
+Example: keep JSON config files for backend endpoints, but override diagnostics, polling, and RAG behavior from VS Code:
 
 ```json
 {
@@ -354,9 +442,9 @@ Every runtime environment variable documented in `mcp.json` can be set in your M
 
 <!-- AUTO-GENERATED:ENV-VARS-END -->
 
-## Example
+## Example Workflow
 
-Compose a children’s song with ChatGPT + VS Code:
+Compose a children’s song with ChatGPT and VS Code:
 
 ![duck song](./doc/img/prompts/duck_song.png)
 
@@ -364,10 +452,17 @@ Then render PETSCII art for it:
 
 ![duck petscii](./doc/img/prompts/duck_petscii.png)
 
+This is representative of the intended workflow:
+
+1. Ask the MCP client to generate or refine C64-oriented content.
+2. Use grouped tools such as `c64_program`, `c64_graphics`, and `c64_sound` to execute it.
+3. Verify the result via screen reads, frame capture, memory inspection, or audio analysis.
+
 ## HTTP Invocation
 
-- Preferred transport is `stdio`. The HTTP bridge is disabled by default; enable it only for manual testing
-- These curl commands are illustrative to show what happens under the hood when tools run.
+- Preferred transport is `stdio`.
+- The HTTP bridge is disabled by default and is intended only for manual testing.
+- The following curl commands are illustrative so you can see what grouped MCP calls look like over HTTP.
 
 ```bash
 # Upload and run BASIC
@@ -386,7 +481,7 @@ curl -s -X POST -H 'Content-Type: application/json' \
   http://localhost:8000/tools/c64_system
 ```
 
-## Build & Test
+## Build and Test
 
 The [`./build`](./build) script at the project root wraps all development tasks behind a single, self-documented interface:
 

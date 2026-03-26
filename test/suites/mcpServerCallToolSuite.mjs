@@ -487,8 +487,8 @@ export function registerMcpServerCallToolTests(withSharedMcpClient) {
 
       if (ctx.platform === "vice") {
         assert.equal(result.structuredContent?.data?.backend, "vice");
-        assert.equal(frame.width, 320);
-        assert.equal(frame.height, 200);
+        assert.equal(frame.width, 384);
+        assert.equal(frame.height, 272);
       } else {
         assert.equal(result.structuredContent?.data?.backend, "c64u");
         assert.equal(frame.width, 384);

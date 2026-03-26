@@ -259,10 +259,10 @@ test("C64Client MCP tool coverage", async (t) => {
         const debugWidth = 6;
         const debugHeight = 4;
         const pixels = Uint8Array.from([
-          0, 1, 2, 3, 4, 5,
-          10, 11, 12, 13, 14, 15,
-          20, 21, 22, 23, 24, 25,
-          30, 31, 32, 33, 34, 35,
+          0, 0, 14, 14, 14, 0,
+          0, 14, 11, 12, 13, 14,
+          0, 14, 21, 22, 23, 14,
+          0, 0, 14, 14, 14, 0,
         ]);
         return {
           debugWidth,
@@ -295,9 +295,14 @@ test("C64Client MCP tool coverage", async (t) => {
     await viceClient.viceStepReturn();
     const capture = await viceClient.captureFrames({ count: 2 });
     assert.equal(capture.frames.length, 2);
-    assert.equal(capture.frames[0].width, 3);
-    assert.equal(capture.frames[0].height, 2);
-    assert.deepEqual(Array.from(capture.frames[0].pixels), [11, 12, 13, 21, 22, 23]);
+    assert.equal(capture.frames[0].width, 5);
+    assert.equal(capture.frames[0].height, 4);
+    assert.deepEqual(Array.from(capture.frames[0].pixels), [
+      0, 14, 14, 14, 0,
+      14, 11, 12, 13, 14,
+      14, 21, 22, 23, 14,
+      0, 14, 14, 14, 0,
+    ]);
     assert.deepEqual(await viceClient.viceResourceGet("Drive8Image"), { type: "string", value: "demo" });
     await viceClient.viceResourceSet("Drive8Image", "demo.d64");
 

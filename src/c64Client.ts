@@ -1262,21 +1262,10 @@ export class C64Client {
       ? snapshot.bitsPerPixel / 8
       : 0;
     const pixels = Uint8Array.from(snapshot.pixels);
-    const innerWidth = typeof snapshot.innerWidth === "number" && snapshot.innerWidth > 0
-      ? snapshot.innerWidth
-      : snapshot.debugWidth;
-    const innerHeight = typeof snapshot.innerHeight === "number" && snapshot.innerHeight > 0
-      ? snapshot.innerHeight
-      : snapshot.debugHeight;
-    const offsetX = Math.max(0, snapshot.offsetX ?? 0);
-    const offsetY = Math.max(0, snapshot.offsetY ?? 0);
-
     const canCrop = bytesPerPixel > 0
       && snapshot.debugWidth > 0
       && snapshot.debugHeight > 0
-      && pixels.length >= snapshot.debugWidth * snapshot.debugHeight * bytesPerPixel
-      && offsetX + innerWidth <= snapshot.debugWidth
-      && offsetY + innerHeight <= snapshot.debugHeight;
+      && pixels.length >= snapshot.debugWidth * snapshot.debugHeight * bytesPerPixel;
 
     if (!canCrop) {
       return {
@@ -1289,19 +1278,92 @@ export class C64Client {
       };
     }
 
+    const innerWidth = typeof snapshot.innerWidth === "number" && snapshot.innerWidth > 0
+      ? snapshot.innerWidth
+      : snapshot.debugWidth;
+    const innerHeight = typeof snapshot.innerHeight === "number" && snapshot.innerHeight > 0
+      ? snapshot.innerHeight
+      : snapshot.debugHeight;
+    const rowThreshold = Math.max(1, Math.min(innerWidth, snapshot.debugWidth, 32));
+    const columnThreshold = Math.max(1, Math.min(innerHeight, snapshot.debugHeight, 32));
+
+    const isPixelVisible = (pixelIndex: number): boolean => {
+      const offset = pixelIndex * bytesPerPixel;
+      for (let byteIndex = 0; byteIndex < bytesPerPixel; byteIndex += 1) {
+        if ((pixels[offset + byteIndex] ?? 0) !== 0) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    const rowVisibleCounts = new Array<number>(snapshot.debugHeight).fill(0);
+    for (let row = 0; row < snapshot.debugHeight; row += 1) {
+      let visiblePixels = 0;
+      const rowStart = row * snapshot.debugWidth;
+      for (let column = 0; column < snapshot.debugWidth; column += 1) {
+        if (isPixelVisible(rowStart + column)) {
+          visiblePixels += 1;
+        }
+      }
+      rowVisibleCounts[row] = visiblePixels;
+    }
+
+    const top = rowVisibleCounts.findIndex((count) => count >= rowThreshold);
+    const bottom = rowVisibleCounts.length - 1 - [...rowVisibleCounts].reverse().findIndex((count) => count >= rowThreshold);
+
+    if (top < 0 || bottom < top) {
+      return {
+        frameNumber: null,
+        width: snapshot.debugWidth,
+        height: snapshot.debugHeight,
+        bitsPerPixel: snapshot.bitsPerPixel,
+        pixels,
+        complete: true,
+      };
+    }
+
+    const columnVisibleCounts = new Array<number>(snapshot.debugWidth).fill(0);
+    for (let column = 0; column < snapshot.debugWidth; column += 1) {
+      let visiblePixels = 0;
+      for (let row = top; row <= bottom; row += 1) {
+        if (isPixelVisible((row * snapshot.debugWidth) + column)) {
+          visiblePixels += 1;
+        }
+      }
+      columnVisibleCounts[column] = visiblePixels;
+    }
+
+    const left = columnVisibleCounts.findIndex((count) => count >= columnThreshold);
+    const right = columnVisibleCounts.length - 1 - [...columnVisibleCounts].reverse().findIndex((count) => count >= columnThreshold);
+
+    if (left < 0 || right < left) {
+      return {
+        frameNumber: null,
+        width: snapshot.debugWidth,
+        height: snapshot.debugHeight,
+        bitsPerPixel: snapshot.bitsPerPixel,
+        pixels,
+        complete: true,
+      };
+    }
+
+    const croppedWidth = right - left + 1;
+    const croppedHeight = bottom - top + 1;
+
     const rowStride = snapshot.debugWidth * bytesPerPixel;
-    const croppedRowStride = innerWidth * bytesPerPixel;
-    const cropped = new Uint8Array(croppedRowStride * innerHeight);
-    for (let row = 0; row < innerHeight; row += 1) {
-      const sourceStart = ((offsetY + row) * rowStride) + (offsetX * bytesPerPixel);
+    const croppedRowStride = croppedWidth * bytesPerPixel;
+    const cropped = new Uint8Array(croppedRowStride * croppedHeight);
+    for (let row = 0; row < croppedHeight; row += 1) {
+      const sourceStart = ((top + row) * rowStride) + (left * bytesPerPixel);
       const sourceEnd = sourceStart + croppedRowStride;
       cropped.set(pixels.subarray(sourceStart, sourceEnd), row * croppedRowStride);
     }
 
     return {
       frameNumber: null,
-      width: innerWidth,
-      height: innerHeight,
+      width: croppedWidth,
+      height: croppedHeight,
       bitsPerPixel: snapshot.bitsPerPixel,
       pixels: cropped,
       complete: true,
