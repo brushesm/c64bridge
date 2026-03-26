@@ -93,3 +93,5 @@ Use these rules to ensure Copilot reliably engages the `c64bridge` server when t
 - When such signals appear, route to the matching skill in `.github/skills/` instead of describing ad hoc execution steps.
 - If the stdio server is not yet connected, bring it online before executing the chosen skill.
 - Avoid destructive actions such as reset, reboot, poweroff, or drive-state mutations without explicit confirmation.
+- For backend-prefixed, low-ambiguity requests such as `vice: write a small BASIC program that clears the screen and prints HELLO VICE`, route immediately to `.github/skills/basic-program/SKILL.md` and execute the skill's fast path.
+- When the MCP server is already connected in the current chat session, do not re-read README sections or MCP tool manifests before routine BASIC/ASM/demo runs unless the request is ambiguous or a tool call fails.

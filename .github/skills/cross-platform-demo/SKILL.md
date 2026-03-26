@@ -17,6 +17,7 @@ Use this skill for quick greetings, smoke tests, and visible confirmation that o
 1. Execute `c64_program` with `op: "cross_platform_greeting"`.
 2. Pass `platforms` only when the user wants a subset of the configured backends.
 3. Pass `messageTemplate` only when the user explicitly wants custom text.
+4. If the user explicitly wants to watch the VICE window render live, do not use this fast path for VICE. Switch to `.github/skills/basic-program/SKILL.md` so the agent can use the visible, non-warp manual BASIC path without immediate monitor polling.
 
 ## Validation
 

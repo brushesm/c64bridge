@@ -413,6 +413,9 @@ export class ViceBackend implements C64Facade {
     handle.process.once("exit", () => {
       ViceBackend.supervisors.delete(key);
     });
+    // Allow VICE to fully initialize its display before connecting to the monitor.
+    // Early monitor connection can interfere with the boot sequence.
+    await delay(1000);
     await this.waitForResponsiveMonitor(20_000);
     await this.waitForUsableMachine(20_000);
   }

@@ -33,6 +33,12 @@ The `c64://platform/status` resource always reports the currently active backend
 State the desired backend directly in the prompt when you want to pin execution, for example: `use vice`, `vice: load this PRG`, `use c64u`, or `run this on hardware`.
 When using the VS Code `C64` agent, keep the backend request in the same prompt so tool routing can call `c64_select_backend` before backend-specific operations.
 
+### Fast Discovery Rules
+
+When the prompt is already specific and backend-pinned, execute the matching skill immediately instead of re-reading general documentation.
+Example: `vice: write a small BASIC program that clears the screen and prints HELLO VICE` should route straight to `.github/skills/basic-program/SKILL.md` and use that skill's minimal path.
+Once the MCP server is connected and tools are available in-session, do not spend extra turns inspecting README sections or tool manifests for routine `c64_select_backend`, `c64_program`, or `c64_memory` operations.
+
 3) VS Code Copilot Chat (MCP)
 
 Add to Settings (JSON):
@@ -65,6 +71,7 @@ If a workflow description starts listing tool calls outside `.github/skills`, tr
 - Discover tools with the client’s ListTools.
 - Discover resources and prompts with ListResources and ListPrompts.
 - Use the matching skill in `.github/skills/` to decide the actual tool sequence, validation, and safety behavior.
+- After discovery has already happened for the active session, prefer execution over repeated rediscovery for unambiguous requests.
 
 ## Capabilities
 

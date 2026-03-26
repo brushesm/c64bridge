@@ -7,6 +7,12 @@ Use these routing shortcuts when the user wants a quick visible or audible resul
 - Route quick greetings, smoke tests, and visible backend confirmation to `.github/skills/cross-platform-demo/SKILL.md`.
 - Use the custom BASIC path only when the user needs logic beyond a simple demo.
 
+## Backend-Pinned BASIC Fast Path
+
+- When the prompt already pins the backend with prefixes such as `vice:` or `c64u:` and asks for a tiny BASIC program with static output, route directly to `.github/skills/basic-program/SKILL.md`.
+- Treat requests such as `vice: write a small BASIC program that clears the screen and prints HELLO VICE` as unambiguous; do not spend extra turns re-reading README sections, MCP manifests, or BASIC references before executing.
+- Let the selected skill use its minimal execution path unless the user asks for custom logic, hardware-specific behavior, or deeper debugging.
+
 ## Quick Music Demo
 
 - Route recognizable demo-tune requests to `.github/skills/sid-music/SKILL.md`.

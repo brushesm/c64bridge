@@ -20,6 +20,7 @@ Do not assume the current backend is correct without checking
 - For simple visible confirmation on `vice`, `c64u`, or both, prefer `c64_program` with `op: "cross_platform_greeting"`.
 - That workflow switches backends internally, writes a platform-customized BASIC greeting, captures screenshots, and verifies the rendered text without extra tool composition.
 - Use manual `c64_select_backend` plus `upload_run_basic` only when the user needs custom program logic beyond a quick greeting or text demo.
+- Exception for visible VICE sessions: when the user wants to actually watch the emulator boot screen or program output, prefer a visible VICE session with warp disabled and avoid immediate `read_screen` or `wait_for_text` calls, because Binary Monitor traffic traps execution while servicing requests.
 
 ## Device & Services
 
