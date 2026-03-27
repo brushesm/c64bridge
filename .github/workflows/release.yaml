@@ -11,8 +11,12 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/${{ github.repository_owner }}/mcp-builder:latest
+    defaults:
+      run:
+        shell: bash
     permissions:
       contents: write
+      id-token: write
       packages: read
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -128,7 +132,7 @@ jobs:
 
       - name: Commit and push release preparation changes
         run: |
-          git add package.json package-lock.json mcp.json CHANGELOG.md
+          git add package.json package-lock.json mcp.json server.json CHANGELOG.md
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
@@ -141,6 +145,10 @@ jobs:
 
       - name: Verify local package
         run: npm run check:package
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
 
       - name: Extract changelog entry
         id: changelog
@@ -312,6 +320,40 @@ jobs:
           fi
           npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
           npm publish --access public
+
+      - name: Wait for npm package visibility
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for attempt in $(seq 1 30); do
+            if PUBLISHED_VERSION=$(npm view "c64bridge@${PACKAGE_VERSION}" version --json 2>/dev/null | tr -d '"'); then
+              :
+            else
+              PUBLISHED_VERSION=""
+            fi
+            if [ "$PUBLISHED_VERSION" = "$PACKAGE_VERSION" ]; then
+              echo "c64bridge@${PACKAGE_VERSION} is visible on npm"
+              exit 0
+            fi
+            echo "Waiting for c64bridge@${PACKAGE_VERSION} to appear on npm (attempt ${attempt}/30)"
+            sleep 10
+          done
+
+          echo "Timed out waiting for c64bridge@${PACKAGE_VERSION} to appear on npm" >&2
+          exit 1
+
+      - name: Validate MCP Registry manifest
+        run: ./mcp-publisher validate server.json
+
+      - name: Authenticate to MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish to MCP Registry
+        run: ./mcp-publisher publish server.json
+
+      - name: Logout from MCP Registry
+        if: ${{ always() }}
+        run: ./mcp-publisher logout || true
 
   verify_npm:
     needs:

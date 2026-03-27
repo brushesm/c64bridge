@@ -119,8 +119,16 @@ Environment knobs: `RAG_EMBEDDINGS_DIR`, `RAG_BUILD_ON_START`, `RAG_REINDEX_INTE
 
 - `./build check` — build + test matrix in one pass
 - `./build changelog` — update CHANGELOG draft
-- `./build release --version <version>` — bump version, regenerate manifest, prepend changelog notes
-- Published package ships [`dist/`](../dist/), [`doc/`](../doc/), [`data/`](../data/), [`scripts/`](../scripts/), [`generated/`](../generated/), and [`mcp.json`](../mcp.json)
+- `./build release --version <version>` — bump version, refresh [`mcp.json`](../mcp.json) and [`server.json`](../server.json), prepend changelog notes
+- Published package ships [`dist/`](../dist/), [`doc/`](../doc/), [`data/`](../data/), [`scripts/`](../scripts/), [`generated/`](../generated/), [`mcp.json`](../mcp.json), and [`server.json`](../server.json)
+
+Tagging a release through the GitHub release UI triggers [`.github/workflows/release.yaml`](../.github/workflows/release.yaml), which publishes the npm package and then publishes the same version to the MCP Registry.
+
+- Required GitHub secret: `NPM_TOKEN`
+- No dedicated MCP Registry secret is required for the GitHub-driven flow; the workflow uses `mcp-publisher login github-oidc`
+- The release workflow must grant `id-token: write` so GitHub Actions can mint the short-lived OIDC token used by `mcp-publisher`
+- Keep [`package.json`](../package.json) `mcpName` aligned with [`server.json`](../server.json) `name`
+- The root [`server.json`](../server.json) is the MCP Registry manifest; [`mcp/server.json`](../mcp/server.json) remains generated MCP interface output
 
 ## 9. Troubleshooting Cheatsheet
 

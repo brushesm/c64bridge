@@ -1,0 +1,94 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.chrisgleissner/c64bridge",
+  "title": "C64 Bridge",
+  "description": "MCP server for Commodore 64 Ultimate hardware and VICE emulator control.",
+  "repository": {
+    "url": "https://github.com/chrisgleissner/c64bridge",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/chrisgleissner/c64bridge",
+  "version": "0.8.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "c64bridge",
+      "version": "0.8.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "LOG_LEVEL",
+          "description": "Logger verbosity.",
+          "format": "string",
+          "default": "info",
+          "choices": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ]
+        },
+        {
+          "name": "C64BRIDGE_CONFIG",
+          "description": "Path to the C64 Bridge configuration file.",
+          "format": "filepath",
+          "default": "~/.c64bridge.json"
+        },
+        {
+          "name": "C64_MODE",
+          "description": "Active backend.",
+          "format": "string",
+          "default": "c64u",
+          "choices": [
+            "c64u",
+            "vice"
+          ]
+        },
+        {
+          "name": "C64U_HOST",
+          "description": "Ultimate 64 host name or IP address.",
+          "format": "string",
+          "default": "c64u"
+        },
+        {
+          "name": "C64U_PORT",
+          "description": "Ultimate 64 REST port.",
+          "format": "number",
+          "default": "80"
+        },
+        {
+          "name": "C64U_PASSWORD",
+          "description": "Ultimate 64 network password sent as X-Password.",
+          "format": "string",
+          "isSecret": true
+        },
+        {
+          "name": "VICE_BINARY",
+          "description": "VICE emulator binary to launch.",
+          "format": "string",
+          "default": "x64sc"
+        },
+        {
+          "name": "VICE_VISIBLE",
+          "description": "Launch VICE with a visible window when possible.",
+          "format": "boolean",
+          "default": "true"
+        },
+        {
+          "name": "VICE_WARP",
+          "description": "Enable VICE warp mode.",
+          "format": "boolean",
+          "default": "false"
+        },
+        {
+          "name": "GITHUB_TOKEN",
+          "description": "GitHub token for optional RAG discovery against GitHub.",
+          "format": "string",
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

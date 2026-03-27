@@ -68,3 +68,13 @@ Authoritative execution plan for consolidating repository execution logic under 
 - [x] Anthem-facing content is gone.
 - [x] Legacy preset calls still produce `fuer_elise` playback.
 - [x] Build and tests are green.
+
+## 2026-03-27 MCP Registry OIDC Migration
+
+- [x] Locate MCP publishing steps
+- [x] Remove PAT usage
+- [x] Add OIDC permissions
+- [x] Replace login command
+- [x] Validate workflow integrity
+- [x] Fix release-prepare fixture compatibility
+- [x] Verify no regressions

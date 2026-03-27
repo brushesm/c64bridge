@@ -1,4 +1,5 @@
 .c64bridge
+.mcpregistry_github_token
 .DS_Store
 .env
 .nyc_output/

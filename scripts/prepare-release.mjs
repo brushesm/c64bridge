@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execSync } from 'node:child_process';
-import { readFile, writeFile } from 'node:fs/promises';
+import { access, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 
@@ -14,6 +14,27 @@ const updateJsonFile = async (relativePath, updater) => {
   const data = JSON.parse(raw);
   const updated = await updater(data);
   await writeFile(filePath, JSON.stringify(updated, null, 2) + '\n');
+};
+
+const fileExists = async (relativePath) => {
+  try {
+    await access(path.resolve(relativePath));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const getRepositoryMetadata = (repository) => {
+  const url = typeof repository === 'string' ? repository : repository?.url;
+  if (!url) {
+    return undefined;
+  }
+
+  return {
+    url,
+    source: url.includes('github.com') ? 'github' : undefined,
+  };
 };
 
 const normaliseVersion = (value) => value.replace(/^v/, '');
@@ -72,6 +93,42 @@ await updateJsonFile('mcp.json', async (data) => ({
   version: newVersion,
 }));
 
+if (await fileExists('server.json')) {
+  await updateJsonFile('server.json', async (data) => {
+    const packages = Array.isArray(data.packages) ? [...data.packages] : [];
+    const primaryPackage = packages[0] ?? {
+      registryType: 'npm',
+      transport: {
+        type: 'stdio',
+      },
+    };
+
+    packages[0] = {
+      ...primaryPackage,
+      identifier: pkg.name,
+      version: newVersion,
+      transport: primaryPackage.transport ?? {
+        type: 'stdio',
+      },
+    };
+
+    const repository = getRepositoryMetadata(pkg.repository);
+
+    return {
+      ...data,
+      name: pkg.mcpName ?? data.name,
+      version: newVersion,
+      repository: repository
+        ? {
+            ...(data.repository ?? {}),
+            ...repository,
+          }
+        : data.repository,
+      packages,
+    };
+  });
+}
+
 // Manifest generation removed (runtime discovery via MCP stdio)
 
 // Update CHANGELOG.md from commits since last tag using Conventional Commits subjects.
@@ -88,4 +145,4 @@ if (skippedVersionBump && hasExistingChangelogEntry) {
 }
 
 console.log(`Release metadata updated to ${newVersion}.`);
-console.log('Next steps: commit the changes, open a PR, and tag the merged commit.');
+console.log('Next steps: commit and push the changes, then create the release tag from GitHub once main is ready.');

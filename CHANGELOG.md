@@ -1,5 +1,10 @@
 # Changelog
 
+
+## 0.8.1 - 2026-03-27
+
+- Added automatic publication to https://registry.modelcontextprotocol.io/
+
 ## 0.8.0 - 2026-03-26
 
 ### Highlights

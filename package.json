@@ -1,7 +1,8 @@
 {
   "name": "c64bridge",
-  "version": "0.8.0",
-  "description": "Local MCP server for controlling a Commodore 64 via Ultimate 64 REST API",
+  "version": "0.8.1",
+  "mcpName": "io.github.chrisgleissner/c64bridge",
+  "description": "C64 Bridge MCP server for Commodore 64 Ultimate hardware and VICE emulator control",
   "type": "module",
   "main": "dist/index.js",
   "packageManager": "bun@1.3.1",
@@ -79,6 +80,7 @@
   },
   "files": [
     "mcp.json",
+    "server.json",
     "AGENTS.md",
     "LICENSE",
     "README.md",
