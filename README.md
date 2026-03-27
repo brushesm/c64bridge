@@ -10,9 +10,18 @@ Your AI Command Bridge for the Commodore 64.
 [![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-forestgreen)](doc/developer.md)
 
-C64 Bridge is a Model Context Protocol ([MCP](https://modelcontextprotocol.io/docs/getting-started/intro)) server for controlling a real Commodore 64 Ultimate or Ultimate 64, and for switching into a VICE emulator session when you want emulator-backed workflows in the same MCP conversation.
+[![Install in VS Code](https://img.shields.io/badge/Install_in-VS_Code-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect/mcp/install?name=io.github.chrisgleissner%2Fc64bridge&config=%7B%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22c64bridge%22%5D%2C%22env%22%3A%7B%22C64_MODE%22%3A%22c64u%22%2C%22C64U_HOST%22%3A%22c64u%22%2C%22VICE_BINARY%22%3A%22%2Fusr%2Flocal%2Fbin%2Fx64sc%22%2C%22VICE_DIRECTORY%22%3A%22%2Fusr%2Flocal%2Fshare%2Fvice%22%2C%22VICE_VISIBLE%22%3A%22true%22%2C%22VICE_WARP%22%3A%22false%22%7D%7D)
+[![Install in VS Code Insiders](https://img.shields.io/badge/Install_in-VS_Code_Insiders-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=io.github.chrisgleissner%2Fc64bridge&config=%7B%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22c64bridge%22%5D%2C%22env%22%3A%7B%22C64_MODE%22%3A%22c64u%22%2C%22C64U_HOST%22%3A%22c64u%22%2C%22VICE_BINARY%22%3A%22%2Fusr%2Flocal%2Fbin%2Fx64sc%22%2C%22VICE_DIRECTORY%22%3A%22%2Fusr%2Flocal%2Fshare%2Fvice%22%2C%22VICE_VISIBLE%22%3A%22true%22%2C%22VICE_WARP%22%3A%22false%22%7D%7D&quality=insiders)
+[![Install in Visual Studio](https://img.shields.io/badge/Install_in-Visual_Studio-C16FDE?style=flat-square&logo=visualstudio&logoColor=white)](https://vs-open.link/mcp-install?%7B%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22c64bridge%22%5D%2C%22env%22%3A%7B%22C64_MODE%22%3A%22c64u%22%2C%22C64U_HOST%22%3A%22c64u%22%2C%22VICE_BINARY%22%3A%22%2Fusr%2Flocal%2Fbin%2Fx64sc%22%2C%22VICE_DIRECTORY%22%3A%22%2Fusr%2Flocal%2Fshare%2Fvice%22%2C%22VICE_VISIBLE%22%3A%22true%22%2C%22VICE_WARP%22%3A%22false%22%7D%7D)
+[![Install in Cursor](https://img.shields.io/badge/Install_in-Cursor-000000?style=flat-square&logoColor=white)](https://cursor.com/en/install-mcp?name=io.github.chrisgleissner%2Fc64bridge&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImM2NGJyaWRnZSJdLCJlbnYiOnsiQzY0X01PREUiOiJjNjR1IiwiQzY0VV9IT1NUIjoiYzY0dSIsIlZJQ0VfQklOQVJZIjoiL3Vzci9sb2NhbC9iaW4veDY0c2MiLCJWSUNFX0RJUkVDVE9SWSI6Ii91c3IvbG9jYWwvc2hhcmUvdmljZSIsIlZJQ0VfVklTSUJMRSI6InRydWUiLCJWSUNFX1dBUlAiOiJmYWxzZSJ9fQ==)
+
+C64 Bridge is an MCP server for controlling and working with a Commodore 64 from an AI client.
+
+It lets you run programs, read and write memory, render graphics, and play sound on a real [Commodore 64 Ultimate](https://www.commodore.net/) or [Ultimate 64](https://ultimate64.com/). You can also switch to a [VICE](https://vice-emu.sourceforge.io/) emulator session at any time, so the same MCP conversation works with both hardware and emulator.
 
 It is built on the official TypeScript `@modelcontextprotocol/sdk` and supports both `stdio` for local AI integration and an optional HTTP bridge for manual inspection.
+
+C64 Bridge is listed in the [Official MCP Registry](https://registry.modelcontextprotocol.io/?q=c64bridge).
 
 ## Contents
 
