@@ -664,6 +664,194 @@
               "op"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Copy a RAM region to another address.",
+            "properties": {
+              "source": {
+                "type": "string",
+                "description": "Source start address ($HHHH, decimal, or symbol).",
+                "minLength": 1
+              },
+              "dest": {
+                "type": "string",
+                "description": "Destination start address.",
+                "minLength": 1
+              },
+              "length": {
+                "type": "integer",
+                "description": "Number of bytes to copy (1–16384).",
+                "minimum": 1,
+                "maximum": 16384
+              },
+              "op": {
+                "const": "copy_memory"
+              }
+            },
+            "required": [
+              "source",
+              "dest",
+              "length",
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Fill a memory range with a repeating byte pattern.",
+            "properties": {
+              "address": {
+                "type": "string",
+                "description": "Start address ($HHHH, decimal, or symbol).",
+                "minLength": 1
+              },
+              "length": {
+                "type": "integer",
+                "description": "Number of bytes to fill (1–16384).",
+                "minimum": 1,
+                "maximum": 16384
+              },
+              "pattern": {
+                "type": "string",
+                "description": "Hex bytes to repeat, e.g. 'FF' or 'AA 55'. Space-separated or run together.",
+                "minLength": 2,
+                "pattern": "^[\\s0-9A-Fa-f$]+$"
+              },
+              "op": {
+                "const": "fill_memory"
+              }
+            },
+            "required": [
+              "address",
+              "length",
+              "pattern",
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Search for a byte pattern within a memory range and return matching addresses.",
+            "properties": {
+              "startAddress": {
+                "type": "string",
+                "description": "Start of search range ($HHHH, decimal, or symbol).",
+                "minLength": 1
+              },
+              "endAddress": {
+                "type": "string",
+                "description": "End of search range (inclusive).",
+                "minLength": 1
+              },
+              "pattern": {
+                "type": "string",
+                "description": "Hex bytes to find, e.g. 'A9 00' for LDA #$00.",
+                "minLength": 2,
+                "pattern": "^[\\s0-9A-Fa-f$]+$"
+              },
+              "maxResults": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Maximum matches to return (default 10).",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 10
+              },
+              "op": {
+                "const": "search_memory"
+              }
+            },
+            "required": [
+              "startAddress",
+              "endAddress",
+              "pattern",
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Compare two memory regions byte-by-byte and report differences.",
+            "properties": {
+              "address1": {
+                "type": "string",
+                "description": "First region start address.",
+                "minLength": 1
+              },
+              "address2": {
+                "type": "string",
+                "description": "Second region start address.",
+                "minLength": 1
+              },
+              "length": {
+                "type": "integer",
+                "description": "Number of bytes to compare (1–16384).",
+                "minimum": 1,
+                "maximum": 16384
+              },
+              "maxDiffs": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Max differences to report (default 10).",
+                "minimum": 1,
+                "maximum": 200,
+                "default": 10
+              },
+              "op": {
+                "const": "compare_memory"
+              }
+            },
+            "required": [
+              "address1",
+              "address2",
+              "length",
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Dump a memory range to a local file, with an optional PRG load-address header.",
+            "properties": {
+              "startAddress": {
+                "type": "string",
+                "description": "Start address of region to save.",
+                "minLength": 1
+              },
+              "endAddress": {
+                "type": "string",
+                "description": "End address (inclusive).",
+                "minLength": 1
+              },
+              "filePath": {
+                "type": "string",
+                "description": "Absolute or relative path for the output file.",
+                "minLength": 1
+              },
+              "asPrg": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "Prepend a 2-byte little-endian load-address header (PRG format). Default: true.",
+                "default": true
+              },
+              "op": {
+                "const": "save_memory"
+              }
+            },
+            "required": [
+              "startAddress",
+              "endAddress",
+              "filePath",
+              "op"
+            ],
+            "additionalProperties": false
           }
         ],
         "discriminator": {
@@ -709,6 +897,56 @@
               "op": "disassemble",
               "address": "$0810",
               "instructionCount": 20
+            }
+          },
+          {
+            "name": "Copy screen RAM",
+            "description": "Copy 1000 bytes of screen RAM to a scratch area",
+            "arguments": {
+              "op": "copy_memory",
+              "source": "$0400",
+              "dest": "$C000",
+              "length": 1000
+            }
+          },
+          {
+            "name": "Clear screen RAM",
+            "description": "Fill screen RAM with space character ($20)",
+            "arguments": {
+              "op": "fill_memory",
+              "address": "$0400",
+              "length": 1000,
+              "pattern": "20"
+            }
+          },
+          {
+            "name": "Search for RTS",
+            "description": "Find RTS ($60) instructions in BASIC ROM",
+            "arguments": {
+              "op": "search_memory",
+              "startAddress": "$A000",
+              "endAddress": "$BFFF",
+              "pattern": "60"
+            }
+          },
+          {
+            "name": "Compare two buffers",
+            "description": "Check whether two 256-byte regions differ",
+            "arguments": {
+              "op": "compare_memory",
+              "address1": "$C000",
+              "address2": "$C100",
+              "length": 256
+            }
+          },
+          {
+            "name": "Save PRG dump",
+            "description": "Save $0801-$CFFF as a PRG file",
+            "arguments": {
+              "op": "save_memory",
+              "startAddress": "$0801",
+              "endAddress": "$CFFF",
+              "filePath": "/tmp/dump.prg"
             }
           }
         ],
@@ -2158,6 +2396,19 @@
               "op"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Read VIC-II and CIA2 registers to determine the current graphics mode and memory layout (VICE only).",
+            "properties": {
+              "op": {
+                "const": "get_display_state"
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
           }
         ],
         "discriminator": {
@@ -2220,6 +2471,13 @@
               "imagePath": "./artifacts/sample.png",
               "format": "hires"
             }
+          },
+          {
+            "name": "Read VIC-II state",
+            "description": "Decode graphics mode, memory layout, and colours from VIC-II registers (VICE only)",
+            "arguments": {
+              "op": "get_display_state"
+            }
           }
         ],
         "tags": [
@@ -2234,7 +2492,12 @@
         "platforms": [
           "c64u",
           "vice"
-        ]
+        ],
+        "operationPlatforms": {
+          "get_display_state": [
+            "vice"
+          ]
+        }
       }
     },
     {
@@ -4114,6 +4377,14 @@
                 "description": "Automatically remove after first hit.",
                 "default": false
               },
+              "label": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Optional human-readable label stored in-process.",
+                "maxLength": 64
+              },
               "operations": {
                 "type": [
                   "object",
@@ -4408,6 +4679,95 @@
               "op"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Read CPU registers and return the current monitor state.",
+            "properties": {
+              "op": {
+                "const": "get_monitor_state"
+              },
+              "memspace": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "VICE memory space (0=CPU, 1=Drive8, etc.).",
+                "minimum": 0,
+                "maximum": 4
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Poll CPU registers until PC equals expectedPC or timeout elapses.",
+            "properties": {
+              "op": {
+                "const": "wait_for_state"
+              },
+              "expectedPC": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Target PC address to wait for (e.g. $0810).",
+                "minLength": 1
+              },
+              "timeoutMs": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Maximum wait time in milliseconds.",
+                "minimum": 1,
+                "maximum": 60000,
+                "default": 5000
+              },
+              "pollMs": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Poll interval in milliseconds.",
+                "minimum": 10,
+                "maximum": 1000,
+                "default": 100
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Kill and restart the VICE process (managed instances only).",
+            "properties": {
+              "op": {
+                "const": "nuclear_reset"
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Exit the Binary Monitor and resume CPU execution (BM 0xAA Exit).",
+            "properties": {
+              "op": {
+                "const": "continue_execution"
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
           }
         ],
         "discriminator": {
@@ -4447,6 +4807,45 @@
             "description": "Read CPU registers from memspace 0 (default).",
             "arguments": {
               "op": "get_registers"
+            }
+          },
+          {
+            "name": "Create labelled breakpoint",
+            "description": "Set a breakpoint at $0810 with a descriptive label.",
+            "arguments": {
+              "op": "create_checkpoint",
+              "address": "$0810",
+              "label": "entry_point"
+            }
+          },
+          {
+            "name": "Get monitor state",
+            "description": "Read current CPU state including all registers and PC.",
+            "arguments": {
+              "op": "get_monitor_state"
+            }
+          },
+          {
+            "name": "Wait for PC",
+            "description": "Poll until PC reaches $0810 or 5 s elapses.",
+            "arguments": {
+              "op": "wait_for_state",
+              "expectedPC": "$0810",
+              "timeoutMs": 5000
+            }
+          },
+          {
+            "name": "Nuclear reset",
+            "description": "Kill and restart the VICE process, clearing all state.",
+            "arguments": {
+              "op": "nuclear_reset"
+            }
+          },
+          {
+            "name": "Continue execution",
+            "description": "Exit the BM monitor and let the CPU run freely.",
+            "arguments": {
+              "op": "continue_execution"
             }
           }
         ],
@@ -4574,6 +4973,347 @@
           "Explain that resource changes only persist for the current emulator session unless saved in VICE manually."
         ],
         "platforms": [
+          "vice"
+        ]
+      }
+    },
+    {
+      "name": "c64_input",
+      "title": "Types text, taps keys, and simulates joystick movements in VICE.",
+      "description": "VICE-only keyboard feed and joystick simulation via CIA1 register writes.",
+      "inputSchema": {
+        "type": "object",
+        "description": "Input operations: write_text, key, joystick.",
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Send a text string to the keyboard buffer, with PETSCII token expansion.",
+            "properties": {
+              "op": {
+                "const": "write_text"
+              },
+              "text": {
+                "type": "string",
+                "description": "Text to type. Use {RETURN}, {CLR}, {F1}…{F8}, {UP/DOWN/LEFT/RIGHT}, colour names, etc.",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "delayMs": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Delay in ms after sending (default 0).",
+                "minimum": 0,
+                "maximum": 10000,
+                "default": 0
+              }
+            },
+            "required": [
+              "op",
+              "text"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Tap a single key or hold it for a duration.",
+            "properties": {
+              "op": {
+                "const": "key"
+              },
+              "key": {
+                "type": "string",
+                "description": "Key to press: a printable character, or a PETSCII token name (RETURN, F1…F8, UP, etc.).",
+                "minLength": 1,
+                "maxLength": 32
+              },
+              "durationMs": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "How long to hold the key before releasing (default 0 = instant tap).",
+                "minimum": 0,
+                "maximum": 5000,
+                "default": 0
+              },
+              "count": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Number of times to press the key (default 1).",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 1
+              }
+            },
+            "required": [
+              "op",
+              "key"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Simulate joystick input by writing directly to CIA1 Port A/B registers.",
+            "properties": {
+              "op": {
+                "const": "joystick"
+              },
+              "port": {
+                "type": "integer",
+                "description": "Joystick port (1 = $DC01, 2 = $DC00).",
+                "minimum": 1,
+                "maximum": 2
+              },
+              "controls": {
+                "type": "array",
+                "description": "List of controls to activate simultaneously.",
+                "items": {
+                  "type": "string",
+                  "description": "Control to activate.",
+                  "enum": [
+                    "up",
+                    "down",
+                    "left",
+                    "right",
+                    "fire"
+                  ]
+                },
+                "minItems": 0
+              },
+              "action": {
+                "type": "string",
+                "description": "press = hold until a release call; release = restore all bits; tap = press then release after durationMs.",
+                "enum": [
+                  "press",
+                  "release",
+                  "tap"
+                ]
+              },
+              "durationMs": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Duration to hold for tap action in ms (default 80).",
+                "minimum": 10,
+                "maximum": 5000,
+                "default": 80
+              }
+            },
+            "required": [
+              "op",
+              "port",
+              "controls",
+              "action"
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "discriminator": {
+          "propertyName": "op"
+        }
+      },
+      "_meta": {
+        "domain": "input",
+        "summary": "Types text, taps keys, and simulates joystick movements in VICE.",
+        "lifecycle": "request-response",
+        "resources": [
+          "c64://specs/assembly",
+          "c64://specs/memory-map"
+        ],
+        "prompts": [],
+        "examples": [
+          {
+            "name": "Type BASIC line",
+            "description": "Enter a BASIC line and press RETURN",
+            "arguments": {
+              "op": "write_text",
+              "text": "PRINT \"HELLO\"{RETURN}"
+            }
+          },
+          {
+            "name": "Press F1",
+            "description": "Send the F1 function key",
+            "arguments": {
+              "op": "key",
+              "key": "F1"
+            }
+          },
+          {
+            "name": "Tap joystick right",
+            "description": "Brief rightward tap on joystick port 2",
+            "arguments": {
+              "op": "joystick",
+              "port": 2,
+              "controls": [
+                "right"
+              ],
+              "action": "tap",
+              "durationMs": 80
+            }
+          },
+          {
+            "name": "Press fire on port 1",
+            "description": "Hold fire button on joystick port 1",
+            "arguments": {
+              "op": "joystick",
+              "port": 1,
+              "controls": [
+                "fire"
+              ],
+              "action": "press"
+            }
+          }
+        ],
+        "tags": [
+          "input",
+          "vice",
+          "keyboard",
+          "joystick"
+        ],
+        "workflowHints": [
+          "Use write_text with {RETURN} tokens to automate BASIC entry; prefer key for individual control keys.",
+          "Joystick tap is suitable for one-shot moves; use press/release pairs for timed holds."
+        ],
+        "platforms": [
+          "vice"
+        ]
+      }
+    },
+    {
+      "name": "c64_batch",
+      "title": "Runs an ordered list of tool commands and returns all results with per-command timing.",
+      "description": "Execute multiple c64bridge tool calls in a single request. Reduces latency for multi-step workflows.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "commands": {
+            "type": "array",
+            "description": "Ordered list of commands to execute.",
+            "items": {
+              "type": "object",
+              "description": "A single batch command.",
+              "properties": {
+                "tool": {
+                  "type": "string",
+                  "description": "MCP tool name (e.g. c64_memory, c64_debug).",
+                  "minLength": 1
+                },
+                "args": {
+                  "type": "object",
+                  "description": "Arguments to pass to the tool (must include 'op' for grouped tools).",
+                  "properties": {},
+                  "additionalProperties": true
+                },
+                "description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Optional label for this command in the result.",
+                  "maxLength": 128
+                }
+              },
+              "required": [
+                "tool",
+                "args"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1
+          },
+          "stopOnError": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Halt the batch after the first failure. Default: true.",
+            "default": true
+          }
+        },
+        "required": [
+          "commands"
+        ],
+        "description": "Execute multiple tool calls in one request.",
+        "additionalProperties": false
+      },
+      "_meta": {
+        "domain": "batch",
+        "summary": "Runs an ordered list of tool commands and returns all results with per-command timing.",
+        "lifecycle": "request-response",
+        "resources": [],
+        "prompts": [],
+        "examples": [
+          {
+            "name": "Read registers then step",
+            "description": "Get registers, step one instruction, get registers again",
+            "arguments": {
+              "commands": [
+                {
+                  "tool": "c64_debug",
+                  "args": {
+                    "op": "get_registers"
+                  },
+                  "description": "before"
+                },
+                {
+                  "tool": "c64_debug",
+                  "args": {
+                    "op": "step",
+                    "count": 1
+                  },
+                  "description": "step"
+                },
+                {
+                  "tool": "c64_debug",
+                  "args": {
+                    "op": "get_registers"
+                  },
+                  "description": "after"
+                }
+              ]
+            }
+          },
+          {
+            "name": "Clear screen and type text",
+            "description": "Fill screen RAM then feed keyboard",
+            "arguments": {
+              "commands": [
+                {
+                  "tool": "c64_memory",
+                  "args": {
+                    "op": "fill_memory",
+                    "address": "$0400",
+                    "length": 1000,
+                    "pattern": "20"
+                  }
+                },
+                {
+                  "tool": "c64_input",
+                  "args": {
+                    "op": "write_text",
+                    "text": "HELLO{RETURN}"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "tags": [
+          "batch",
+          "orchestration",
+          "grouped"
+        ],
+        "workflowHints": [
+          "Use execute_batch when you need to run 3 or more sequential operations — it eliminates per-call network overhead.",
+          "Each command must include 'tool' and 'args'; grouped tools require 'op' inside args."
+        ],
+        "platforms": [
+          "c64u",
           "vice"
         ]
       }

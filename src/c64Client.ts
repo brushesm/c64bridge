@@ -1707,6 +1707,29 @@ export class C64Client {
     return body instanceof ArrayBuffer ? new Uint8Array(body) : this.extractBytes(body);
   }
 
+    async viceExitMonitor(): Promise<void> {
+      await this.withViceMonitor((client) => client.exitMonitor());
+    }
+
+    async viceKeyboardFeed(text: string): Promise<void> {
+      await this.withViceMonitor((client) => client.keyboardFeed(text));
+    }
+
+    async viceMemSet(address: number, bytes: Uint8Array | Buffer): Promise<void> {
+      const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+      await this.withViceMonitor((client) => client.memSet(address, buf));
+    }
+
+    async viceMemGet(address: number, length: number): Promise<Buffer> {
+      const end = (address + length - 1) & 0xffff;
+      return this.withViceMonitor((client) => client.memGet(address, end));
+    }
+
+    async viceNuclearReset(): Promise<void> {
+      const backend = await this.requireViceBackend();
+      await backend.nuclearReset();
+    }
+
     async viceCheckpointList(): Promise<ViceCheckpoint[]> {
       return this.withViceMonitor((client) => client.checkpointList());
     }

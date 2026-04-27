@@ -672,6 +672,14 @@ export class ViceBackend implements C64Facade {
       return { success: false, details };
     }
   }
+  async nuclearReset(): Promise<RunResult> {
+    await this.poweroff();
+    if (this.manageProcess) {
+      await this.ensureProcess();
+    }
+    return { success: true };
+  }
+
   async menuButton(): Promise<RunResult> { throw unsupported("menuButton"); }
   async debugregRead(): Promise<{ success: boolean; value?: string; details?: unknown }> { throw unsupported("debugregRead"); }
   async debugregWrite(_v: string): Promise<{ success: boolean; value?: string; details?: unknown }> { throw unsupported("debugregWrite"); }

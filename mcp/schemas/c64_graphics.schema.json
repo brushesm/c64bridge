@@ -325,6 +325,19 @@
         "op"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Read VIC-II and CIA2 registers to determine the current graphics mode and memory layout (VICE only).",
+      "properties": {
+        "op": {
+          "const": "get_display_state"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false
     }
   ],
   "discriminator": {

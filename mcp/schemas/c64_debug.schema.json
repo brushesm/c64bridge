@@ -78,6 +78,14 @@
           "description": "Automatically remove after first hit.",
           "default": false
         },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional human-readable label stored in-process.",
+          "maxLength": 64
+        },
         "operations": {
           "type": [
             "object",
@@ -366,6 +374,95 @@
       "properties": {
         "op": {
           "const": "step_return"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Read CPU registers and return the current monitor state.",
+      "properties": {
+        "op": {
+          "const": "get_monitor_state"
+        },
+        "memspace": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "VICE memory space (0=CPU, 1=Drive8, etc.).",
+          "minimum": 0,
+          "maximum": 4
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Poll CPU registers until PC equals expectedPC or timeout elapses.",
+      "properties": {
+        "op": {
+          "const": "wait_for_state"
+        },
+        "expectedPC": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Target PC address to wait for (e.g. $0810).",
+          "minLength": 1
+        },
+        "timeoutMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Maximum wait time in milliseconds.",
+          "minimum": 1,
+          "maximum": 60000,
+          "default": 5000
+        },
+        "pollMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Poll interval in milliseconds.",
+          "minimum": 10,
+          "maximum": 1000,
+          "default": 100
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Kill and restart the VICE process (managed instances only).",
+      "properties": {
+        "op": {
+          "const": "nuclear_reset"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Exit the Binary Monitor and resume CPU execution (BM 0xAA Exit).",
+      "properties": {
+        "op": {
+          "const": "continue_execution"
         }
       },
       "required": [
