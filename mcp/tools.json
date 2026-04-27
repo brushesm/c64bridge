@@ -17,6 +17,14 @@
                 "description": "Path to the PRG image. Use an Ultimate-visible filesystem path on c64u, or a host-local filesystem path on VICE.",
                 "minLength": 1
               },
+              "symbolsFile": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Path to a VICE symbol file (.vs) to load alongside the PRG. Symbols are used by the disassemble tool (VICE only).",
+                "minLength": 1
+              },
               "op": {
                 "const": "load_prg"
               }
@@ -34,6 +42,14 @@
               "path": {
                 "type": "string",
                 "description": "Path to the PRG image. Use an Ultimate-visible filesystem path on c64u, or a host-local filesystem path on VICE.",
+                "minLength": 1
+              },
+              "symbolsFile": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Path to a VICE symbol file (.vs) to load alongside the PRG. Symbols are used by the disassemble tool (VICE only).",
                 "minLength": 1
               },
               "op": {
@@ -613,6 +629,41 @@
               "op"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Disassemble a memory region into annotated 6502/6510 instructions (VICE only).",
+            "properties": {
+              "address": {
+                "type": "string",
+                "description": "Start address as $HHHH, decimal, or symbol name.",
+                "minLength": 1
+              },
+              "length": {
+                "type": "integer",
+                "description": "Number of bytes to read and disassemble.",
+                "minimum": 1,
+                "maximum": 4096,
+                "default": 64
+              },
+              "instructionCount": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Stop after this many instructions (overrides length as a termination condition).",
+                "minimum": 1,
+                "maximum": 512
+              },
+              "op": {
+                "const": "disassemble"
+              }
+            },
+            "required": [
+              "address",
+              "op"
+            ],
+            "additionalProperties": false
           }
         ],
         "discriminator": {
@@ -650,6 +701,15 @@
               "op": "wait_for_text",
               "pattern": "READY."
             }
+          },
+          {
+            "name": "Disassemble entry point",
+            "description": "Disassemble 20 instructions starting at $0810 (VICE only)",
+            "arguments": {
+              "op": "disassemble",
+              "address": "$0810",
+              "instructionCount": 20
+            }
           }
         ],
         "tags": [
@@ -665,7 +725,12 @@
         "platforms": [
           "c64u",
           "vice"
-        ]
+        ],
+        "operationPlatforms": {
+          "disassemble": [
+            "vice"
+          ]
+        }
       }
     },
     {

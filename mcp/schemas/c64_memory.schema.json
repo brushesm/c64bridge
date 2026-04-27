@@ -147,6 +147,41 @@
         "op"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Disassemble a memory region into annotated 6502/6510 instructions (VICE only).",
+      "properties": {
+        "address": {
+          "type": "string",
+          "description": "Start address as $HHHH, decimal, or symbol name.",
+          "minLength": 1
+        },
+        "length": {
+          "type": "integer",
+          "description": "Number of bytes to read and disassemble.",
+          "minimum": 1,
+          "maximum": 4096,
+          "default": 64
+        },
+        "instructionCount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Stop after this many instructions (overrides length as a termination condition).",
+          "minimum": 1,
+          "maximum": 512
+        },
+        "op": {
+          "const": "disassemble"
+        }
+      },
+      "required": [
+        "address",
+        "op"
+      ],
+      "additionalProperties": false
     }
   ],
   "discriminator": {
