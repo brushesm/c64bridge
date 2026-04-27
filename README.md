@@ -561,7 +561,7 @@ This allows agents to inspect the available tools, resources, prompts, and schem
 
 <!-- AUTO-GENERATED:MCP-DOCS-START -->
 
-This MCP server exposes **15 tools**, **26 resources**, and **10 prompts** for controlling your Commodore 64.
+This MCP server exposes **16 tools**, **26 resources**, and **10 prompts** for controlling your Commodore 64.
 
 ### Tools
 
@@ -596,14 +596,17 @@ Grouped entry point for VICE debugger operations (breakpoints, registers, steppi
 | `create_checkpoint` | Create a new checkpoint (breakpoint) in VICE. | `address` | — |  | ✅ |
 | `delete_checkpoint` | Remove a checkpoint by id. | `id` | — |  | ✅ |
 | `get_checkpoint` | Fetch a single checkpoint by id. | `id` | — |  | ✅ |
+| `get_monitor_state` | Read CPU registers and return the current monitor state. | — | — |  | ✅ |
 | `get_registers` | Read register values, optionally filtered by name or id. | — | — |  | ✅ |
 | `list_checkpoints` | List all active VICE checkpoints (breakpoints). | — | — |  | ✅ |
 | `list_registers` | List available registers (metadata). | — | — |  | ✅ |
+| `nuclear_reset` | Kill and restart the VICE process (managed instances only). | — | — |  | ✅ |
 | `set_condition` | Attach a conditional expression to a checkpoint. | `id`, `expression` | — |  | ✅ |
 | `set_registers` | Write register values. | `writes` | — |  | ✅ |
 | `step` | Single-step CPU execution. | — | — |  | ✅ |
 | `step_return` | Continue execution until the current routine returns. | — | — |  | ✅ |
 | `toggle_checkpoint` | Enable or disable a checkpoint by id. | `id`, `enabled` | — |  | ✅ |
+| `wait_for_state` | Poll CPU registers until PC equals expectedPC or timeout elapses. | — | — |  | ✅ |
 
 #### c64_disk
 
@@ -649,10 +652,21 @@ Grouped entry point for frame capture and graphics rendering workflows.
 | Operation | Description | Required Inputs | Notes | C64U | VICE |
 | --- | --- | --- | --- | --- | --- |
 | `capture_frame` | Capture one or more complete video frames from the active backend. | — | — | ✅ | ✅ |
+| `get_display_state` | Read VIC-II and CIA2 registers to determine the current graphics mode and memory layout (VICE only). | — | — |  | ✅ |
 | `render_bitmap` | Import an image file, convert it to VIC-II bitmap memory, write it into RAM, and display it. | `imagePath`, `format` | — | ✅ | ✅ |
 | `render_petscii_art` | Create PETSCII art from prompts, text, or explicit bitmap data, and optionally display it on the C64. | — | — | ✅ | ✅ |
 | `render_petscii_text` | Display PETSCII text with optional border and background colours. | `text` | — | ✅ | ✅ |
 | `render_sprite` | Display supplied 63-byte sprite data at the requested position and colour by writing memory and patching VIC-II registers directly. | `sprite` | — | ✅ | ✅ |
+
+#### c64_input
+
+VICE-only keyboard feed and joystick simulation via CIA1 register writes.
+
+| Operation | Description | Required Inputs | Notes | C64U | VICE |
+| --- | --- | --- | --- | --- | --- |
+| `joystick` | Simulate joystick input by writing directly to CIA1 Port A/B registers. | `port`, `controls`, `action` | — |  | ✅ |
+| `key` | Tap a single key or hold it for a duration. | `key` | — |  | ✅ |
+| `write_text` | Send a text string to the keyboard buffer, with PETSCII token expansion. | `text` | — |  | ✅ |
 
 #### c64_memory
 

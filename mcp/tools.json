@@ -2158,6 +2158,19 @@
               "op"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Read VIC-II and CIA2 registers to determine the current graphics mode and memory layout (VICE only).",
+            "properties": {
+              "op": {
+                "const": "get_display_state"
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
           }
         ],
         "discriminator": {
@@ -2220,6 +2233,13 @@
               "imagePath": "./artifacts/sample.png",
               "format": "hires"
             }
+          },
+          {
+            "name": "Read VIC-II state",
+            "description": "Decode graphics mode, memory layout, and colours from VIC-II registers (VICE only)",
+            "arguments": {
+              "op": "get_display_state"
+            }
           }
         ],
         "tags": [
@@ -2234,7 +2254,12 @@
         "platforms": [
           "c64u",
           "vice"
-        ]
+        ],
+        "operationPlatforms": {
+          "get_display_state": [
+            "vice"
+          ]
+        }
       }
     },
     {
@@ -4114,6 +4139,14 @@
                 "description": "Automatically remove after first hit.",
                 "default": false
               },
+              "label": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Optional human-readable label stored in-process.",
+                "maxLength": 64
+              },
               "operations": {
                 "type": [
                   "object",
@@ -4408,6 +4441,82 @@
               "op"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Read CPU registers and return the current monitor state.",
+            "properties": {
+              "op": {
+                "const": "get_monitor_state"
+              },
+              "memspace": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "VICE memory space (0=CPU, 1=Drive8, etc.).",
+                "minimum": 0,
+                "maximum": 4
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Poll CPU registers until PC equals expectedPC or timeout elapses.",
+            "properties": {
+              "op": {
+                "const": "wait_for_state"
+              },
+              "expectedPC": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Target PC address to wait for (e.g. $0810).",
+                "minLength": 1
+              },
+              "timeoutMs": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Maximum wait time in milliseconds.",
+                "minimum": 1,
+                "maximum": 60000,
+                "default": 5000
+              },
+              "pollMs": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Poll interval in milliseconds.",
+                "minimum": 10,
+                "maximum": 1000,
+                "default": 100
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Kill and restart the VICE process (managed instances only).",
+            "properties": {
+              "op": {
+                "const": "nuclear_reset"
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
           }
         ],
         "discriminator": {
@@ -4447,6 +4556,38 @@
             "description": "Read CPU registers from memspace 0 (default).",
             "arguments": {
               "op": "get_registers"
+            }
+          },
+          {
+            "name": "Create labelled breakpoint",
+            "description": "Set a breakpoint at $0810 with a descriptive label.",
+            "arguments": {
+              "op": "create_checkpoint",
+              "address": "$0810",
+              "label": "entry_point"
+            }
+          },
+          {
+            "name": "Get monitor state",
+            "description": "Read current CPU state including all registers and PC.",
+            "arguments": {
+              "op": "get_monitor_state"
+            }
+          },
+          {
+            "name": "Wait for PC",
+            "description": "Poll until PC reaches $0810 or 5 s elapses.",
+            "arguments": {
+              "op": "wait_for_state",
+              "expectedPC": "$0810",
+              "timeoutMs": 5000
+            }
+          },
+          {
+            "name": "Nuclear reset",
+            "description": "Kill and restart the VICE process, clearing all state.",
+            "arguments": {
+              "op": "nuclear_reset"
             }
           }
         ],
@@ -4572,6 +4713,213 @@
         "workflowHints": [
           "Use emulator helpers when running on VICE to inspect or tweak safe runtime resources.",
           "Explain that resource changes only persist for the current emulator session unless saved in VICE manually."
+        ],
+        "platforms": [
+          "vice"
+        ]
+      }
+    },
+    {
+      "name": "c64_input",
+      "title": "Types text, taps keys, and simulates joystick movements in VICE.",
+      "description": "VICE-only keyboard feed and joystick simulation via CIA1 register writes.",
+      "inputSchema": {
+        "type": "object",
+        "description": "Input operations: write_text, key, joystick.",
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Send a text string to the keyboard buffer, with PETSCII token expansion.",
+            "properties": {
+              "op": {
+                "const": "write_text"
+              },
+              "text": {
+                "type": "string",
+                "description": "Text to type. Use {RETURN}, {CLR}, {F1}…{F8}, {UP/DOWN/LEFT/RIGHT}, colour names, etc.",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "delayMs": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Delay in ms after sending (default 0).",
+                "minimum": 0,
+                "maximum": 10000,
+                "default": 0
+              }
+            },
+            "required": [
+              "op",
+              "text"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Tap a single key or hold it for a duration.",
+            "properties": {
+              "op": {
+                "const": "key"
+              },
+              "key": {
+                "type": "string",
+                "description": "Key to press: a printable character, or a PETSCII token name (RETURN, F1…F8, UP, etc.).",
+                "minLength": 1,
+                "maxLength": 32
+              },
+              "durationMs": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "How long to hold the key before releasing (default 0 = instant tap).",
+                "minimum": 0,
+                "maximum": 5000,
+                "default": 0
+              },
+              "count": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Number of times to press the key (default 1).",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 1
+              }
+            },
+            "required": [
+              "op",
+              "key"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Simulate joystick input by writing directly to CIA1 Port A/B registers.",
+            "properties": {
+              "op": {
+                "const": "joystick"
+              },
+              "port": {
+                "type": "integer",
+                "description": "Joystick port (1 = $DC01, 2 = $DC00).",
+                "minimum": 1,
+                "maximum": 2
+              },
+              "controls": {
+                "type": "array",
+                "description": "List of controls to activate simultaneously.",
+                "items": {
+                  "type": "string",
+                  "description": "Control to activate.",
+                  "enum": [
+                    "up",
+                    "down",
+                    "left",
+                    "right",
+                    "fire"
+                  ]
+                },
+                "minItems": 0
+              },
+              "action": {
+                "type": "string",
+                "description": "press = hold until a release call; release = restore all bits; tap = press then release after durationMs.",
+                "enum": [
+                  "press",
+                  "release",
+                  "tap"
+                ]
+              },
+              "durationMs": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Duration to hold for tap action in ms (default 80).",
+                "minimum": 10,
+                "maximum": 5000,
+                "default": 80
+              }
+            },
+            "required": [
+              "op",
+              "port",
+              "controls",
+              "action"
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "discriminator": {
+          "propertyName": "op"
+        }
+      },
+      "_meta": {
+        "domain": "input",
+        "summary": "Types text, taps keys, and simulates joystick movements in VICE.",
+        "lifecycle": "request-response",
+        "resources": [
+          "c64://specs/assembly",
+          "c64://specs/memory-map"
+        ],
+        "prompts": [],
+        "examples": [
+          {
+            "name": "Type BASIC line",
+            "description": "Enter a BASIC line and press RETURN",
+            "arguments": {
+              "op": "write_text",
+              "text": "PRINT \"HELLO\"{RETURN}"
+            }
+          },
+          {
+            "name": "Press F1",
+            "description": "Send the F1 function key",
+            "arguments": {
+              "op": "key",
+              "key": "F1"
+            }
+          },
+          {
+            "name": "Tap joystick right",
+            "description": "Brief rightward tap on joystick port 2",
+            "arguments": {
+              "op": "joystick",
+              "port": 2,
+              "controls": [
+                "right"
+              ],
+              "action": "tap",
+              "durationMs": 80
+            }
+          },
+          {
+            "name": "Press fire on port 1",
+            "description": "Hold fire button on joystick port 1",
+            "arguments": {
+              "op": "joystick",
+              "port": 1,
+              "controls": [
+                "fire"
+              ],
+              "action": "press"
+            }
+          }
+        ],
+        "tags": [
+          "input",
+          "vice",
+          "keyboard",
+          "joystick"
+        ],
+        "workflowHints": [
+          "Use write_text with {RETURN} tokens to automate BASIC entry; prefer key for individual control keys.",
+          "Joystick tap is suitable for one-shot moves; use press/release pairs for timed holds."
         ],
         "platforms": [
           "vice"

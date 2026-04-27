@@ -15,6 +15,7 @@ import { extractModule } from "./extract.js";
 import { streamModule } from "./stream.js";
 import { debugModuleGroup as debugModule } from "../debug.js";
 import { viceModuleGroup as viceModule } from "../vice.js";
+import { inputModuleGroup as inputModule } from "./input.js";
 
 interface RegisteredTool {
   readonly module: ToolModule;
@@ -45,6 +46,7 @@ const modules: readonly ToolModule[] = [
   streamModule,
   debugModule,
   viceModule,
+  inputModule,
 ];
 
 const toolMap: Map<string, RegisteredTool> = new Map();
