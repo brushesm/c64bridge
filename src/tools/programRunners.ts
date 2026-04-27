@@ -1,4 +1,5 @@
-import { assemblyToPrg, AssemblyError } from "../assemblyConverter.js";
+import fs from "node:fs";
+import { assemblyToPrgDetailed, AssemblyError } from "../assemblyConverter.js";
 import { basicToPrg } from "../basicConverter.js";
 import {
   defineToolModule,
@@ -8,7 +9,7 @@ import {
   type ToolExecutionContext,
   type ToolRunResult,
 } from "./types.js";
-import { booleanSchema, objectSchema, stringSchema } from "./schema.js";
+import { booleanSchema, objectSchema, optionalSchema, stringSchema } from "./schema.js";
 import { textResult } from "./responses.js";
 import {
   ToolExecutionError,
@@ -18,6 +19,7 @@ import {
   unknownErrorResult,
 } from "./errors.js";
 import { pollForProgramOutcome } from "./pollValidator.js";
+import { setViceSymbols, parseViceSymbolFile } from "./symbolRegistry.js";
 
 function extractFailureDetails(details: unknown): Record<string, unknown> | undefined {
   if (details === undefined || details === null) {
@@ -320,6 +322,10 @@ const prgFileArgsSchema = objectSchema({
       description: prgPathDescription,
       minLength: 1,
     }),
+    symbolsFile: optionalSchema(stringSchema({
+      description: "Path to a VICE symbol file (.vs) to load alongside the PRG. Symbols are used by the disassemble tool (VICE only).",
+      minLength: 1,
+    })),
   },
   required: ["path"],
   additionalProperties: false,
@@ -556,9 +562,13 @@ async function executeUploadRunAsm(rawArgs: unknown, ctx: ToolExecutionContext):
       ...(shouldVerify ? { verify: true } : {}),
     });
 
-    // Assemble locally to expose structured metadata
-    const prg = assemblyToPrg(parsed.program);
+    // Assemble locally to expose structured metadata and capture symbols
+    const asmResult = assemblyToPrgDetailed(parsed.program);
+    const prg = asmResult.prg;
     const entryAddress = prg.readUInt16LE(0);
+    if (ctx.platform.id === "vice") {
+      setViceSymbols(asmResult.symbols.entries());
+    }
 
     const result = await ctx.client.uploadAndRunAsm(parsed.program);
     if (!result.success) {
@@ -670,6 +680,21 @@ async function executeRunPrg(rawArgs: unknown, ctx: ToolExecutionContext): Promi
     const parsed = prgFileArgsSchema.parse(rawArgs ?? {});
     ctx.logger.info("Running PRG file", { path: parsed.path });
 
+    let symbolsLoaded = 0;
+    if (ctx.platform.id === "vice" && parsed.symbolsFile) {
+      try {
+        const content = fs.readFileSync(parsed.symbolsFile, "utf8");
+        const syms = parseViceSymbolFile(content);
+        setViceSymbols(syms.entries());
+        symbolsLoaded = syms.size;
+        ctx.logger.info("Loaded VICE symbols from file", { path: parsed.symbolsFile, count: symbolsLoaded });
+      } catch (fileError) {
+        throw new ToolExecutionError(`Failed to read symbols file: ${parsed.symbolsFile}`, {
+          details: { message: fileError instanceof Error ? fileError.message : String(fileError) },
+        });
+      }
+    }
+
     const result = await ctx.client.runPrgFile(parsed.path);
     if (!result.success) {
       throw new ToolExecutionError("C64 firmware reported failure while running PRG", {
@@ -683,12 +708,15 @@ async function executeRunPrg(rawArgs: unknown, ctx: ToolExecutionContext): Promi
       path: parsed.path,
       entryAddress: null as number | null,
       resources: ["c64://context/bootstrap"],
+      ...(symbolsLoaded > 0 ? { symbolsLoaded } : {}),
     };
-    const base = textResult(`PRG ${parsed.path} loaded and executed.`, {
+    const symbolNote = symbolsLoaded > 0 ? ` Loaded ${symbolsLoaded} debug symbol(s).` : "";
+    const base = textResult(`PRG ${parsed.path} loaded and executed.${symbolNote}`, {
       success: true,
       path: parsed.path,
       entryAddress: null,
       details: toRecord(result.details) ?? null,
+      ...(symbolsLoaded > 0 ? { symbolsLoaded } : {}),
     });
     return { ...base, structuredContent: { type: "json", data } };
   } catch (error) {

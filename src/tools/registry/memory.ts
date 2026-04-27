@@ -3,7 +3,7 @@ import {
   defineToolModule,
   discriminatedUnionSchema,
 } from "../types.js";
-import { memoryModule, memoryOperationHandlers as groupedMemoryHandlers } from "../memory.js";
+import { memoryModule, memoryOperationHandlers as groupedMemoryHandlers, disassembleArgsSchema } from "../memory.js";
 import { metaModule } from "../meta/index.js";
 import {
   buildDescriptorIndex,
@@ -55,6 +55,15 @@ const memoryOperations: GroupedOperationConfig[] = [
     ),
     handler: async (rawArgs, ctx) => invokeModuleTool(metaModule, "wait_for_screen_text", rawArgs, ctx),
   },
+  {
+    op: "disassemble",
+    schema: extendSchemaWithOp(
+      "disassemble",
+      disassembleArgsSchema.jsonSchema,
+      { description: "Disassemble a memory region into annotated 6502/6510 instructions (VICE only)." },
+    ),
+    handler: groupedMemoryHandlers.disassemble,
+  },
 ];
 
 const memoryOperationHandlers = createOperationHandlers(memoryOperations);
@@ -80,6 +89,7 @@ export const memoryModuleGroup = defineToolModule({
         variants: memoryOperations.map((operation) => operation.schema),
       }),
       tags: ["memory", "screen", "grouped"],
+      operationPlatforms: { disassemble: ["vice"] },
       examples: [
         {
           name: "Read colour RAM",
@@ -90,6 +100,11 @@ export const memoryModuleGroup = defineToolModule({
           name: "Wait for READY prompt",
           description: "Poll until the READY. prompt appears",
           arguments: { op: "wait_for_text", pattern: "READY." },
+        },
+        {
+          name: "Disassemble entry point",
+          description: "Disassemble 20 instructions starting at $0810 (VICE only)",
+          arguments: { op: "disassemble", address: "$0810", instructionCount: 20 },
         },
       ],
       execute: createOperationDispatcher<GenericOperationMap>(

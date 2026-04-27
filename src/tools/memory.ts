@@ -16,6 +16,9 @@ import {
   toolErrorResult,
   unknownErrorResult,
 } from "./errors.js";
+import { disassemble, formatDisassembly } from "./disassembler.js";
+import { getViceSymbols } from "./symbolRegistry.js";
+import { resolveAddressSymbol } from "../knowledge.js";
 
 function toRecord(details: unknown): Record<string, unknown> | undefined {
   if (details && typeof details === "object") {
@@ -411,6 +414,75 @@ async function executeWriteMemory(rawArgs: unknown, ctx: ToolExecutionContext): 
   }
 }
 
+const disassembleArgsSchema = objectSchema({
+  description: "Parameters for disassembling a block of VICE memory into 6502/6510 instructions.",
+  properties: {
+    address: stringSchema({
+      description: "Start address as $HHHH, decimal, or symbol name.",
+      minLength: 1,
+    }),
+    length: numberSchema({
+      description: "Number of bytes to read and disassemble.",
+      integer: true,
+      minimum: 1,
+      maximum: 4096,
+      default: 64,
+    }),
+    instructionCount: optionalSchema(numberSchema({
+      description: "Stop after this many instructions (overrides length as a termination condition).",
+      integer: true,
+      minimum: 1,
+      maximum: 512,
+    })),
+  },
+  required: ["address"],
+  additionalProperties: false,
+});
+
+async function executeDisassemble(rawArgs: unknown, ctx: ToolExecutionContext): Promise<ToolRunResult> {
+  try {
+    const parsed = disassembleArgsSchema.parse(rawArgs ?? {});
+    const length = parsed.length ?? 64;
+    ctx.logger.info("Disassembling VICE memory", { address: parsed.address, length });
+
+    const addrRaw = parsed.address.trim();
+    let address: number;
+    if (/^\$[0-9A-Fa-f]+$/.test(addrRaw)) {
+      address = parseInt(addrRaw.slice(1), 16);
+    } else if (/^[0-9]+$/.test(addrRaw)) {
+      address = parseInt(addrRaw, 10);
+    } else {
+      const resolved = resolveAddressSymbol(addrRaw);
+      if (resolved === undefined) {
+        throw new ToolValidationError(`Unknown address symbol: ${addrRaw}`, { path: "$.address" });
+      }
+      address = resolved;
+    }
+
+    if (address < 0 || address > 0xffff) {
+      throw new ToolValidationError("Address must be in range $0000-$FFFF", { path: "$.address" });
+    }
+
+    const bytes = await ctx.client.readMemoryRaw(address, length);
+    const symbols = getViceSymbols();
+    const lines = disassemble(bytes, address, parsed.instructionCount, symbols);
+    const text = formatDisassembly(lines);
+
+    const addrHex = `$${address.toString(16).toUpperCase().padStart(4, "0")}`;
+    return textResult(`Disassembly of ${lines.length} instructions starting at ${addrHex}:\n\n${text}`, {
+      success: true,
+      address: addrHex,
+      bytesRead: bytes.length,
+      instructionCount: lines.length,
+    });
+  } catch (error) {
+    if (error instanceof ToolError) {
+      return toolErrorResult(error);
+    }
+    return unknownErrorResult(error);
+  }
+}
+
 export interface MemoryOperationMap extends OperationMap {
   readonly read: {
     readonly address: string;
@@ -425,13 +497,21 @@ export interface MemoryOperationMap extends OperationMap {
     readonly abortOnMismatch?: boolean;
   };
   readonly read_screen: Record<string, never>;
+  readonly disassemble: {
+    readonly address: string;
+    readonly length?: number;
+    readonly instructionCount?: number;
+  };
 }
 
 export const memoryOperationHandlers: OperationHandlerMap<MemoryOperationMap> = {
   read: async (args, ctx) => executeReadMemory(stripOperationDiscriminator(args), ctx),
   write: async (args, ctx) => executeWriteMemory(stripOperationDiscriminator(args), ctx),
   read_screen: async (args, ctx) => executeReadScreen(stripOperationDiscriminator(args), ctx),
+  disassemble: async (args, ctx) => executeDisassemble(stripOperationDiscriminator(args), ctx),
 };
+
+export { disassembleArgsSchema };
 
 export const memoryModule = defineToolModule({
   domain: "memory",

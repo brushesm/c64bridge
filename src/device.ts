@@ -437,6 +437,7 @@ export class ViceBackend implements C64Facade {
       port: this.port,
       warp: this.warp,
       visible: this.visible,
+      headless: !this.visible,
       extraArgs: this.extraArgs.length > 0 ? this.extraArgs : undefined,
     });
     this.lastProcessStart = Date.now();

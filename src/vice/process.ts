@@ -12,6 +12,8 @@ export interface ViceProcessOptions {
   visible?: boolean;
   display?: string;
   extraArgs?: string[];
+  /** When true, pass -headless to VICE and skip Xvfb. Requires VICE 3.5+. */
+  headless?: boolean;
 }
 
 export interface ViceProcessHandle {
@@ -135,7 +137,9 @@ export async function terminateProcess(child: ChildProcess | null, signal: NodeJ
 
 export async function startViceProcess(options: ViceProcessOptions): Promise<ViceProcessHandle> {
   const debugEnabled = process.env.VICE_DEVICE_TEST_DEBUG === "1";
-  const { useXvfb, display } = shouldUseXvfb(options.visible);
+  // When headless=true, skip Xvfb entirely and rely on VICE's own -headless flag (VICE 3.5+).
+  const useHeadless = options.headless === true || process.env.VICE_HEADLESS === "1";
+  const { useXvfb, display } = useHeadless ? { useXvfb: false, display: "" } : shouldUseXvfb(options.visible);
   const viceEnv: NodeJS.ProcessEnv = { ...process.env };
   let xvfb: ChildProcess | null = null;
   const xvfbOutput = createOutputTailCapture("xvfb");
@@ -146,6 +150,7 @@ export async function startViceProcess(options: ViceProcessOptions): Promise<Vic
     directory: options.directory,
     display,
     extraArgs: options.extraArgs ?? [],
+    headless: useHeadless,
     host: options.host,
     port: options.port,
     useXvfb,
@@ -186,6 +191,7 @@ export async function startViceProcess(options: ViceProcessOptions): Promise<Vic
     "-binarymonitoraddress", `${options.host}:${options.port}`,
     "-sounddev", "dummy",
     "-config", "/dev/null",
+    ...(useHeadless ? ["-headless"] : []),
     ...(options.directory ? ["-directory", options.directory] : []),
     ...(options.extraArgs ?? []),
   ];
