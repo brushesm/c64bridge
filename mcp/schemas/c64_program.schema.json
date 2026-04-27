@@ -11,6 +11,14 @@
           "description": "Path to the PRG image. Use an Ultimate-visible filesystem path on c64u, or a host-local filesystem path on VICE.",
           "minLength": 1
         },
+        "symbolsFile": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Path to a VICE symbol file (.vs) to load alongside the PRG. Symbols are used by the disassemble tool (VICE only).",
+          "minLength": 1
+        },
         "op": {
           "const": "load_prg"
         }
@@ -28,6 +36,14 @@
         "path": {
           "type": "string",
           "description": "Path to the PRG image. Use an Ultimate-visible filesystem path on c64u, or a host-local filesystem path on VICE.",
+          "minLength": 1
+        },
+        "symbolsFile": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Path to a VICE symbol file (.vs) to load alongside the PRG. Symbols are used by the disassemble tool (VICE only).",
           "minLength": 1
         },
         "op": {

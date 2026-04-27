@@ -660,6 +660,7 @@ Grouped entry point for memory I/O, screen reads, and screen polling.
 
 | Operation | Description | Required Inputs | Notes | C64U | VICE |
 | --- | --- | --- | --- | --- | --- |
+| `disassemble` | Disassemble a memory region into annotated 6502/6510 instructions (VICE only). | `address` | — |  | ✅ |
 | `read` | Read a range of bytes and return a hex dump with address metadata. | `address` | — | ✅ | ✅ |
 | `read_screen` | Return the current 40x25 text screen converted to ASCII. | — | — | ✅ | ✅ |
 | `wait_for_text` | Poll the screen until a substring or regex appears, or timeout elapses. | `pattern` | — | ✅ | ✅ |
