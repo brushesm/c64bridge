@@ -1707,6 +1707,10 @@ export class C64Client {
     return body instanceof ArrayBuffer ? new Uint8Array(body) : this.extractBytes(body);
   }
 
+    async viceExitMonitor(): Promise<void> {
+      await this.withViceMonitor((client) => client.exitMonitor());
+    }
+
     async viceKeyboardFeed(text: string): Promise<void> {
       await this.withViceMonitor((client) => client.keyboardFeed(text));
     }

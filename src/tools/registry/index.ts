@@ -16,6 +16,7 @@ import { streamModule } from "./stream.js";
 import { debugModuleGroup as debugModule } from "../debug.js";
 import { viceModuleGroup as viceModule } from "../vice.js";
 import { inputModuleGroup as inputModule } from "./input.js";
+import { batchModuleGroup as batchModule } from "./batch.js";
 
 interface RegisteredTool {
   readonly module: ToolModule;
@@ -47,6 +48,7 @@ const modules: readonly ToolModule[] = [
   debugModule,
   viceModule,
   inputModule,
+  batchModule,
 ];
 
 const toolMap: Map<string, RegisteredTool> = new Map();

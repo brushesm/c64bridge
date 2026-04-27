@@ -56,6 +56,7 @@ interface DebugOperationMap extends OperationMap {
   readonly get_monitor_state: { readonly memspace?: number };
   readonly wait_for_state: { readonly expectedPC?: string; readonly timeoutMs?: number; readonly pollMs?: number };
   readonly nuclear_reset: Record<string, never>;
+  readonly continue_execution: Record<string, never>;
 }
 
 interface RegisterSelector {
@@ -274,6 +275,15 @@ const nuclearResetArgsSchema = objectSchema({
   additionalProperties: false,
 });
 
+const continueExecutionArgsSchema = objectSchema({
+  description: "Exit the Binary Monitor and resume CPU execution (BM 0xAA Exit).",
+  properties: {
+    op: literalSchema("continue_execution"),
+  },
+  required: ["op"],
+  additionalProperties: false,
+});
+
 const debugOperationSchemas = [
   listCheckpointsArgsSchema,
   getCheckpointArgsSchema,
@@ -289,6 +299,7 @@ const debugOperationSchemas = [
   getMonitorStateArgsSchema,
   waitForStateArgsSchema,
   nuclearResetArgsSchema,
+  continueExecutionArgsSchema,
 ] as const;
 
 const checkpointLabels = new Map<number, string>();
@@ -571,6 +582,16 @@ const debugOperationHandlers: OperationHandlerMap<DebugOperationMap> = {
       return handleToolError(error);
     }
   },
+  continue_execution: async (args, ctx) => {
+    try {
+      continueExecutionArgsSchema.parse(args);
+      await ctx.client.viceExitMonitor();
+      ctx.logger.info("Exited Binary Monitor — CPU resumed");
+      return textResult("Execution resumed.", { success: true });
+    } catch (error) {
+      return handleToolError(error);
+    }
+  },
 };
 
 const debugOperationDispatcher = createOperationDispatcher<DebugOperationMap>(
@@ -634,6 +655,11 @@ export const debugModuleGroup = defineToolModule({
           name: "Nuclear reset",
           description: "Kill and restart the VICE process, clearing all state.",
           arguments: { op: "nuclear_reset" },
+        },
+        {
+          name: "Continue execution",
+          description: "Exit the BM monitor and let the CPU run freely.",
+          arguments: { op: "continue_execution" },
         },
       ],
       execute: debugOperationDispatcher,

@@ -561,9 +561,15 @@ This allows agents to inspect the available tools, resources, prompts, and schem
 
 <!-- AUTO-GENERATED:MCP-DOCS-START -->
 
-This MCP server exposes **16 tools**, **26 resources**, and **10 prompts** for controlling your Commodore 64.
+This MCP server exposes **17 tools**, **26 resources**, and **10 prompts** for controlling your Commodore 64.
 
 ### Tools
+
+#### c64_batch
+
+Execute multiple c64bridge tool calls in a single request. Reduces latency for multi-step workflows.
+
+_No operations defined._
 
 #### c64_config
 
@@ -593,6 +599,7 @@ Grouped entry point for VICE debugger operations (breakpoints, registers, steppi
 
 | Operation | Description | Required Inputs | Notes | C64U | VICE |
 | --- | --- | --- | --- | --- | --- |
+| `continue_execution` | Exit the Binary Monitor and resume CPU execution (BM 0xAA Exit). | — | — |  | ✅ |
 | `create_checkpoint` | Create a new checkpoint (breakpoint) in VICE. | `address` | — |  | ✅ |
 | `delete_checkpoint` | Remove a checkpoint by id. | `id` | — |  | ✅ |
 | `get_checkpoint` | Fetch a single checkpoint by id. | `id` | — |  | ✅ |
@@ -674,9 +681,14 @@ Grouped entry point for memory I/O, screen reads, and screen polling.
 
 | Operation | Description | Required Inputs | Notes | C64U | VICE |
 | --- | --- | --- | --- | --- | --- |
+| `compare_memory` | Compare two memory regions byte-by-byte and report differences. | `address1`, `address2`, `length` | — | ✅ | ✅ |
+| `copy_memory` | Copy a RAM region to another address. | `source`, `dest`, `length` | — | ✅ | ✅ |
 | `disassemble` | Disassemble a memory region into annotated 6502/6510 instructions (VICE only). | `address` | — |  | ✅ |
+| `fill_memory` | Fill a memory range with a repeating byte pattern. | `address`, `length`, `pattern` | — | ✅ | ✅ |
 | `read` | Read a range of bytes and return a hex dump with address metadata. | `address` | — | ✅ | ✅ |
 | `read_screen` | Return the current 40x25 text screen converted to ASCII. | — | — | ✅ | ✅ |
+| `save_memory` | Dump a memory range to a local file, with an optional PRG load-address header. | `startAddress`, `endAddress`, `filePath` | — | ✅ | ✅ |
+| `search_memory` | Search for a byte pattern within a memory range and return matching addresses. | `startAddress`, `endAddress`, `pattern` | — | ✅ | ✅ |
 | `wait_for_text` | Poll the screen until a substring or regex appears, or timeout elapses. | `pattern` | — | ✅ | ✅ |
 | `write` | Write a hexadecimal byte sequence into RAM. | `address`, `bytes` | supports verify | ✅ | ✅ |
 

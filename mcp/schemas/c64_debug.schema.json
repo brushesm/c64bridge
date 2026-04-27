@@ -456,6 +456,19 @@
         "op"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Exit the Binary Monitor and resume CPU execution (BM 0xAA Exit).",
+      "properties": {
+        "op": {
+          "const": "continue_execution"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false
     }
   ],
   "discriminator": {
