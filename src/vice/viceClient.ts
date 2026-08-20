@@ -84,6 +84,21 @@ interface PendingRequest {
 interface SendOptions {
   readonly responseType?: number;
   readonly onFrame?: (type: number, frame: Buffer) => void;
+  readonly timeoutMs?: number;
+}
+
+const DEFAULT_BM_TIMEOUT_MS = 15_000;
+const MAX_MEMSET_CHUNK_SIZE = 4096;
+
+function configuredBmTimeoutMs(): number {
+  const raw = process.env.VICE_BM_TIMEOUT_MS?.trim();
+  if (raw) {
+    const parsed = Number(raw);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return DEFAULT_BM_TIMEOUT_MS;
 }
 
 export class ViceClient {
@@ -219,12 +234,31 @@ export class ViceClient {
     header[10] = cmd;
     const packet = Buffer.concat([header, payload]);
     const expectedCmd = options?.responseType ?? cmd;
+    const timeoutMs = Math.max(1, options?.timeoutMs ?? configuredBmTimeoutMs());
 
     const promise = new Promise<Buffer>((resolve, reject) => {
+      let timeout: NodeJS.Timeout | null = null;
+      const cleanup = () => {
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
+        this.pending.delete(reqId);
+      };
+      timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error(`Timeout waiting for VICE BM response 0x${expectedCmd.toString(16)} to request 0x${cmd.toString(16)} after ${timeoutMs}ms`));
+      }, timeoutMs);
       this.pending.set(reqId, {
         cmd: expectedCmd,
-        resolve,
-        reject,
+        resolve: (frame) => {
+          cleanup();
+          resolve(frame);
+        },
+        reject: (error) => {
+          cleanup();
+          reject(error);
+        },
         onFrame: options?.onFrame,
       });
     });
@@ -260,6 +294,13 @@ export class ViceClient {
   }
 
   async memSet(start: number, payload: Buffer): Promise<void> {
+    if (payload.length > MAX_MEMSET_CHUNK_SIZE) {
+      for (let offset = 0; offset < payload.length; offset += MAX_MEMSET_CHUNK_SIZE) {
+        const chunk = payload.subarray(offset, offset + MAX_MEMSET_CHUNK_SIZE);
+        await this.memSet(start + offset, chunk);
+      }
+      return;
+    }
     const end = start + payload.length - 1;
     const header = Buffer.alloc(1 + 2 + 2 + 1 + 2);
     header[0] = 1; // sidefx=1 (write)

@@ -1725,6 +1725,73 @@ export class C64Client {
       return this.withViceMonitor((client) => client.memGet(address, end));
     }
 
+    async viceMatrixProbe(): Promise<{
+      readonly allRows: number;
+      readonly port1Rows: number;
+      readonly columns: readonly { readonly mask: number; readonly rows: number }[];
+      readonly activeColumns: readonly number[];
+    }> {
+      const ciaPortA = 0xDC00;
+      const ciaPortB = 0xDC01;
+      const ciaDdra = 0xDC02;
+      const ciaDdrb = 0xDC03;
+      const columnMasks = [0xFE, 0xFD, 0xFB, 0xF7, 0xEF, 0xDF, 0xBF, 0x7F];
+
+      return this.withViceMonitor(async (client) => {
+        const readByte = async (address: number): Promise<number> => {
+          const bytes = await client.memGet(address, address);
+          return bytes[0] ?? 0xFF;
+        };
+        const writeByte = async (address: number, value: number): Promise<void> => {
+          await client.memSet(address, Buffer.from([value & 0xFF]));
+        };
+
+        const previousPortA = await readByte(ciaPortA);
+        const previousDdra = await readByte(ciaDdra);
+        const previousDdrb = await readByte(ciaDdrb);
+        let monitorExited = false;
+        try {
+          // Reproduce the scanner's CIA setup and read each active-low row
+          // value while the VICE monitor keeps the CPU stopped.
+          await writeByte(ciaDdra, 0xFF);
+          await writeByte(ciaDdrb, 0x00);
+          await writeByte(ciaPortA, 0x00);
+          const allRows = await readByte(ciaPortB);
+          await writeByte(ciaPortA, 0xFF);
+          const port1Rows = await readByte(ciaPortB);
+
+          const columns: Array<{ readonly mask: number; readonly rows: number }> = [];
+          for (const mask of columnMasks) {
+            await writeByte(ciaPortA, mask);
+            columns.push({ mask, rows: await readByte(ciaPortB) });
+          }
+
+          return {
+            allRows,
+            port1Rows,
+            columns,
+            activeColumns: columns.filter(({ rows }) => rows !== 0xFF).map(({ mask }) => mask),
+          };
+        } finally {
+          // Leave CIA1 in the exact register configuration observed before
+          // the probe, even when a monitor request fails midway through it.
+          try {
+            await writeByte(ciaPortA, previousPortA);
+            await writeByte(ciaDdra, previousDdra);
+            await writeByte(ciaDdrb, previousDdrb);
+          } finally {
+            try {
+              await client.exitMonitor();
+              monitorExited = true;
+            } catch {}
+          }
+          if (!monitorExited) {
+            try { await client.exitMonitor(); } catch {}
+          }
+        }
+      });
+    }
+
     async viceNuclearReset(): Promise<void> {
       const backend = await this.requireViceBackend();
       await backend.nuclearReset();

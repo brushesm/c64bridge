@@ -13,7 +13,7 @@ import {
   optionalSchema,
   stringSchema,
 } from "./schema.js";
-import { textResult } from "./responses.js";
+import { jsonResult, textResult } from "./responses.js";
 import {
   ToolValidationError,
   toolErrorResult,
@@ -116,6 +116,8 @@ const JOYSTICK_BIT: Record<string, number> = {
   fire: 4,
 };
 
+const JOYSTICK_TAP_REASSERT_MS = 1;
+
 function joystickByte(controls: readonly string[]): number {
   let mask = 0xff;
   for (const ctrl of controls) {
@@ -133,6 +135,8 @@ function joystickByte(controls: readonly string[]): number {
 interface InputOperationMap extends OperationMap {
   readonly write_text: { readonly text: string; readonly delayMs?: number };
   readonly key: { readonly key: string; readonly durationMs?: number; readonly count?: number };
+  readonly matrix_probe: Record<string, never>;
+  readonly wait: { readonly durationMs: number };
   readonly joystick: {
     readonly port: 1 | 2;
     readonly controls: readonly string[];
@@ -230,6 +234,30 @@ export const joystickArgsSchema = objectSchema({
   additionalProperties: false,
 });
 
+export const waitArgsSchema = objectSchema({
+  description: "Wait while leaving the emulator running.",
+  properties: {
+    op: literalSchema("wait"),
+    durationMs: numberSchema({
+      description: "Duration to wait in milliseconds.",
+      integer: true,
+      minimum: 1,
+      maximum: 60000,
+    }),
+  },
+  required: ["op", "durationMs"],
+  additionalProperties: false,
+});
+
+export const matrixProbeArgsSchema = objectSchema({
+  description: "Read the VICE CIA1 keyboard matrix directly, without feeding the KERNAL keyboard buffer.",
+  properties: {
+    op: literalSchema("matrix_probe"),
+  },
+  required: ["op"],
+  additionalProperties: false,
+});
+
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
@@ -239,6 +267,7 @@ const inputOperationHandlers: OperationHandlerMap<InputOperationMap> = {
       const parsed = writeTextArgsSchema.parse(args);
       const expanded = expandPetsciiTokens(parsed.text);
       await ctx.client.viceKeyboardFeed(expanded);
+      await ctx.client.viceExitMonitor();
       if (parsed.delayMs && parsed.delayMs > 0) {
         await new Promise<void>((res) => setTimeout(res, parsed.delayMs));
       }
@@ -266,6 +295,7 @@ const inputOperationHandlers: OperationHandlerMap<InputOperationMap> = {
             })();
       for (let i = 0; i < count; i++) {
         await ctx.client.viceKeyboardFeed(keyChar);
+        await ctx.client.viceExitMonitor();
         if (durationMs > 0) {
           await new Promise<void>((res) => setTimeout(res, durationMs));
         }
@@ -274,6 +304,31 @@ const inputOperationHandlers: OperationHandlerMap<InputOperationMap> = {
       return textResult(
         `Pressed '${parsed.key}' ${count} time${count === 1 ? "" : "s"}.`,
         { success: true, key: parsed.key, count, durationMs },
+      );
+    } catch (error) {
+      if (error instanceof ToolValidationError) return toolErrorResult(error);
+      return unknownErrorResult(error);
+    }
+  },
+
+  matrix_probe: async (args, ctx) => {
+    try {
+      matrixProbeArgsSchema.parse(args);
+      const probe = await ctx.client.viceMatrixProbe();
+      return jsonResult(
+        {
+          source: "VICE CIA1 keyboard matrix",
+          allRows: probe.allRows,
+          port1Rows: probe.port1Rows,
+          columns: probe.columns,
+          activeColumns: probe.activeColumns,
+          physicalMatrixDetected: probe.allRows !== 0xFF || probe.activeColumns.length > 0,
+        },
+        {
+          success: true,
+          source: "cia1-matrix",
+          physicalMatrixDetected: probe.allRows !== 0xFF || probe.activeColumns.length > 0,
+        },
       );
     } catch (error) {
       if (error instanceof ToolValidationError) return toolErrorResult(error);
@@ -292,12 +347,14 @@ const inputOperationHandlers: OperationHandlerMap<InputOperationMap> = {
 
       if (parsed.action === "release") {
         await ctx.client.viceMemSet(addr, Uint8Array.of(releasedByte));
+        await ctx.client.viceExitMonitor();
         ctx.logger.info("Released joystick", { port, address: `$${addr.toString(16).toUpperCase()}` });
         return textResult(`Joystick port ${port} released.`, { success: true, port, action: "release" });
       }
 
       if (parsed.action === "press") {
         await ctx.client.viceMemSet(addr, Uint8Array.of(pressedByte));
+        await ctx.client.viceExitMonitor();
         ctx.logger.info("Pressed joystick", { port, controls: parsed.controls, byte: pressedByte });
         return textResult(
           `Joystick port ${port} pressed: ${parsed.controls.join(", ") || "none"}.`,
@@ -305,15 +362,32 @@ const inputOperationHandlers: OperationHandlerMap<InputOperationMap> = {
         );
       }
 
-      // tap: press → wait → release
-      await ctx.client.viceMemSet(addr, Uint8Array.of(pressedByte));
-      await new Promise<void>((res) => setTimeout(res, durationMs));
+      // tap: keep the CIA latch asserted long enough for programs that scan the
+      // keyboard matrix between joystick polls, even while VICE is in warp.
+      const startedAt = Date.now();
+      do {
+        await ctx.client.viceMemSet(addr, Uint8Array.of(pressedByte));
+        await ctx.client.viceExitMonitor();
+        await new Promise<void>((res) => setTimeout(res, Math.min(JOYSTICK_TAP_REASSERT_MS, durationMs)));
+      } while (Date.now() - startedAt < durationMs);
       await ctx.client.viceMemSet(addr, Uint8Array.of(releasedByte));
+      await ctx.client.viceExitMonitor();
       ctx.logger.info("Tapped joystick", { port, controls: parsed.controls, durationMs });
       return textResult(
         `Joystick port ${port} tapped: ${parsed.controls.join(", ") || "none"} for ${durationMs}ms.`,
         { success: true, port, action: "tap", controls: parsed.controls, durationMs },
       );
+    } catch (error) {
+      if (error instanceof ToolValidationError) return toolErrorResult(error);
+      return unknownErrorResult(error);
+    }
+  },
+
+  wait: async (args) => {
+    try {
+      const parsed = waitArgsSchema.parse(args);
+      await new Promise<void>((res) => setTimeout(res, parsed.durationMs));
+      return textResult(`Waited ${parsed.durationMs}ms.`, { success: true, durationMs: parsed.durationMs });
     } catch (error) {
       if (error instanceof ToolValidationError) return toolErrorResult(error);
       return unknownErrorResult(error);
@@ -326,7 +400,7 @@ const inputOperationHandlers: OperationHandlerMap<InputOperationMap> = {
 // ---------------------------------------------------------------------------
 export const inputModule = defineToolModule({
   domain: "input",
-  summary: "VICE-only keyboard and joystick input simulation.",
+  summary: "VICE-only keyboard, CIA matrix, and joystick input diagnostics.",
   supportedPlatforms: ["vice"],
   resources: ["c64://specs/assembly", "c64://specs/memory-map"],
   prompts: [],
@@ -338,15 +412,17 @@ export const inputModule = defineToolModule({
   tools: [
     {
       name: "c64_input",
-      description: "VICE-only keyboard feed and joystick simulation via CIA1 register writes.",
-      summary: "Types text, taps keys, and simulates joystick movements in VICE.",
+      description: "VICE-only keyboard feed, direct CIA1 matrix probe, and joystick simulation.",
+      summary: "Types text, probes the CIA keyboard matrix, and simulates joystick movements in VICE.",
       inputSchema: {
         type: "object",
-        description: "Input operations: write_text, key, joystick.",
+        description: "Input operations: write_text, key, matrix_probe, joystick, wait.",
         oneOf: [
           writeTextArgsSchema.jsonSchema,
           keyArgsSchema.jsonSchema,
+          matrixProbeArgsSchema.jsonSchema,
           joystickArgsSchema.jsonSchema,
+          waitArgsSchema.jsonSchema,
         ],
         discriminator: { propertyName: "op" },
       },
@@ -361,6 +437,11 @@ export const inputModule = defineToolModule({
           name: "Press F1",
           description: "Send the F1 function key",
           arguments: { op: "key", key: "F1" },
+        },
+        {
+          name: "Probe CIA keyboard matrix",
+          description: "Read active-low CIA1 row values while a real VICE key is held.",
+          arguments: { op: "matrix_probe" },
         },
         {
           name: "Tap joystick right",

@@ -97,11 +97,15 @@ async function main() {
   const initialBackendType = await withDiagnosticSpan("startup", "resolve_active_backend", {}, () => client.getActiveBackendType());
   setPlatform(initialBackendType);
   writeDiagnosticEvent("platform_initialised", { platform: initialBackendType });
-  void withDiagnosticSpan("startup", "prewarm_backends", { backends: ["vice"] }, () => client.prewarmBackends(["vice"])).then((results) => {
-    writeDiagnosticEvent("backend_prewarm_complete", { results });
-  }).catch((error) => {
-    writeDiagnosticEvent("backend_prewarm_failed", { error });
-  });
+  if (process.env.C64BRIDGE_PREWARM !== "0") {
+    void withDiagnosticSpan("startup", "prewarm_backends", { backends: ["vice"] }, () => client.prewarmBackends(["vice"])).then((results) => {
+      writeDiagnosticEvent("backend_prewarm_complete", { results });
+    }).catch((error) => {
+      writeDiagnosticEvent("backend_prewarm_failed", { error });
+    });
+  } else {
+    writeDiagnosticEvent("backend_prewarm_skipped", { reason: "C64BRIDGE_PREWARM=0" });
+  }
   const rag: RagRetriever = createLazyRagRetriever(() => initRag(), {
     onInitStart() {
       writeDiagnosticEvent("rag_init_start");

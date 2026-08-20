@@ -45,6 +45,40 @@ test("registry only exposes grouped tool names", () => {
   }
 });
 
+test("c64_input matrix_probe delegates to the direct CIA probe", async () => {
+  const calls = [];
+  const ctx = {
+    client: {
+      async viceMatrixProbe() {
+        calls.push("viceMatrixProbe");
+        return {
+          allRows: 0xff,
+          port1Rows: 0xff,
+          columns: [{ mask: 0xfe, rows: 0xef }],
+          activeColumns: [0xfe],
+        };
+      },
+    },
+    rag: {},
+    logger: {
+      debug() {},
+      info() {},
+      warn() {},
+      error() {},
+    },
+    platform: { id: "vice", features: [], limitedFeatures: [] },
+    setPlatform,
+  };
+
+  const result = await toolRegistry.invoke("c64_input", { op: "matrix_probe" }, ctx);
+
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(calls, ["viceMatrixProbe"]);
+  assert.equal(result.structuredContent?.data?.physicalMatrixDetected, true);
+  assert.deepEqual(result.structuredContent?.data?.activeColumns, [0xfe]);
+  assert.equal(result.metadata?.source, "cia1-matrix");
+});
+
 test("c64_program run_prg delegates to legacy handler", async () => {
   const calls = [];
   const stubClient = {

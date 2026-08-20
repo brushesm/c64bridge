@@ -24,6 +24,18 @@ export interface ViceProcessHandle {
 }
 
 const DEFAULT_DISPLAY = ":99";
+const DEFAULT_REMOTE_MONITOR_PORT = 6510;
+
+function viceMonitorAddress(host: string, port: number): string {
+  if (host.includes("://")) return `${host}:${port}`;
+  if (host === "127.0.0.1" || host.toLowerCase() === "localhost") {
+    return `ip4://${host}:${port}`;
+  }
+  if (host === "::1" || host.includes(":")) {
+    return `ip6://[${host}]:${port}`;
+  }
+  return `ip4://${host}:${port}`;
+}
 
 export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -70,7 +82,7 @@ export function shouldUseXvfb(visible: boolean | undefined): { useXvfb: boolean;
   return { useXvfb: true, display: process.env.VICE_XVFB_DISPLAY ?? DEFAULT_DISPLAY };
 }
 
-export async function waitForPort(host: string, port: number, timeoutMs = 4000): Promise<void> {
+export async function waitForPort(host: string, port: number, timeoutMs = 20_000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
@@ -92,7 +104,36 @@ export async function waitForPort(host: string, port: number, timeoutMs = 4000):
   throw new Error(`Timeout waiting for VICE monitor at ${host}:${port}`);
 }
 
-async function waitForXvfb(display: string, timeoutMs = 5_000): Promise<void> {
+function xvfbTcpPort(display: string): number | undefined {
+  const match = /^:([0-9]+)/.exec(display.trim());
+  if (!match) return undefined;
+  return 6000 + Number(match[1]);
+}
+
+function xvfbTcpDisplay(display: string): string {
+  return display.startsWith(":") ? `localhost${display}` : display;
+}
+
+function configuredRemoteMonitorPort(binaryPort: number): number {
+  const raw = process.env.VICE_REMOTE_MONITOR_PORT?.trim();
+  if (raw) {
+    const value = Number(raw);
+    if (Number.isInteger(value) && value > 0 && value < 65536) return value;
+  }
+  return binaryPort === DEFAULT_REMOTE_MONITOR_PORT ? DEFAULT_REMOTE_MONITOR_PORT + 1 : DEFAULT_REMOTE_MONITOR_PORT;
+}
+
+async function waitForXvfb(display: string, useTcp: boolean, timeoutMs = 5_000): Promise<void> {
+  if (useTcp) {
+    const port = xvfbTcpPort(display);
+    if (port === undefined) {
+      await delay(500);
+      return;
+    }
+    await waitForPort("127.0.0.1", port, timeoutMs);
+    return;
+  }
+
   const match = /^:([0-9]+)/.exec(display.trim());
   if (!match) {
     await delay(500);
@@ -137,9 +178,13 @@ export async function terminateProcess(child: ChildProcess | null, signal: NodeJ
 
 export async function startViceProcess(options: ViceProcessOptions): Promise<ViceProcessHandle> {
   const debugEnabled = process.env.VICE_DEVICE_TEST_DEBUG === "1";
-  // When headless=true, skip Xvfb entirely and rely on VICE's own -headless flag (VICE 3.5+).
-  const useHeadless = options.headless === true || process.env.VICE_HEADLESS === "1";
+  // Some VICE builds used in this workspace do not support -headless, but can
+  // still run under SDL's dummy video driver. VICE_DISABLE_HEADLESS=1 keeps
+  // the no-Xvfb launch path without passing the unsupported flag.
+  const disableHeadlessFlag = process.env.VICE_DISABLE_HEADLESS === "1";
+  const useHeadless = !disableHeadlessFlag && (options.headless === true || process.env.VICE_HEADLESS === "1");
   const { useXvfb, display } = useHeadless ? { useXvfb: false, display: "" } : shouldUseXvfb(options.visible);
+  const useXvfbTcp = useXvfb && process.env.VICE_XVFB_TCP === "1";
   const viceEnv: NodeJS.ProcessEnv = { ...process.env };
   let xvfb: ChildProcess | null = null;
   const xvfbOutput = createOutputTailCapture("xvfb");
@@ -154,6 +199,7 @@ export async function startViceProcess(options: ViceProcessOptions): Promise<Vic
     host: options.host,
     port: options.port,
     useXvfb,
+    useXvfbTcp,
     visible: options.visible === true,
     warp: options.warp !== false,
   });
@@ -163,7 +209,11 @@ export async function startViceProcess(options: ViceProcessOptions): Promise<Vic
     if (debugEnabled) {
       console.error("[vice-process] launching Xvfb", { display });
     }
-    xvfb = spawn("Xvfb", [display, "-screen", "0", "640x480x24"], { stdio: ["ignore", "pipe", "pipe"] });
+    const xvfbArgs = [display, "-screen", "0", "640x480x24"];
+    if (useXvfbTcp) {
+      xvfbArgs.push("-nolisten", "unix", "-listen", "tcp");
+    }
+    xvfb = spawn("Xvfb", xvfbArgs, { stdio: ["ignore", "pipe", "pipe"] });
     if (debugEnabled) {
       console.error("[vice-process] Xvfb pid", { pid: xvfb.pid });
     }
@@ -182,13 +232,15 @@ export async function startViceProcess(options: ViceProcessOptions): Promise<Vic
         output: xvfbOutput.snapshot(),
       });
     });
-    viceEnv.DISPLAY = display;
-    await waitForXvfb(display);
+    viceEnv.DISPLAY = useXvfbTcp ? xvfbTcpDisplay(display) : display;
+    await waitForXvfb(display, useXvfbTcp);
   }
 
   const args = [
+    "-remotemonitor",
+    "-remotemonitoraddress", viceMonitorAddress(options.host, configuredRemoteMonitorPort(options.port)),
     "-binarymonitor",
-    "-binarymonitoraddress", `${options.host}:${options.port}`,
+    "-binarymonitoraddress", viceMonitorAddress(options.host, options.port),
     "-sounddev", "dummy",
     "-config", "/dev/null",
     ...(useHeadless ? ["-headless"] : []),

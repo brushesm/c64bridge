@@ -667,12 +667,14 @@ Grouped entry point for frame capture and graphics rendering workflows.
 
 #### c64_input
 
-VICE-only keyboard feed and joystick simulation via CIA1 register writes.
+VICE-only keyboard feed, direct CIA1 matrix probe, and joystick simulation.
 
 | Operation | Description | Required Inputs | Notes | C64U | VICE |
 | --- | --- | --- | --- | --- | --- |
 | `joystick` | Simulate joystick input by writing directly to CIA1 Port A/B registers. | `port`, `controls`, `action` | — |  | ✅ |
 | `key` | Tap a single key or hold it for a duration. | `key` | — |  | ✅ |
+| `matrix_probe` | Read the VICE CIA1 keyboard matrix directly, without feeding the KERNAL keyboard buffer. | — | — |  | ✅ |
+| `wait` | Wait while leaving the emulator running. | `durationMs` | — |  | ✅ |
 | `write_text` | Send a text string to the keyboard buffer, with PETSCII token expansion. | `text` | — |  | ✅ |
 
 #### c64_memory

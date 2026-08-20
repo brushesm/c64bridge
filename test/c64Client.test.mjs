@@ -711,3 +711,39 @@ test("C64Client backend selection and switching", async (t) => {
     );
   });
 });
+
+test("C64Client VICE matrix probe restores CIA1 registers", async () => {
+  const vice = await startViceMockServer({ host: "127.0.0.1", port: 0 });
+
+  try {
+    await withConfigScenario(
+      {
+        envConfig: { vice: { host: "127.0.0.1", port: vice.port } },
+        repoConfig: null,
+        homeConfig: null,
+        mode: "vice",
+      },
+      async () => withEnv({ VICE_TEST_TARGET: "mock" }, async () => {
+        const client = new C64Client("http://unused.local", { forceC64uFacade: false });
+        assert.equal(await client.getActiveBackendType(), "vice");
+
+        await client.viceMemSet(0xDC00, Uint8Array.of(0xA5));
+        await client.viceMemSet(0xDC02, Uint8Array.of(0x12));
+        await client.viceMemSet(0xDC03, Uint8Array.of(0x34));
+
+        const probe = await client.viceMatrixProbe();
+
+        assert.equal(probe.allRows, 0x00);
+        assert.equal(probe.port1Rows, 0x00);
+        assert.deepEqual(probe.columns.map(({ mask }) => mask), [0xFE, 0xFD, 0xFB, 0xF7, 0xEF, 0xDF, 0xBF, 0x7F]);
+        assert.deepEqual(probe.activeColumns, [0xFE, 0xFD, 0xFB, 0xF7, 0xEF, 0xDF, 0xBF, 0x7F]);
+
+        assert.deepEqual(Array.from(await client.viceMemGet(0xDC00, 1)), [0xA5]);
+        assert.deepEqual(Array.from(await client.viceMemGet(0xDC02, 1)), [0x12]);
+        assert.deepEqual(Array.from(await client.viceMemGet(0xDC03, 1)), [0x34]);
+      }),
+    );
+  } finally {
+    await vice.stop();
+  }
+});

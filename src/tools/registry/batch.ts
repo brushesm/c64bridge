@@ -127,7 +127,7 @@ export const batchModuleGroup = defineToolModule({
               const elapsedMs = Date.now() - cmdStart;
               const isError = toolResult.isError === true;
               const text = toolResult.content.map((c) => c.text).join("\n");
-              const resultPayload = toolResult.structuredContent?.data ?? text;
+              const resultPayload = toolResult.structuredContent?.data ?? toolResult.metadata ?? text;
               if (isError) {
                 results.push({ index: i, tool: toolName, description: label, success: false, error: text, elapsedMs });
                 failed++;

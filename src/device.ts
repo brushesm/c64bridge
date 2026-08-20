@@ -5,6 +5,7 @@
 import axios from "axios";
 import { Buffer } from "node:buffer";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { Api } from "../generated/c64/index.js";
@@ -12,6 +13,10 @@ import { createLoggingHttpClient } from "./loggingHttpClient.js";
 import { ViceClient } from "./vice/viceClient.js";
 import { waitForBasicReady } from "./vice/readiness.js";
 import { startViceProcess, type ViceProcessHandle } from "./vice/process.js";
+import { writeDiagnosticEvent } from "./diagnostics.js";
+
+const C64_ADDRESS_MAX = 0xffff;
+const BASIC_POINTER_BLOCK = 0x002b;
 
 export type DeviceType = "c64u" | "vice";
 
@@ -93,6 +98,8 @@ const DEFAULT_C64U_HOST = "c64u";
 const DEFAULT_C64U_PORT = 80;
 const DEFAULT_VICE_HOST = "127.0.0.1";
 const DEFAULT_VICE_PORT = 6502;
+const DEFAULT_VICE_REMOTE_MONITOR_PORT = 6510;
+const DEFAULT_VICE_START_RETRIES = 5;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -346,7 +353,7 @@ export class ViceBackend implements C64Facade {
     this.mockMode = (process.env.VICE_TEST_TARGET || "").toLowerCase() === "mock";
     const hostLower = this.host.toLowerCase();
     const isLocal = hostLower === "127.0.0.1" || hostLower === "localhost";
-    this.manageProcess = !this.mockMode && isLocal;
+    this.manageProcess = !this.mockMode && isLocal && process.env.VICE_MANAGE_PROCESS !== "0";
 
     const warpEnv = configuredBoolean(process.env.VICE_WARP);
     const visibleEnv = configuredBoolean(process.env.VICE_VISIBLE);
@@ -430,29 +437,53 @@ export class ViceBackend implements C64Facade {
         extraArgs: this.extraArgs,
       });
     }
-    const handle = await startViceProcess({
-      binary: this.exe,
-      directory: this.directory,
-      host: this.host,
-      port: this.port,
-      warp: this.warp,
-      visible: this.visible,
-      headless: !this.visible,
-      extraArgs: this.extraArgs.length > 0 ? this.extraArgs : undefined,
-    });
-    this.lastProcessStart = Date.now();
-    if (this.debugEnabled) {
-      console.error("[vice-backend] VICE process started", { pid: handle.process.pid });
+    const attempts = configuredPositiveInteger(process.env.VICE_START_RETRIES, DEFAULT_VICE_START_RETRIES);
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      let handle: ViceProcessHandle | null = null;
+      try {
+        handle = await startViceProcess({
+          binary: this.exe,
+          directory: this.directory,
+          host: this.host,
+          port: this.port,
+          warp: this.warp,
+          visible: this.visible,
+          headless: !this.visible,
+          extraArgs: this.extraArgs.length > 0 ? this.extraArgs : undefined,
+        });
+        this.lastProcessStart = Date.now();
+        if (this.debugEnabled) {
+          console.error("[vice-backend] VICE process started", { pid: handle.process.pid, attempt, attempts });
+        }
+        ViceBackend.supervisors.set(key, handle);
+        handle.process.once("exit", () => {
+          ViceBackend.supervisors.delete(key);
+        });
+        // Allow VICE to fully initialize its display before connecting to the monitor.
+        // Early monitor connection can interfere with the boot sequence.
+        await delay(1000);
+        await this.waitForResponsiveMonitor(20_000);
+        await this.waitForUsableMachine(20_000);
+        return;
+      } catch (err) {
+        lastError = err;
+        if (handle) {
+          try { await handle.stop(); } catch {}
+        }
+        ViceBackend.supervisors.delete(key);
+        if (attempt >= attempts) break;
+        if (this.debugEnabled) {
+          console.error("[vice-backend] VICE start attempt failed", {
+            attempt,
+            attempts,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        await delay(1000);
+      }
     }
-    ViceBackend.supervisors.set(key, handle);
-    handle.process.once("exit", () => {
-      ViceBackend.supervisors.delete(key);
-    });
-    // Allow VICE to fully initialize its display before connecting to the monitor.
-    // Early monitor connection can interfere with the boot sequence.
-    await delay(1000);
-    await this.waitForResponsiveMonitor(20_000);
-    await this.waitForUsableMachine(20_000);
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 
   private async ensureProcess(): Promise<void> {
@@ -516,6 +547,66 @@ export class ViceBackend implements C64Facade {
     return this.withClient(fn);
   }
 
+  private async sendRemoteMonitorCommands(
+    commands: readonly string[],
+    options: number | { timeoutMs?: number; exitDelayMs?: number; settleDelayMs?: number } = {},
+  ): Promise<string> {
+    const monitorOptions = typeof options === "number" ? { timeoutMs: options } : options;
+    const timeoutMs = monitorOptions.timeoutMs ?? 5_000;
+    const exitDelayMs = monitorOptions.exitDelayMs ?? 500;
+    const settleDelayMs = monitorOptions.settleDelayMs ?? 500;
+    const previous = this.monitorQueue;
+    let releaseQueue: () => void = () => {};
+    this.monitorQueue = new Promise<void>((resolve) => {
+      releaseQueue = resolve;
+    });
+
+    await previous;
+    try {
+      if (!this.mockMode) await this.ensureProcess();
+      const remotePort = configuredViceRemoteMonitorPort(this.port);
+      return await new Promise<string>((resolve, reject) => {
+        const chunks: string[] = [];
+        let settled = false;
+        let closeTimer: NodeJS.Timeout | null = null;
+        const socket = net.connect({ host: this.host, port: remotePort });
+
+        const settle = (error?: Error) => {
+          if (settled) return;
+          settled = true;
+          if (closeTimer) clearTimeout(closeTimer);
+          socket.destroy();
+          const output = chunks.join("");
+          if (error) reject(error);
+          else resolve(output);
+        };
+
+        socket.setEncoding("utf8");
+        socket.setTimeout(timeoutMs, () => {
+          settle(new Error(`Timeout waiting for VICE remote monitor at ${this.host}:${remotePort}`));
+        });
+        socket.on("data", (chunk) => {
+          chunks.push(String(chunk));
+        });
+        socket.on("error", (error) => {
+          settle(error);
+        });
+        socket.on("close", () => {
+          settle();
+        });
+        socket.on("connect", () => {
+          socket.write(`${commands.join("\n")}\n`);
+          closeTimer = setTimeout(() => {
+            socket.write("x\n");
+            closeTimer = setTimeout(() => settle(), settleDelayMs);
+          }, exitDelayMs);
+        });
+      });
+    } finally {
+      releaseQueue();
+    }
+  }
+
   async ping(): Promise<boolean> {
     const attempts = 8;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -540,19 +631,68 @@ export class ViceBackend implements C64Facade {
     if (buffer.length < 2) throw new Error("PRG data too short");
     const loadAddress = buffer.readUInt16LE(0);
     const body = buffer.subarray(2);
-    await this.withClient(async (client) => {
-      await client.reset();
-      await waitForBasicReady(client, { timeoutMs: 10_000, ensurePrompt: true });
-      if (body.length > 0) await client.memSet(loadAddress, body);
-      const programEnd = loadAddress + body.length;
-      const ptrs = Buffer.alloc(8);
-      ptrs.writeUInt16LE(loadAddress, 0);
-      ptrs.writeUInt16LE(programEnd, 2);
-      ptrs.writeUInt16LE(programEnd, 4);
-      ptrs.writeUInt16LE(programEnd, 6);
-      await client.memSet(0x002B, ptrs);
-      await client.keyboardFeed("RUN\r");
-      await client.exitMonitor();
+    let step = "start";
+    const resetBeforeRun = configuredBoolean(process.env.VICE_RUN_PRG_RESET) === true;
+    writeDiagnosticEvent("vice_run_prg_inject_start", {
+      loadAddress: `0x${loadAddress.toString(16).padStart(4, "0")}`,
+      bodyLength: body.length,
+      resetBeforeRun,
+    });
+    try {
+      if (resetBeforeRun) {
+        await this.withClient(async (client) => {
+          step = "reset";
+          await client.reset();
+        });
+        writeDiagnosticEvent("vice_run_prg_inject_step", { step, outcome: "ok" });
+        await delay(750);
+      } else {
+        writeDiagnosticEvent("vice_run_prg_inject_step", { step: "reset", outcome: "skipped" });
+      }
+
+      await this.withClient(async (client) => {
+        step = "wait_basic";
+        const readiness = await waitForBasicReady(client, { timeoutMs: 10_000, ensurePrompt: true });
+        writeDiagnosticEvent("vice_run_prg_inject_step", { step, outcome: "ok", readiness });
+
+        step = "write_body";
+        if (body.length > 0) await client.memSet(loadAddress, body);
+        writeDiagnosticEvent("vice_run_prg_inject_step", { step, outcome: "ok", length: body.length });
+
+        const programEnd = loadAddress + body.length;
+        const basicProgramEnd = Math.min(programEnd, C64_ADDRESS_MAX);
+        const ptrs = Buffer.alloc(8);
+        ptrs.writeUInt16LE(loadAddress, 0);
+        ptrs.writeUInt16LE(basicProgramEnd, 2);
+        ptrs.writeUInt16LE(basicProgramEnd, 4);
+        ptrs.writeUInt16LE(basicProgramEnd, 6);
+
+        step = "write_basic_pointers";
+        await client.memSet(BASIC_POINTER_BLOCK, ptrs);
+        writeDiagnosticEvent("vice_run_prg_inject_step", {
+          step,
+          outcome: "ok",
+          basicProgramEnd: `0x${basicProgramEnd.toString(16).padStart(4, "0")}`,
+        });
+
+        step = "keyboard_run";
+        await client.keyboardFeed("RUN\r");
+        writeDiagnosticEvent("vice_run_prg_inject_step", { step, outcome: "ok" });
+
+        step = "exit_monitor";
+        await client.exitMonitor();
+        writeDiagnosticEvent("vice_run_prg_inject_step", { step, outcome: "ok" });
+      });
+    } catch (error) {
+      writeDiagnosticEvent("vice_run_prg_inject_failed", {
+        step,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+    writeDiagnosticEvent("vice_run_prg_inject_done", {
+      loadAddress: `0x${loadAddress.toString(16).padStart(4, "0")}`,
+      bodyLength: body.length,
     });
   }
 
@@ -565,9 +705,85 @@ export class ViceBackend implements C64Facade {
   async loadPrgFile(_path: string): Promise<RunResult> { throw unsupported("loadPrgFile"); }
 
   async runPrgFile(prgPath: string): Promise<RunResult> {
-    const data = fs.readFileSync(prgPath);
-    await this.injectPrg(data);
-    return { success: true };
+    const resolvedPath = path.resolve(prgPath);
+    const data = fs.readFileSync(resolvedPath);
+    if (data.length < 2) throw new Error("PRG data too short");
+    const loadAddress = data.readUInt16LE(0);
+    const bodyLength = data.length - 2;
+    const resetBeforeRun = configuredBoolean(process.env.VICE_RUN_PRG_RESET) === true;
+    let step = "start";
+
+    writeDiagnosticEvent("vice_run_prg_file_start", {
+      path: resolvedPath,
+      loadAddress: `0x${loadAddress.toString(16).padStart(4, "0")}`,
+      bodyLength,
+      resetBeforeRun,
+    });
+
+    try {
+      if (resetBeforeRun) {
+        await this.withClient(async (client) => {
+          step = "reset";
+          await client.reset();
+        });
+        writeDiagnosticEvent("vice_run_prg_file_step", { step, outcome: "ok" });
+        await delay(750);
+      } else {
+        writeDiagnosticEvent("vice_run_prg_file_step", { step: "reset", outcome: "skipped" });
+      }
+
+      await this.withClient(async (client) => {
+        step = "wait_basic";
+        const readiness = await waitForBasicReady(client, { timeoutMs: 10_000, ensurePrompt: true });
+        writeDiagnosticEvent("vice_run_prg_file_step", { step, outcome: "ok", readiness });
+      });
+
+      step = "monitor_load";
+      const monitorOutput = await this.sendRemoteMonitorCommands([
+        `l "${escapeViceMonitorString(resolvedPath)}" 0`,
+      ], { timeoutMs: 30_000, exitDelayMs: 2_000, settleDelayMs: 500 });
+      writeDiagnosticEvent("vice_run_prg_file_step", { step, outcome: "ok", monitorOutput });
+
+      await this.withClient(async (client) => {
+        const programEnd = loadAddress + bodyLength;
+        const basicProgramEnd = Math.min(programEnd, C64_ADDRESS_MAX);
+        const ptrs = Buffer.alloc(8);
+        ptrs.writeUInt16LE(loadAddress, 0);
+        ptrs.writeUInt16LE(basicProgramEnd, 2);
+        ptrs.writeUInt16LE(basicProgramEnd, 4);
+        ptrs.writeUInt16LE(basicProgramEnd, 6);
+
+        step = "write_basic_pointers";
+        await client.memSet(BASIC_POINTER_BLOCK, ptrs);
+        writeDiagnosticEvent("vice_run_prg_file_step", {
+          step,
+          outcome: "ok",
+          basicProgramEnd: `0x${basicProgramEnd.toString(16).padStart(4, "0")}`,
+        });
+
+        step = "keyboard_run";
+        await client.keyboardFeed("RUN\r");
+        writeDiagnosticEvent("vice_run_prg_file_step", { step, outcome: "ok" });
+
+        step = "exit_monitor";
+        await client.exitMonitor();
+        writeDiagnosticEvent("vice_run_prg_file_step", { step, outcome: "ok" });
+      });
+
+      writeDiagnosticEvent("vice_run_prg_file_done", {
+        path: resolvedPath,
+        loadAddress: `0x${loadAddress.toString(16).padStart(4, "0")}`,
+        bodyLength,
+      });
+      return { success: true, details: { path: resolvedPath, monitor: monitorOutput } };
+    } catch (error) {
+      writeDiagnosticEvent("vice_run_prg_file_failed", {
+        step,
+        path: resolvedPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   }
   async runCrtFile(_path: string): Promise<RunResult> { throw unsupported("runCrtFile"); }
   async sidplayFile(_p: string): Promise<RunResult> { throw unsupported("sidplayFile"); }
@@ -720,19 +936,24 @@ export class ViceBackend implements C64Facade {
 
   async driveMount(drive: string, imagePath: string): Promise<RunResult> {
     const n = parseDriveNumber(drive);
+    const resolvedImagePath = path.resolve(imagePath);
+    if (!fs.existsSync(resolvedImagePath)) {
+      throw new Error(`Disk image does not exist: ${resolvedImagePath}`);
+    }
     await this.withClient(async (client) => {
-      await client.resourceSet(`Drive${n}CPUEnabled`, 1);
-      await client.resourceSet(`Drive${n}Image`, imagePath);
+      await client.resourceSet(`Drive${n}TrueEmulation`, 1);
+      await client.resourceSet(`Drive${n}Type`, 1542);
     });
-    return { success: true, details: { drive, image: imagePath } };
+    const output = await this.sendRemoteMonitorCommands([
+      `attach "${escapeViceMonitorString(resolvedImagePath)}" ${n}`,
+    ]);
+    return { success: true, details: { drive, image: resolvedImagePath, monitor: output } };
   }
 
   async driveRemove(drive: string): Promise<RunResult> {
     const n = parseDriveNumber(drive);
-    await this.withClient(async (client) => {
-      await client.resourceSet(`Drive${n}Image`, "");
-    });
-    return { success: true, details: { drive } };
+    const output = await this.sendRemoteMonitorCommands([`detach ${n}`]);
+    return { success: true, details: { drive, monitor: output } };
   }
 
   async driveReset(drive: string): Promise<RunResult> {
@@ -762,7 +983,7 @@ export class ViceBackend implements C64Facade {
 
   async driveSetMode(drive: string, mode: "1541" | "1571" | "1581"): Promise<RunResult> {
     const n = parseDriveNumber(drive);
-    const DRIVE_TYPE: Record<string, number> = { "1541": 2, "1571": 8, "1581": 11 };
+    const DRIVE_TYPE: Record<string, number> = { "1541": 1541, "1571": 1571, "1581": 1581 };
     const typeNum = DRIVE_TYPE[mode];
     if (typeNum === undefined) throw new Error(`Unknown drive mode: ${mode}`);
     await this.withClient(async (client) => {
@@ -847,6 +1068,22 @@ function parseDriveNumber(drive: string): number {
   const n = match ? parseInt(match[0], 10) : NaN;
   if (isNaN(n) || n < 8 || n > 11) throw new Error(`Invalid drive specification: ${drive}`);
   return n;
+}
+
+function configuredViceRemoteMonitorPort(binaryPort: number): number {
+  const raw = process.env.VICE_REMOTE_MONITOR_PORT?.trim();
+  if (raw) {
+    const value = Number(raw);
+    if (Number.isInteger(value) && value > 0 && value < 65536) return value;
+  }
+  return binaryPort === DEFAULT_VICE_REMOTE_MONITOR_PORT
+    ? DEFAULT_VICE_REMOTE_MONITOR_PORT + 1
+    : DEFAULT_VICE_REMOTE_MONITOR_PORT;
+}
+
+function escapeViceMonitorString(input: string): string {
+  if (/[\r\n]/.test(input)) throw new Error("VICE monitor strings cannot contain newlines");
+  return input.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 function extractBytes(data: unknown): Uint8Array {
@@ -1065,6 +1302,20 @@ function configuredBoolean(value: unknown): boolean | undefined {
     return false;
   }
   return undefined;
+}
+
+function configuredPositiveInteger(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+  const input = configuredString(value);
+  if (input) {
+    const parsed = Number(input);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return fallback;
 }
 
 function resolveViceArgs(config: ViceConfig): string[] {
